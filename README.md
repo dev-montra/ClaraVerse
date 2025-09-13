@@ -37,7 +37,7 @@
 <br/>
 
 <p align="center">
-  <kbd><strong>6 AI Tools</strong></kbd> ×
+  <kbd><strong>8 AI Tools</strong></kbd> ×
   <kbd><strong>1 App</strong></kbd> ×
   <kbd><strong>100% Local</strong></kbd> =
   <kbd><strong>∞ Possibilities</strong></kbd>
@@ -109,7 +109,7 @@ ClaraVerse is our answer to that question.
   **Smart Assistant**
   
   `Advanced Chat` `Code Gen`
-  `Voice` `Files` `Easy MCP` `Model Manager`
+  `Voice` `Files` `MCP Tools` `Model Manager`
   
   <br/>
   
@@ -163,15 +163,31 @@ ClaraVerse is our answer to that question.
   <br/>
   <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Objects/Toolbox.png" width="60" />
   
-  ### **Agent Builder**
+  ### **Agent Studio**
   **AI Agents**
   
+  `Autonomous Agents` `MCP Integration`
   `Visual Designer` `Custom Nodes`
-  `Templates` `Debug Tools`
 
   <br/>
 
 </td>
+<td align="center" width="33%">
+
+  <br/>
+  <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/People/Busts%20in%20Silhouette.png" width="60" />
+  
+  ### **Community**
+  **Sharing Hub**
+  
+  `Content Sharing` `Custom Nodes`
+  `Workflows` `Collaboration`
+
+  <br/>
+
+</td>
+</tr>
+<tr>
 <td align="center" width="33%">
 
   <br/>
@@ -182,6 +198,25 @@ ClaraVerse is our answer to that question.
   
   `Drag & Drop` `Live Updates`
   `Persistent` `Customizable`
+
+  <br/>
+
+</td>
+<td align="center" width="33%">
+
+  <br/>
+  <img src="https://raw.githubusercontent.com/Tarikul-Islam-Anik/Animated-Fluent-Emojis/master/Emojis/Objects/Link.png" width="60" />
+  
+  ### **MCP Ecosystem**
+  **Tool Integration**
+  
+  `20+ MCP Servers` `Desktop Automation`
+  `Browser Control` `File System`
+
+  <br/>
+
+</td>
+<td align="center" width="33%">
 
   <br/>
 
@@ -252,6 +287,9 @@ npm run electron:dev:hot
 | **100% Local Processing** | ✅ | ❌ |
 | **No Subscriptions** | ✅ | ❌ |
 | **Context Sharing** | ✅ | ❌ |
+| **Community Hub** | ✅ | ❌ |
+| **Autonomous Agents** | ✅ | ⚠️ |
+| **MCP Tool Ecosystem** | ✅ | ❌ |
 | **Open Source** | ✅ | ⚠️ |
 | **Offline Mode** | ✅ | ❌ |
 | **Custom Models** | ✅ | ⚠️ |
@@ -272,16 +310,28 @@ graph LR
     B --> D[🔧 LumaUI]
     B --> E[🎨 ComfyUI]
     B --> F[🔄 N8N]
-    B --> G[🤖 Agents]
+    B --> G[🤖 Agent Studio]
     B --> H[📊 Widgets]
+    B --> I[👥 Community]
+    B --> J[🔗 MCP Ecosystem]
     
-    C --> I[Llama.cpp]
-    C --> J[Vision]
-    C --> K[Voice]
+    C --> K[Llama.cpp]
+    C --> L[Vision]
+    C --> M[Voice]
+    
+    G --> N[Autonomous Agents]
+    G --> O[Visual Designer]
+    
+    J --> P[Desktop Automation]
+    J --> Q[Browser Control]
+    J --> R[File System]
     
     style A fill:#4A90E2
     style C fill:#FF6B6B
     style E fill:#4ECDC4
+    style G fill:#9B59B6
+    style I fill:#E67E22
+    style J fill:#27AE60
 ```
 
 </div>
@@ -298,7 +348,9 @@ graph LR
 | ✅ | LumaUI Code Builder | **Released** |
 | ✅ | ComfyUI Integration | **Released** |
 | ✅ | N8N Workflows | **Released** |
-| ✅ | Agent Builder | **v0.1.26** |
+| ✅ | Agent Studio (Advanced) | **Released** |
+| ✅ | Community Hub | **Released** |
+| ✅ | MCP Ecosystem (20+ Servers) | **Released** |
 | 🚧 | Docker Image for Remote servers | Q3 2025 |
 | 🚧 | Mobile App with Offline Support | Q3 2025 |
 | 🚧 | Cloud Sync (Optional) | Q4 2025 |
@@ -382,7 +434,7 @@ graph LR
 
 <div align="center">
 
-**MIT License** - Use it, modify it, sell it, we don't mind!
+**MIT License** - Use it, modify it, sell it, we don't mind! (If want you to give credit, that would be awesome but not mandatory 😉)
 
 See [LICENSE](LICENSE) for details.
 
@@ -705,8 +757,51 @@ Clara AI + LumaUI + ComfyUI can all share context and work together.
 
 <details>
 <summary>
-  <kbd><strong>🔧 Troubleshooting</strong></kbd>
+  <kbd><strong>🤖 Autonomous Agents & MCP</strong></kbd>
 </summary>
+
+<br/>
+
+<table>
+<tr>
+<td width="50%">
+
+### **Autonomous Agent Features**
+
+✅ **Self-Executing Workflows**
+- Autonomous task execution
+- Multi-step reasoning
+- Error self-correction
+- Chain-of-thought processing
+
+✅ **MCP Tool Integration**
+- 20+ available MCP servers
+- Desktop automation
+- Browser control
+- File system access
+
+</td>
+<td width="50%">
+
+### **Community Features**
+
+**🌟 Content Sharing:**
+- Share custom nodes
+- Download workflows
+- Community templates
+- Security scanning
+
+**🔧 Agent Studio:**
+- Visual workflow builder
+- Drag-and-drop interface
+- Custom node development
+- Real-time testing
+
+</td>
+</tr>
+</table>
+
+</details>
 
 <br/>
 
