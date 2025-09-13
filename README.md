@@ -811,6 +811,8 @@ Clara AI + LumaUI + ComfyUI can all share context and work together.
 
 </div>
 
+<div align="center">
+
 <table>
 <tr>
 <td align="center" width="25%">
@@ -871,6 +873,8 @@ Clara AI + LumaUI + ComfyUI can all share context and work together.
 </td>
 </tr>
 </table>
+
+</div>
 
 <br/>
 
