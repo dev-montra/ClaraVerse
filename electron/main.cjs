@@ -194,6 +194,33 @@ async function showStartupDialog(loadingScreen, dialogType, title, message, butt
 log.transports.file.level = 'info';
 log.info('Application starting...');
 
+// Single instance lock - prevent multiple instances of the app
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+  log.info('Another instance of ClaraVerse is already running. Exiting this instance.');
+  app.quit();
+} else {
+  // Handle second instance attempts
+  app.on('second-instance', (event, commandLine, workingDirectory) => {
+    log.info('Second instance attempted to start. Focusing main window.');
+    
+    // Someone tried to run a second instance, focus the existing window instead
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) {
+        mainWindow.restore();
+      }
+      mainWindow.focus();
+      mainWindow.show();
+    } else {
+      // If no window exists, create one
+      createMainWindow().catch(error => {
+        log.error('Error creating main window from second instance:', error);
+      });
+    }
+  });
+}
+
 // Initialize IPC Logger
 let ipcLogger;
 
