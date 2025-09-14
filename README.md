@@ -3,9 +3,9 @@
 <br/>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://github.com/badboysm890/ClaraVerse/blob/d38051075acff14d7fabfb8525909c7170c7677d/public/screenshots/ClaraBanner.png">
-  <source media="(prefers-color-scheme: light)" srcset="https://github.com/badboysm890/ClaraVerse/blob/d38051075acff14d7fabfb8525909c7170c7677d/public/screenshots/ClaraBanner.png">
-  <img alt="ClaraVerse Features Banner" src="https://github.com/badboysm890/ClaraVerse/blob/d38051075acff14d7fabfb8525909c7170c7677d/public/screenshots/ClaraBanner.png" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="/public/logo.png">
+  <source media="(prefers-color-scheme: light)" srcset="/public/logo.png">
+  <img alt="ClaraVerse Logo" src="/public/logo.png" width="120">
 </picture>
 
 <br/>
@@ -56,7 +56,11 @@
 <br/>
 <br/>
 
-
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://github.com/badboysm890/ClaraVerse/blob/d38051075acff14d7fabfb8525909c7170c7677d/public/screenshots/ClaraBanner.png">
+  <source media="(prefers-color-scheme: light)" srcset="https://github.com/badboysm890/ClaraVerse/blob/d38051075acff14d7fabfb8525909c7170c7677d/public/screenshots/ClaraBanner.png">
+  <img alt="ClaraVerse Features Banner" src="https://github.com/badboysm890/ClaraVerse/blob/d38051075acff14d7fabfb8525909c7170c7677d/public/screenshots/ClaraBanner.png" width="100%">
+</picture>
 
 </div>
 
