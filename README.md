@@ -53,6 +53,14 @@
   <img src="https://img.shields.io/badge/Try_Demo-🌐-5352ED?style=for-the-badge&labelColor=1e1e2e" alt="Demo" height="40"/>
 </a>
 
+<br/>
+<br/>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="https://github.com/user-attachments/assets/d4e4a2f3-4a7f-4d2a-8f0a-3c7e8b9f5a1d">
+  <source media="(prefers-color-scheme: light)" srcset="https://github.com/user-attachments/assets/d4e4a2f3-4a7f-4d2a-8f0a-3c7e8b9f5a1d">
+  <img alt="ClaraVerse Features Banner" src="https://github.com/user-attachments/assets/d4e4a2f3-4a7f-4d2a-8f0a-3c7e8b9f5a1d" width="100%">
+</picture>
 
 </div>
 
