@@ -57,9 +57,9 @@
 <br/>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://github.com/user-attachments/assets/d4e4a2f3-4a7f-4d2a-8f0a-3c7e8b9f5a1d">
-  <source media="(prefers-color-scheme: light)" srcset="https://github.com/user-attachments/assets/d4e4a2f3-4a7f-4d2a-8f0a-3c7e8b9f5a1d">
-  <img alt="ClaraVerse Features Banner" src="https://github.com/user-attachments/assets/d4e4a2f3-4a7f-4d2a-8f0a-3c7e8b9f5a1d" width="100%">
+  <source media="(prefers-color-scheme: dark)" srcset="https://github.com/badboysm890/ClaraVerse/blob/d38051075acff14d7fabfb8525909c7170c7677d/public/screenshots/ClaraBanner.png">
+  <source media="(prefers-color-scheme: light)" srcset="https://github.com/badboysm890/ClaraVerse/blob/d38051075acff14d7fabfb8525909c7170c7677d/public/screenshots/ClaraBanner.png">
+  <img alt="ClaraVerse Features Banner" src="https://github.com/badboysm890/ClaraVerse/blob/d38051075acff14d7fabfb8525909c7170c7677d/public/screenshots/ClaraBanner.png" width="100%">
 </picture>
 
 </div>
