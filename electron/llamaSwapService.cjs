@@ -84,15 +84,16 @@ class LlamaSwapService {
    * Get the correct base directory for binaries in both development and production
    */
   getBaseBinaryDirectory() {
-    const isDevelopment = process.env.NODE_ENV === 'development';
+    // Check both NODE_ENV and app.isPackaged for more reliable development detection
+    const isDevelopment = process.env.NODE_ENV === 'development' || (app && !app.isPackaged);
     
     if (isDevelopment) {
       // Development mode - use electron directory
       return path.join(__dirname, 'llamacpp-binaries');
     } else {
-      // Production mode - check multiple possible locations
+      // Production mode - check for packed binaries first (from electron-builder extraResources)
       const possiblePaths = [
-        // Standard Electron app structure
+        // Standard Electron app structure (packed binaries)
         process.resourcesPath ? path.join(process.resourcesPath, 'electron', 'llamacpp-binaries') : null,
         // Alternative app structure
         app && app.getAppPath ? path.join(app.getAppPath(), 'electron', 'llamacpp-binaries') : null,
@@ -101,19 +102,19 @@ class LlamaSwapService {
       ].filter(Boolean); // Remove null entries
       
       for (const possiblePath of possiblePaths) {
-        log.info(`Checking binary path: ${possiblePath}`);
+        log.info(`Checking packed binary path: ${possiblePath}`);
         if (fsSync.existsSync(possiblePath)) {
-          log.info(`Found binaries at: ${possiblePath}`);
+          log.info(`✅ Found packed binaries at: ${possiblePath}`);
           return possiblePath;
         }
       }
       
-      // If none found, create in app data directory and log error
+      // If no packed binaries found, create in app data directory as final fallback
       const fallbackPath = app && app.getPath 
         ? path.join(app.getPath('userData'), 'llamacpp-binaries')
         : path.join(__dirname, 'llamacpp-binaries'); // Final fallback for non-Electron environments
-      log.error(`No binary directory found! Checked paths:`, possiblePaths);
-      log.error(`Using fallback path: ${fallbackPath}`);
+      log.warn(`⚠️ No packed binary directory found! Checked paths:`, possiblePaths);
+      log.warn(`⚠️ Using fallback path: ${fallbackPath}`);
       return fallbackPath;
     }
   }
@@ -123,31 +124,62 @@ class LlamaSwapService {
    */
   getBinaryPathsWithFallback() {
     try {
-      // FIRST: Check for official llama-swap binary
-      const officialLlamaSwapPath = this.getOfficialLlamaSwapPath();
-      if (fsSync.existsSync(officialLlamaSwapPath)) {
-        log.info(`✅ Using official llama-swap binary: ${officialLlamaSwapPath}`);
+      // Check both NODE_ENV and app.isPackaged for development detection
+      const isDevelopment = process.env.NODE_ENV === 'development' || (app && !app.isPackaged);
+      
+      // In development mode, skip official binary and use development binaries
+      if (isDevelopment) {
+        log.info(`🔧 Development mode detected - using development binaries instead of official binary`);
+      } else {
+        // Production mode: First try to use packed binaries, then fall back to downloaded ones
+        log.info(`📦 Production mode detected - checking for packed binaries first`);
         
-        // Still need llama-server from platform-specific location
-        // For Linux, use GPU detection to get the right platform directory
-        if (this.platformInfo.isLinux) {
-          const gpuPlatformDir = this.detectLinuxGPUPlatform();
-          const gpuPlatformPath = path.join(this.baseDir, gpuPlatformDir);
-          this.platformBinDir = gpuPlatformPath; // Update platform directory
+        // Try platform manager with packed binaries first
+        if (this.platformManager.isCurrentPlatformSupported()) {
+          const packedPaths = this.platformManager.getBinaryPaths();
+          log.info(`🔍 Checking packed binary paths:`, packedPaths);
           
-          return {
-            llamaSwap: officialLlamaSwapPath,
-            llamaServer: path.join(gpuPlatformPath, 'llama-server')
-          };
-        } else {
-          const platformPaths = this.platformManager.isCurrentPlatformSupported() 
-            ? this.platformManager.getBinaryPaths()
-            : this.getLegacyBinaryPaths();
+          // Verify packed binaries exist
+          if (packedPaths.llamaSwap && fsSync.existsSync(packedPaths.llamaSwap)) {
+            log.info(`✅ Using packed llama-swap binary: ${packedPaths.llamaSwap}`);
+            return packedPaths;
+          }
+        }
+        
+        // If packed binaries not found, try legacy packed binaries
+        const legacyPackedPaths = this.getLegacyBinaryPaths();
+        if (legacyPackedPaths.llamaSwap && fsSync.existsSync(legacyPackedPaths.llamaSwap)) {
+          log.info(`✅ Using legacy packed llama-swap binary: ${legacyPackedPaths.llamaSwap}`);
+          return legacyPackedPaths;
+        }
+        
+        // Only if no packed binaries are found, check for downloaded official binary
+        log.info(`📥 No packed binaries found, checking for downloaded official binary...`);
+        const officialLlamaSwapPath = this.getOfficialLlamaSwapPath();
+        if (fsSync.existsSync(officialLlamaSwapPath)) {
+          log.info(`✅ Using downloaded official llama-swap binary: ${officialLlamaSwapPath}`);
+          
+          // Still need llama-server from platform-specific location
+          // For Linux, use GPU detection to get the right platform directory
+          if (this.platformInfo.isLinux) {
+            const gpuPlatformDir = this.detectLinuxGPUPlatform();
+            const gpuPlatformPath = path.join(this.baseDir, gpuPlatformDir);
+            this.platformBinDir = gpuPlatformPath; // Update platform directory
             
-          return {
-            llamaSwap: officialLlamaSwapPath,
-            llamaServer: platformPaths.llamaServer
-          };
+            return {
+              llamaSwap: officialLlamaSwapPath,
+              llamaServer: path.join(gpuPlatformPath, 'llama-server')
+            };
+          } else {
+            const platformPaths = this.platformManager.isCurrentPlatformSupported() 
+              ? this.platformManager.getBinaryPaths()
+              : this.getLegacyBinaryPaths();
+              
+            return {
+              llamaSwap: officialLlamaSwapPath,
+              llamaServer: platformPaths.llamaServer
+            };
+          }
         }
       }
       
