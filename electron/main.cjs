@@ -813,10 +813,11 @@ function registerServiceConfigurationHandlers() {
   // Get all service configurations
   ipcMain.handle('service-config:get-all-configs', async () => {
     try {
-      if (!serviceConfigManager || typeof serviceConfigManager.getConfigSummary !== 'function') {
+      const configManager = ensureServiceConfigManager();
+      if (!configManager || typeof configManager.getConfigSummary !== 'function') {
         return {};
       }
-      return serviceConfigManager.getConfigSummary();
+      return configManager.getConfigSummary();
     } catch (error) {
       log.error('Error getting service configurations:', error);
       return {};
@@ -826,11 +827,12 @@ function registerServiceConfigurationHandlers() {
   // Set service configuration (mode and URL)
   ipcMain.handle('service-config:set-config', async (event, serviceName, mode, url = null) => {
     try {
-      if (!serviceConfigManager || typeof serviceConfigManager.setServiceConfig !== 'function') {
+      const configManager = ensureServiceConfigManager();
+      if (!configManager || typeof configManager.setServiceConfig !== 'function') {
         throw new Error('Service configuration manager not initialized or setServiceConfig method not available');
       }
       
-      serviceConfigManager.setServiceConfig(serviceName, mode, url);
+      configManager.setServiceConfig(serviceName, mode, url);
       log.info(`Service ${serviceName} configured: mode=${mode}${url ? `, url=${url}` : ''}`);
       
       return { success: true };
@@ -843,11 +845,12 @@ function registerServiceConfigurationHandlers() {
   // Alias for onboarding compatibility
   ipcMain.handle('service-config:set-manual-url', async (event, serviceName, url) => {
     try {
-      if (!serviceConfigManager || typeof serviceConfigManager.setServiceConfig !== 'function') {
+      const configManager = ensureServiceConfigManager();
+      if (!configManager || typeof configManager.setServiceConfig !== 'function') {
         throw new Error('Service configuration manager not initialized or setServiceConfig method not available');
       }
       
-      serviceConfigManager.setServiceConfig(serviceName, 'manual', url);
+      configManager.setServiceConfig(serviceName, 'manual', url);
       log.info(`Service ${serviceName} configured with manual URL: ${url}`);
       
       return { success: true };
@@ -860,11 +863,12 @@ function registerServiceConfigurationHandlers() {
   // Test manual service connectivity
   ipcMain.handle('service-config:test-manual-service', async (event, serviceName, url, healthEndpoint = '/') => {
     try {
-      if (!serviceConfigManager || typeof serviceConfigManager.testManualService !== 'function') {
+      const configManager = ensureServiceConfigManager();
+      if (!configManager || typeof configManager.testManualService !== 'function') {
         throw new Error('Service configuration manager not initialized or testManualService method not available');
       }
       
-      const result = await serviceConfigManager.testManualService(serviceName, url, healthEndpoint);
+      const result = await configManager.testManualService(serviceName, url, healthEndpoint);
       return result;
     } catch (error) {
       log.error(`Error testing manual service ${serviceName}:`, error);
@@ -879,11 +883,12 @@ function registerServiceConfigurationHandlers() {
   // Get supported deployment modes for a service
   ipcMain.handle('service-config:get-supported-modes', async (event, serviceName) => {
     try {
-      if (!serviceConfigManager || typeof serviceConfigManager.getSupportedModes !== 'function') {
+      const configManager = ensureServiceConfigManager();
+      if (!configManager || typeof configManager.getSupportedModes !== 'function') {
         return ['docker']; // Default fallback
       }
       
-      return serviceConfigManager.getSupportedModes(serviceName);
+      return configManager.getSupportedModes(serviceName);
     } catch (error) {
       log.error(`Error getting supported modes for ${serviceName}:`, error);
       return ['docker'];
@@ -893,11 +898,12 @@ function registerServiceConfigurationHandlers() {
   // Reset service configuration to defaults
   ipcMain.handle('service-config:reset-config', async (event, serviceName) => {
     try {
-      if (!serviceConfigManager || typeof serviceConfigManager.removeServiceConfig !== 'function') {
+      const configManager = ensureServiceConfigManager();
+      if (!configManager || typeof configManager.removeServiceConfig !== 'function') {
         throw new Error('Service configuration manager not initialized or removeServiceConfig method not available');
       }
       
-      serviceConfigManager.removeServiceConfig(serviceName);
+      configManager.removeServiceConfig(serviceName);
       log.info(`Service ${serviceName} configuration reset to defaults`);
       
       return { success: true };
@@ -1452,13 +1458,16 @@ function registerPythonBackendHandlers() {
         return { isHealthy: false, serviceUrl: null, mode: 'docker', error: 'Docker setup not initialized' };
       }
 
+      // Ensure service config manager is initialized
+      const configManager = ensureServiceConfigManager();
+      
       // Get service configuration to determine mode (with fallback if service config manager is not available)
       let config = null;
       let mode = 'docker'; // Default mode
       
-      if (serviceConfigManager && typeof serviceConfigManager.getServiceConfig === 'function') {
+      if (configManager && typeof configManager.getServiceConfig === 'function') {
         try {
-          config = await serviceConfigManager.getServiceConfig('notebooks');
+          config = await configManager.getServiceConfig('notebooks');
           mode = config?.deploymentMode || 'docker';
         } catch (configError) {
           log.warn('Error getting service config, using default mode:', configError.message);

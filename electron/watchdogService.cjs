@@ -3,10 +3,9 @@ const { Notification } = require('electron');
 const log = require('electron-log');
 
 class WatchdogService extends EventEmitter {
-  constructor(dockerSetup, llamaSwapService, mcpService, ipcLogger = null) {
+  constructor(dockerSetup, mcpService, ipcLogger = null) {
     super();
     this.dockerSetup = dockerSetup;
-    this.llamaSwapService = llamaSwapService;
     this.mcpService = mcpService;
     this.ipcLogger = ipcLogger;
     
@@ -51,18 +50,21 @@ class WatchdogService extends EventEmitter {
     // Service status tracking - only include selected services
     this.services = {};
     
-    // Clara Core is always enabled
+    // Clara Core monitoring disabled - llamaSwapService has been removed
+    // Keeping the structure commented for future reference
+    /*
     this.services.clarasCore = {
       name: "Clara's Core",
       status: 'unknown',
       lastCheck: null,
-      lastHealthyTime: null, // Track when service was last confirmed healthy
+      lastHealthyTime: null,
       failureCount: 0,
       isRetrying: false,
-      enabled: true,
+      enabled: false, // Disabled - service removed
       healthCheck: () => this.checkClarasCoreHealth(),
       restart: () => this.restartClarasCore()
     };
+    */
     
     // Python backend is always enabled (core service)
     this.services.python = {
@@ -676,24 +678,10 @@ class WatchdogService extends EventEmitter {
 
   // Individual service health check methods
   async checkClarasCoreHealth() {
-    try {
-      const status = await this.llamaSwapService.getStatusWithHealthCheck();
-      const isHealthy = status.isRunning && status.healthCheck === 'passed';
-      
-      this.logEvent('SERVICE_HEALTH_CHECK', 'DEBUG', 'Clara\'s Core health check completed', {
-        isRunning: status.isRunning,
-        healthCheck: status.healthCheck,
-        isHealthy: isHealthy
-      });
-      
-      return isHealthy;
-    } catch (error) {
-      this.logEvent('SERVICE_HEALTH_CHECK_ERROR', 'ERROR', 'Clara\'s Core health check failed', {
-        error: error.message,
-        stack: error.stack
-      });
-      return false;
-    }
+    // Clara's Core service (llamaSwapService) has been removed
+    // This method is kept for compatibility but always returns true
+    this.logEvent('SERVICE_HEALTH_CHECK', 'DEBUG', 'Clara\'s Core health check skipped (service removed)');
+    return true;
   }
 
   async checkN8nHealth() {
@@ -753,24 +741,10 @@ class WatchdogService extends EventEmitter {
 
   // Individual service restart methods
   async restartClarasCore() {
-    this.logEvent('SERVICE_RESTART', 'INFO', 'Initiating Clara\'s Core service restart');
-    
-    try {
-      if (this.llamaSwapService.isRunning) {
-        await this.llamaSwapService.stop();
-        await new Promise(resolve => setTimeout(resolve, 3000));
-      }
-      
-      await this.llamaSwapService.start();
-      this.logEvent('SERVICE_RESTART_OPERATION', 'INFO', 'Clara\'s Core restart operation completed');
-      
-    } catch (error) {
-      this.logEvent('SERVICE_RESTART_ERROR', 'ERROR', 'Clara\'s Core restart operation failed', {
-        error: error.message,
-        stack: error.stack
-      });
-      throw error;
-    }
+    // Clara's Core service (llamaSwapService) has been removed
+    // This method is kept for compatibility but does nothing
+    this.logEvent('SERVICE_RESTART', 'INFO', 'Clara\'s Core restart skipped (service removed)');
+    return;
   }
 
   async restartN8nService() {
