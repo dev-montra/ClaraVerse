@@ -51,7 +51,6 @@ import {
   Search,
 
   Monitor,
-  Cpu,
   RefreshCw,
   MessageSquare,
   MoreHorizontal,
@@ -111,8 +110,6 @@ import ChatImageGenWidget from './ChatImageGenWidget';
 import { 
   ParsedModelConfig, 
   parseJsonConfiguration, 
-  updateCommandLineParameter, 
-  cleanCommandLine, 
   estimateModelTotalLayers,
   getModelMaxContextSize,
   getSafeContextSize,
@@ -1791,7 +1788,6 @@ const AdvancedOptions: React.FC<{
     systemPrompt: false,
     models: false,
     parameters: false,
-    modelConfig: false,
     features: false,
     mcp: false,
     autonomous: false,
@@ -1803,32 +1799,6 @@ const AdvancedOptions: React.FC<{
 
   // State for advanced parameters visibility
   const [showAdvancedParameters, setShowAdvancedParameters] = useState(false);
-
-  // Model configuration state
-  const [modelConfigState, setModelConfigState] = useState<{
-    currentModel: string | null;
-    isEditing: boolean;
-    isLoading: boolean;
-    hasUnsavedChanges: boolean;
-    availableModels: ParsedModelConfig[];
-    modelMetadata: {[modelName: string]: {nativeContextSize?: number, estimatedLayers?: number}};
-    gpuInfo?: {
-      hasGPU: boolean;
-      gpuMemoryMB: number;
-      gpuMemoryGB: number;
-      gpuType: string;
-      systemMemoryGB: number;
-      platform: string;
-    };
-  }>({
-    currentModel: null,
-    isEditing: false,
-    isLoading: false,
-    hasUnsavedChanges: false,
-    availableModels: [],
-    modelMetadata: {},
-    gpuInfo: undefined
-  });
 
   // Load MCP servers when component mounts or when MCP is enabled
   useEffect(() => {
@@ -1849,195 +1819,6 @@ const AdvancedOptions: React.FC<{
 
     loadMcpServers();
   }, [aiConfig?.features.enableMCP]);
-
-  // Load model configuration information when component mounts
-  useEffect(() => {
-    const loadModelConfigInfo = async () => {
-      setModelConfigState(prev => ({ ...prev, isLoading: true }));
-      
-      try {
-        const llamaSwap = (window as any).llamaSwap;
-        if (!llamaSwap) {
-          console.warn('LlamaSwap service not available');
-          return;
-        }
-
-        // Get configuration info and model metadata
-        const [configResult, metadataResult] = await Promise.all([
-          llamaSwap.getConfigurationInfo(),
-          llamaSwap.getModelConfigurations()
-        ]);
-
-        if (configResult.success) {
-          // Parse available models from configuration
-          const availableModels = configResult.configuration?.models 
-            ? parseJsonConfiguration(configResult.configuration)
-            : [];
-
-          // Extract model metadata
-          const modelMetadata: {[modelName: string]: {nativeContextSize?: number, estimatedLayers?: number}} = {};
-          if (metadataResult.success && metadataResult.models) {
-            metadataResult.models.forEach((model: any) => {
-              modelMetadata[model.name] = {
-                nativeContextSize: model.nativeContextSize,
-                estimatedLayers: estimateModelTotalLayers(model.name, model.sizeGB)
-              };
-            });
-          }
-
-          setModelConfigState(prev => ({
-            ...prev,
-            availableModels,
-            modelMetadata,
-            gpuInfo: configResult.gpuInfo,
-            currentModel: aiConfig?.models.text || null
-          }));
-        }
-      } catch (error) {
-        console.error('Failed to load model configuration info:', error);
-      } finally {
-        setModelConfigState(prev => ({ ...prev, isLoading: false }));
-      }
-    };
-
-    loadModelConfigInfo();
-  }, [aiConfig?.models.text]);
-
-  // Model configuration handlers
-  const handleModelConfigEdit = useCallback((modelName: string) => {
-    setModelConfigState(prev => ({
-      ...prev,
-      currentModel: modelName,
-      isEditing: true,
-      hasUnsavedChanges: false
-    }));
-  }, []);
-
-  const handleModelConfigCancel = useCallback(() => {
-    setModelConfigState(prev => ({
-      ...prev,
-      isEditing: false,
-      hasUnsavedChanges: false
-    }));
-  }, []);
-
-  const handleModelConfigSave = useCallback(async (modelName: string, config: Partial<ParsedModelConfig>) => {
-    if (!modelName) return;
-    
-    setModelConfigState(prev => ({ ...prev, isLoading: true }));
-    
-    try {
-      const llamaSwap = (window as any).llamaSwap;
-      if (!llamaSwap) {
-        throw new Error('LlamaSwap service not available');
-      }
-
-      // Get current configuration
-      const configResult = await llamaSwap.getConfigurationInfo();
-      if (!configResult.success) {
-        throw new Error('Failed to get current configuration');
-      }
-
-      const currentConfig = configResult.configuration;
-      
-      // Helper function to extract clean model name
-      const getCleanModelName = (modelId: string): string => {
-        if (modelId.includes(':')) {
-          const parts = modelId.split(':');
-          if (parts.length >= 2 && parts[0].length === 36 && parts[0].includes('-')) {
-            return parts.slice(1).join(':');
-          }
-        }
-        return modelId;
-      };
-
-      // Try to find the model in configuration by multiple name variations
-      let foundModelKey = null;
-      let foundModelConfig = null;
-      const cleanModelName = getCleanModelName(modelName);
-
-      if (currentConfig?.models) {
-        // Try exact match first
-        if (currentConfig.models[modelName]) {
-          foundModelKey = modelName;
-          foundModelConfig = currentConfig.models[modelName];
-        }
-        // Try clean name match
-        else if (currentConfig.models[cleanModelName]) {
-          foundModelKey = cleanModelName;
-          foundModelConfig = currentConfig.models[cleanModelName];
-        }
-        // Try finding by cleaning all config model names
-        else {
-          for (const [configKey, configData] of Object.entries(currentConfig.models)) {
-            if (getCleanModelName(configKey) === cleanModelName) {
-              foundModelKey = configKey;
-              foundModelConfig = configData;
-              break;
-            }
-          }
-        }
-      }
-
-      if (!foundModelKey || !foundModelConfig) {
-        // List available models for debugging
-        const availableModels = currentConfig?.models ? Object.keys(currentConfig.models) : [];
-        console.error('Available models in config:', availableModels);
-        console.error('Looking for model:', modelName, 'or clean name:', cleanModelName);
-        throw new Error(`Model not found in configuration. Available models: ${availableModels.join(', ')}`);
-      }
-
-      // Update command line with new parameters
-      let updatedCmd = foundModelConfig.cmd;
-      
-      // Update each changed parameter
-      Object.entries(config).forEach(([field, value]) => {
-        if (value !== undefined && field !== 'name') {
-          updatedCmd = updateCommandLineParameter(updatedCmd, field as keyof ParsedModelConfig, value);
-        }
-      });
-
-      // Clean up the command line
-      updatedCmd = cleanCommandLine(updatedCmd);
-      
-      // Update the configuration
-      currentConfig.models[foundModelKey].cmd = updatedCmd;
-      
-      // Save the configuration and restart the model
-      const saveResult = await llamaSwap.saveConfigAndRestart(JSON.stringify(currentConfig, null, 2));
-      
-      if (saveResult.success) {
-        addInfoNotification('Model Configuration', `Model configuration updated successfully!`);
-        
-        // Reload model configuration info
-        const updatedConfigResult = await llamaSwap.getConfigurationInfo();
-        if (updatedConfigResult.success) {
-          const availableModels = updatedConfigResult.configuration?.models 
-            ? parseJsonConfiguration(updatedConfigResult.configuration)
-            : [];
-          
-          setModelConfigState(prev => ({
-            ...prev,
-            availableModels,
-            isEditing: false,
-            hasUnsavedChanges: false
-          }));
-        }
-      } else {
-        throw new Error(saveResult.error || 'Failed to save configuration');
-      }
-    } catch (error) {
-      console.error('Failed to save model configuration:', error);
-      addErrorNotification('Model Configuration Error', `Failed to save model configuration: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    } finally {
-      setModelConfigState(prev => ({ ...prev, isLoading: false }));
-    }
-  }, []);
-
-  const handleModelConfigParameterChange = useCallback((field: keyof ParsedModelConfig, value: any) => {
-    // Not used in simplified version, but keeping for compatibility
-    setModelConfigState(prev => ({ ...prev, hasUnsavedChanges: true }));
-  }, []);
 
   // Load default system prompt when provider or userInfo changes
   useEffect(() => {
@@ -2888,80 +2669,6 @@ Skip for: quick answers, simple lists
                     Reset to Defaults
                   </button>
                 </div>
-              </div>
-            )}
-          </div>
-
-          {/* Model Configuration */}
-          <div className="space-y-2">
-            <SectionHeader
-              title="Model Configuration"
-              icon={<Cpu className="w-4 h-4 text-sakura-500" />}
-              isExpanded={expandedSections.modelConfig}
-              onToggle={() => toggleSection('modelConfig')}
-              badge={modelConfigState.currentModel ? 1 : 0}
-            />
-            
-            {expandedSections.modelConfig && (
-              <div className="p-3 bg-gray-50/50 dark:bg-gray-800/30 rounded-lg space-y-4">
-                {modelConfigState.isLoading ? (
-                  <div className="flex items-center justify-center py-4">
-                    <Loader2 className="w-5 h-5 animate-spin text-sakura-500 mr-2" />
-                    <span className="text-sm text-gray-600 dark:text-gray-400">Loading model configuration...</span>
-                  </div>
-                ) : modelConfigState.availableModels.length === 0 ? (
-                  <div className="text-center py-4">
-                    <AlertCircle className="w-8 h-8 text-gray-400 mx-auto mb-2" />
-                    <p className="text-sm text-gray-600 dark:text-gray-400">No models available for configuration</p>
-                    <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">LlamaSwap service might not be running</p>
-                  </div>
-                ) : (
-                  <>
-                    {/* Current Model Display */}
-                    <div className="space-y-2">
-                      <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
-                        Selected Model - it alters the model's configuration - (Don't change it Unless you know what you are doing)
-                      </label>
-                      <div className="flex items-center gap-2">
-                        <div className="flex-1 p-2 bg-white dark:bg-gray-700 rounded text-sm text-gray-900 dark:text-white">
-                          {modelConfigState.currentModel ? 
-                            (() => {
-                              const modelId = modelConfigState.currentModel;
-                              if (modelId.includes(':')) {
-                                const parts = modelId.split(':');
-                                if (parts.length >= 2 && parts[0].length === 36 && parts[0].includes('-')) {
-                                  return parts.slice(1).join(':');
-                                }
-                              }
-                              return modelId;
-                            })() 
-                            : 'No model selected'
-                          }
-                        </div>
-                        {modelConfigState.currentModel && !modelConfigState.isEditing && (
-                          <button
-                            onClick={() => handleModelConfigEdit(modelConfigState.currentModel!)}
-                            className="px-3 py-2 bg-sakura-500 text-white rounded hover:bg-sakura-600 transition-colors text-xs"
-                          >
-                            Configure
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Show configuration for current model */}
-                    {modelConfigState.currentModel && (
-                      <SimpleModelConfig
-                        modelName={modelConfigState.currentModel}
-                        isEditing={modelConfigState.isEditing}
-                        isLoading={modelConfigState.isLoading}
-                        onEdit={() => handleModelConfigEdit(modelConfigState.currentModel!)}
-                        onSave={handleModelConfigSave}
-                        onCancel={handleModelConfigCancel}
-                      />
-                    )}
-                  </>
-                )}
               </div>
             )}
           </div>
