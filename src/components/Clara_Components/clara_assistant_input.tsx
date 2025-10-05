@@ -534,6 +534,92 @@ const CompactProviderSelector: React.FC<{
 };
 
 /**
+ * DORMANT FUNCTION - NOT CURRENTLY USED
+ * 
+ * NOTE: Dynamic Understanding of the Model's Capability Feature
+ * 
+ * This function will be used in the future to dynamically understand and analyze
+ * the capabilities of models in Clara's Core provider. It fetches model information
+ * and properties to enable intelligent feature detection and optimization.
+ * 
+ * Future use cases:
+ * - Automatic capability detection (vision, code, tools support)
+ * - Dynamic model parameter optimization
+ * - Real-time model performance analysis
+ * - Intelligent model selection based on task requirements
+ * 
+ * Utility function to handle Clara's Core provider model selection
+ */
+const handleClarasCoreModelSelection = async (providers: ClaraProvider[], currentProvider: string, modelId: string) => {
+  // Find the current provider
+  const provider = providers.find(p => p.id === currentProvider);
+  
+  // Check if this is Clara's Core provider (by name)
+  if (!provider || provider.name !== "Clara's Core") {
+    return;
+  }
+
+  console.log('🎯 Clara\'s Core provider detected, handling model selection:', modelId);
+
+  try {
+    // Step 1: Get the /info endpoint to fetch all models
+    // Remove /v1 from baseUrl if present, then add /info
+    const baseUrlWithoutV1 = provider.baseUrl?.replace(/\/v1\/?$/, '') || provider.baseUrl;
+    const infoResponse = await fetch(`${baseUrlWithoutV1}/info`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${provider.apiKey || 'clara-default'}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!infoResponse.ok) {
+      console.warn('⚠️ Failed to fetch Clara\'s Core /info endpoint:', infoResponse.status);
+      return;
+    }
+
+    const infoData = await infoResponse.json();
+    console.log('📡 Clara\'s Core /info response:', infoData);
+
+    // Step 2: Find the selected model in the response
+    const selectedModelInfo = infoData.models?.find((model: any) => {
+      // Match by model name or model field
+      const cleanModelId = modelId.includes(':') ? modelId.split(':').slice(1).join(':') : modelId;
+      return model.model === cleanModelId || model.name === cleanModelId;
+    });
+
+    if (!selectedModelInfo) {
+      console.warn('⚠️ Selected model not found in Clara\'s Core response:', modelId);
+      return;
+    }
+
+    console.log('✅ Found selected model in Clara\'s Core:', selectedModelInfo);
+
+    // Step 3: Make the /props call to the model's proxy URL
+    const propsUrl = `${selectedModelInfo.proxy}/props`;
+    console.log('🔧 Making /props call to:', propsUrl);
+
+    const propsResponse = await fetch(propsUrl, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (propsResponse.ok) {
+      const propsData = await propsResponse.json();
+      console.log('📊 Clara\'s Core model props:', propsData);
+    } else {
+      console.warn('⚠️ Failed to fetch model props:', propsResponse.status);
+    }
+
+  } catch (error) {
+    console.warn('⚠️ Error handling Clara\'s Core model selection:', error);
+    // Don't throw - this should not interrupt the normal flow
+  }
+};
+
+/**
  * Model selector component
  */
 const ModelSelector: React.FC<{
@@ -697,6 +783,7 @@ const ModelSelector: React.FC<{
                 <button
                   key={model.id}
                   onClick={() => {
+                    // Call the original model change handler
                     onModelChange(model.id);
                     setIsOpen(false);
                   }}
