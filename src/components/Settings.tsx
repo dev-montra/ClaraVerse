@@ -4,11 +4,9 @@ import { db, type PersonalInfo, type APIConfig, type Provider } from '../db';
 import { useTheme, ThemeMode } from '../hooks/useTheme';
 import { useProviders } from '../contexts/ProvidersContext';
 import MCPSettings from './MCPSettings';
-import ModelManager from './ModelManager';
 import ToolBelt from './ToolBelt';
 import UnifiedServiceManager from './Settings/UnifiedServiceManager';
 import StartupTab from './Settings/StartupTab';
-import GPUDiagnostics from './GPUDiagnostics';
 import { 
   DEFAULT_UI_PREFERENCES, 
   FONT_SCALE_OPTIONS, 
@@ -77,12 +75,11 @@ const Settings = () => {
   
   // Sub-tabs for each main category
   const [activeInterfaceTab, setActiveInterfaceTab] = useState<'appearance' | 'ui-preferences'>('appearance');
-  const [activeAITab, setActiveAITab] = useState<'api' | 'models' | 'mcp'>('api');
+  const [activeAITab, setActiveAITab] = useState<'api' | 'mcp'>('api');
   const [activeSystemTab, setActiveSystemTab] = useState<'startup' | 'services' | 'toolbelt' | 'updates'>('startup');
   
   // Keep legacy activeTab for backward compatibility during transition
-  const [activeTab, setActiveTab] = useState<'personal' | 'api' | 'preferences' | 'models' | 'mcp' | 'toolbelt' | 'updates' | 'sdk-demo' | 'servers' | 'startup'>('api');
-  const [activeModelTab, setActiveModelTab] = useState<'models' | 'gpu-diagnostics'>('models');
+  const [activeTab, setActiveTab] = useState<'personal' | 'api' | 'preferences' | 'mcp' | 'toolbelt' | 'updates' | 'sdk-demo' | 'servers' | 'startup'>('api');
 
   // Ensure first sub-tab is selected when switching main tabs
   useEffect(() => {
@@ -106,7 +103,7 @@ const Settings = () => {
     if (activeMainTab === 'ai-models') {
       // Default to first sub-tab when main tab is selected
       const selected = activeAITab || 'api';
-      return selected as 'api' | 'models' | 'mcp';
+      return selected as 'api' | 'mcp';
     }
     if (activeMainTab === 'system') {
       // Default to first sub-tab when main tab is selected
@@ -1784,16 +1781,6 @@ const Settings = () => {
                     AI Services
                   </button>
                   <button
-                    onClick={() => setActiveAITab('models')}
-                    className={`flex items-center px-2.5 py-1.5 rounded-md text-sm transition-colors ${
-                      activeAITab === 'models'
-                        ? 'text-sakura-600 dark:text-sakura-300 font-medium'
-                        : 'text-gray-700 dark:text-gray-200 hover:text-gray-900 dark:hover:text-gray-100'
-                    }`}
-                  >
-                    Local Models
-                  </button>
-                  <button
                     onClick={() => setActiveAITab('mcp')}
                     className={`flex items-center px-2.5 py-1.5 rounded-md text-sm transition-colors ${
                       activeAITab === 'mcp'
@@ -1885,8 +1872,7 @@ const Settings = () => {
         </div>
 
         {/* Content area */}
-        <div className={`flex-1 space-y-6 py-2 pb-6 overflow-y-auto overflow-x-hidden ${effectiveActiveTab === 'models' ? '' : 'max-w-4xl'
-          }`}>
+        <div className="flex-1 space-y-6 py-2 pb-6 overflow-y-auto overflow-x-hidden max-w-4xl">
           {/* Sub-tabs now shown as dropdowns under the active main tab in the sidebar */}
           {/* Profile Tab */}
           {effectiveActiveTab === 'personal' && (
@@ -3330,83 +3316,6 @@ const Settings = () => {
                   </div>
                 </div>
               </div>
-              )}
-            </div>
-          )}
-
-          {/* Local Models Tab */}
-          {effectiveActiveTab === 'models' && (
-            <div className="space-y-6">
-              {/* Model Manager Header with Sub-tabs */}
-              <div className="glassmorphic rounded-xl p-6">
-                <div className="flex items-center justify-between mb-6">
-                  <div className="flex items-center gap-3">
-                    <Brain className="w-6 h-6 text-sakura-500" />
-                    <div>
-                      <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
-                        Local Models
-                      </h2>
-                      <p className="text-sm text-gray-600 dark:text-gray-400">
-                        Manage your locally installed AI models and hardware acceleration
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Sub-tabs */}
-                <div className="flex space-x-1 bg-gray-100 dark:bg-gray-800 rounded-lg p-1 -mb-6">
-          <button
-            onClick={() => setActiveModelTab('models')}
-            className={`flex-1 px-4 py-2 text-sm font-medium rounded-md transition-colors ${
-              activeModelTab === 'models'
-                ? 'bg-sakura-500 text-white shadow-sm'
-                : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
-            }`}
-          >
-            <div className="flex items-center justify-center gap-2">
-              <HardDrive className="w-4 h-4" />
-              Models
-            </div>
-          </button>
-          <button
-            onClick={() => setActiveModelTab('gpu-diagnostics')}
-            className={`flex-1 px-4 py-2 text-sm font-medium rounded-md transition-colors ${
-              activeModelTab === 'gpu-diagnostics'
-                ? 'bg-sakura-500 text-white shadow-sm'
-                : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
-            }`}
-          >
-            <div className="flex items-center justify-center gap-2">
-              <Zap className="w-4 h-4" />
-              Hardware Acceleration
-            </div>
-          </button>
-                </div>
-                
-              </div>
-
-              {/* Model Tab Content */}
-              {activeModelTab === 'models' && (
-                <ModelManager />
-              )}
-
-              {/* GPU Diagnostics Tab Content */}
-              {activeModelTab === 'gpu-diagnostics' && (
-                <div className="glassmorphic rounded-xl p-6">
-                  <div className="flex items-center gap-3 mb-4">
-                    <Zap className="w-6 h-6 text-amber-500" />
-                    <div>
-                      <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-                        Hardware Acceleration
-                      </h3>
-                      <p className="text-sm text-gray-600 dark:text-gray-400">
-                        Monitor GPU detection and optimize performance for faster inference
-                      </p>
-                    </div>
-                  </div>
-
-                  <GPUDiagnostics />
-                </div>
               )}
             </div>
           )}

@@ -15,18 +15,6 @@ const { setupAutoUpdater, checkForUpdates, getUpdateInfo, checkLlamacppUpdates, 
 const FeatureSelectionScreen = require('./featureSelection.cjs');
 const { createAppMenu } = require('./menu.cjs');
 
-// Helper function to set progress callback for llama-swap service
-function setupLlamaSwapProgressCallback(service) {
-  if (service && typeof service.setProgressCallback === 'function') {
-    service.setProgressCallback((progressData) => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('llama-progress-update', progressData);
-      }
-    });
-    log.info('✅ Progress callback set for llama-swap service instance');
-  }
-}
-const LlamaSwapService = require('./llamaSwapService.cjs');
 const MCPService = require('./mcpService.cjs');
 const WatchdogService = require('./watchdogService.cjs');
 const ComfyUIModelService = require('./comfyUIModelService.cjs');
@@ -295,7 +283,6 @@ let mainWindow;
 let splash;
 let loadingScreen;
 let dockerSetup;
-let llamaSwapService;
 let mcpService;
 let watchdogService;
 let updateService;
@@ -3577,7 +3564,6 @@ function registerPythonBackendHandlers() {
 // Register handlers for various app functions
 function registerHandlers() {
   console.log('[main] Registering IPC handlers...');
-  registerLlamaSwapHandlers();
   registerDockerContainerHandlers();
   registerModelManagerHandlers();
   registerMCPHandlers();

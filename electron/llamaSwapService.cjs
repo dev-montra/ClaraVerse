@@ -14,7 +14,7 @@ class LlamaSwapService {
     this.isStarting = false; // Add this flag to prevent concurrent starts
     this.startingTimestamp = null; // Track when startup began
     this.currentStartupPhase = null; // Track current startup phase for user feedback
-    this.port = 8091;
+    this.port = 8091; // Keep original port for ClaraCore integration
     this.ipcLogger = ipcLogger; // Add IPC logger reference
     
     // Flash attention retry mechanism flags
@@ -116,6 +116,50 @@ class LlamaSwapService {
       log.warn(`⚠️ No packed binary directory found! Checked paths:`, possiblePaths);
       log.warn(`⚠️ Using fallback path: ${fallbackPath}`);
       return fallbackPath;
+    }
+  }
+
+  /**
+   * Get ClaraCore binary path (platform-specific)
+   */
+  getClaraCoreBinaryPath() {
+    const platform = os.platform();
+    const isDevelopment = process.env.NODE_ENV === 'development' || (app && !app.isPackaged);
+    
+    let binaryName;
+    switch (platform) {
+      case 'win32':
+        binaryName = 'clara-core.exe';
+        break;
+      case 'darwin':
+        binaryName = 'clara-core-darwin';
+        break;
+      case 'linux':
+        binaryName = 'clara-core-linux';
+        break;
+      default:
+        throw new Error(`Unsupported platform: ${platform}`);
+    }
+    
+    if (isDevelopment) {
+      // Development: look in electron/claracore-binaries or similar
+      const devPath = path.join(__dirname, 'claracore-binaries', binaryName);
+      if (fsSync.existsSync(devPath)) {
+        return devPath;
+      }
+      // Fallback to assuming it's in PATH or current directory
+      return binaryName;
+    } else {
+      // Production: check resources path first
+      if (process.resourcesPath) {
+        const prodPath = path.join(process.resourcesPath, 'electron', 'claracore-binaries', binaryName);
+        if (fsSync.existsSync(prodPath)) {
+          return prodPath;
+        }
+      }
+      
+      // Fallback
+      return path.join(__dirname, 'claracore-binaries', binaryName);
     }
   }
 
@@ -2157,6 +2201,93 @@ class LlamaSwapService {
     }
   }
 
+  /**
+   * Add model folders to ClaraCore's database instead of generating local config
+   * ClaraCore will handle scanning, model detection, and configuration generation
+   */
+  async addFoldersToClaraCore() {
+    try {
+      const http = require('http');
+      
+      // Collect all folders to register
+      const foldersToAdd = [
+        this.modelsDir, // Default models directory
+        ...this.customModelPaths // User-added custom paths
+      ].filter(Boolean);
+
+      if (foldersToAdd.length === 0) {
+        log.info('No folders to register with ClaraCore');
+        return { success: true, message: 'No folders to register' };
+      }
+
+      log.info(`📁 Registering ${foldersToAdd.length} folder(s) with ClaraCore:`, foldersToAdd);
+
+      // Call ClaraCore API to add folders
+      const requestData = JSON.stringify({
+        folderPaths: foldersToAdd,
+        recursive: true
+      });
+
+      const options = {
+        hostname: '127.0.0.1',
+        port: this.port,
+        path: '/api/config/folders',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(requestData)
+        },
+        timeout: 5000 // 5 second timeout
+      };
+
+      return new Promise((resolve, reject) => {
+        const req = http.request(options, (res) => {
+          let responseData = '';
+
+          res.on('data', (chunk) => {
+            responseData += chunk;
+          });
+
+          res.on('end', () => {
+            try {
+              const response = JSON.parse(responseData);
+              
+              if (res.statusCode === 200) {
+                log.info('✅ Successfully registered folders with ClaraCore:', response);
+                resolve({ success: true, response });
+              } else {
+                log.warn(`⚠️ ClaraCore returned status ${res.statusCode}:`, response);
+                resolve({ success: false, statusCode: res.statusCode, response });
+              }
+            } catch (parseError) {
+              log.error('Failed to parse ClaraCore response:', parseError);
+              resolve({ success: false, error: 'Invalid response from ClaraCore' });
+            }
+          });
+        });
+
+        req.on('error', (error) => {
+          // ClaraCore might not be running yet - this is okay
+          log.info('ℹ️ Could not connect to ClaraCore (may not be started yet):', error.message);
+          resolve({ success: false, error: error.message, note: 'ClaraCore may handle this on startup' });
+        });
+
+        req.on('timeout', () => {
+          req.destroy();
+          log.warn('⏱️ Request to ClaraCore timed out');
+          resolve({ success: false, error: 'Timeout connecting to ClaraCore' });
+        });
+
+        req.write(requestData);
+        req.end();
+      });
+
+    } catch (error) {
+      log.error('Error adding folders to ClaraCore:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
   async scanModels() {
     const models = [];
     const sources = [
@@ -3290,196 +3421,81 @@ ${cmdLine}`;
       this.handleFlashAttentionRequired = false;
       this.needsPortRetry = false;
 
-      // ===== COMPREHENSIVE GPU & BINARY SETUP (ALWAYS RUN) =====
-      this.setStartupPhase('Checking GPU and binary setup...');
-      log.info('🚀 Starting comprehensive GPU and binary verification...');
-      
-      try {
-        // Step 1: Always check and setup GPU-specific folders if missing (with timeout)
-        log.info('🔍 Step 1: Ensuring GPU folders and binaries...');
-        const setupPromise = this.ensureGPUFoldersAndBinaries();
-        const setupResult = await Promise.race([
-          setupPromise,
-          new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('GPU setup timeout after 60 seconds')), 60000)
-          )
-        ]);
-        log.info('✅ Step 1 completed:', setupResult.message || 'GPU setup finished');
-        
-        // Step 2: Verify current GPU detection and folder selection (with timeout)
-        log.info('🔍 Step 2: Verifying current GPU setup...');
-        const verifyPromise = this.verifyCurrentGPUSetup();
-        const verifyResult = await Promise.race([
-          verifyPromise,
-          new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('GPU verification timeout after 30 seconds')), 30000)
-          )
-        ]);
-        log.info('✅ Step 2 completed:', verifyResult.message || 'GPU verification finished');
-        
-      } catch (gpuError) {
-        log.error('⚠️ GPU setup/verification failed, but service will continue:', gpuError.message);
-        log.info('🔄 Service will attempt to use available binaries...');
-        
-        // Don't fail the entire startup just because GPU setup failed
-        // The service can still work with base binaries
-      }
+      // ===== SIMPLIFIED CLARACORE STARTUP =====
+      // Skip all llama.cpp binary downloads and config generation
+      // ClaraCore manages its own binaries and configuration
+      this.setStartupPhase('Preparing ClaraCore startup...');
+      log.info('🚀 Starting ClaraCore - skipping legacy setup...');
 
-      // Check for stale processes after updates
+      // Check for stale processes
       this.setStartupPhase('Cleaning up previous processes...');
       await this.cleanupStaleProcesses();
 
-      // macOS Security Pre-check - Prepare for potential firewall prompts
-      if (process.platform === 'darwin') {
-        this.setStartupPhase('Checking macOS security permissions...');
-        log.info('🔒 macOS detected - checking network security requirements...');
+      // Port availability check only
+      this.setStartupPhase('Checking port availability...');
+      try {
+        const net = require('net');
+        const server = net.createServer();
         
-        if (this.ipcLogger) {
-          this.ipcLogger.logServiceCall('LlamaSwapService', 'macOS-security-check');
-        }
-        
-        // Check if port is already in use (could indicate permission issues)
-        try {
-          const net = require('net');
-          const server = net.createServer();
-          
-          await new Promise((resolve, reject) => {
-            server.listen(this.port, '127.0.0.1', () => {
-              server.close();
-              resolve(true);
-            });
-            
-            server.on('error', (err) => {
-              if (err.code === 'EADDRINUSE') {
-                log.warn(`⚠️ Port ${this.port} already in use - may indicate permission or conflict issues`);
-              }
-              reject(err);
-            });
+        await new Promise((resolve, reject) => {
+          server.listen(this.port, '127.0.0.1', () => {
+            server.close();
+            resolve(true);
           });
           
-          log.info('✅ Port availability check passed');
-        } catch (portError) {
-          if (portError.code === 'EADDRINUSE') {
-            log.warn(`⚠️ Port ${this.port} is already in use. This may cause permission prompts.`);
-          }
-          if (this.ipcLogger) {
-            this.ipcLogger.logError('LlamaSwapService.portCheck', portError);
-          }
-        }
+          server.on('error', (err) => {
+            if (err.code === 'EADDRINUSE') {
+              log.warn(`⚠️ Port ${this.port} already in use`);
+            }
+            reject(err);
+          });
+        });
         
-        log.info('🔓 Network security check complete. Starting service...');
-        log.info('💡 If macOS shows a firewall prompt, please click "Allow" to enable local AI functionality.');
+        log.info(`✅ Port ${this.port} is available`);
+      } catch (portError) {
+        if (portError.code === 'EADDRINUSE') {
+          log.warn(`⚠️ Port ${this.port} is already in use. Attempting to start anyway...`);
+        }
       }
-
-      // Verify and repair binaries after potential updates
-      this.setStartupPhase('Verifying binary files...');
-      log.info('🔧 Verifying binary integrity after potential updates...');
-      await this.verifyAndRepairBinariesAfterUpdate();
-
-      // Validate binaries before attempting to start (this will auto-download if missing)
-      this.setStartupPhase('Validating installation...');
-      log.info('🔍 Final binary validation before startup...');
-      await this.validateBinaries();
       
-      // Ensure models directory and config exist
-      this.setStartupPhase('Setting up directories and models...');
+      // Ensure models directory exists (for folder registration)
+      this.setStartupPhase('Setting up directories...');
       await this.ensureDirectories();
       
-      // Generate configuration and wait for it to be properly written (unless skipped)
+      // Add model folders to ClaraCore's database
       if (!skipConfigGeneration) {
-        this.setStartupPhase('Generating configuration...');
-        log.info('⚙️ Generating llama-swap configuration...');
-        await this.generateConfig();
-        
-        // Wait a bit after config generation to ensure files are properly written to disk
-        this.setStartupPhase('Finalizing configuration...');
-        log.info('⏱️ Waiting for configuration to be fully written...');
-        await new Promise(resolve => setTimeout(resolve, 2000)); // 2 second delay
+        this.setStartupPhase('Registering model folders with ClaraCore...');
+        log.info('📁 Adding model folders to ClaraCore database...');
+        await this.addFoldersToClaraCore();
       } else {
-        this.setStartupPhase('Using existing configuration...');
-        log.info('⏭️ Skipping configuration generation - using existing optimized config');
-      }
-      
-      // Additional verification that config file exists and is readable
-      this.setStartupPhase('Verifying configuration...');
-      try {
-        await fs.access(this.configPath, fs.constants.F_OK | fs.constants.R_OK);
-        const configContent = await fs.readFile(this.configPath, 'utf8');
-        if (configContent.length < 100) {
-          this.setStartupPhase('Waiting for configuration to complete...');
-          log.warn('⚠️ Configuration file seems too small, waiting longer...');
-          await new Promise(resolve => setTimeout(resolve, 3000)); // Additional 3 second delay
-        }
-        log.info('✅ Configuration file verified and ready');
-      } catch (configError) {
-        log.error('❌ Configuration file verification failed:', configError.message);
-        throw new Error(`Configuration file not ready: ${configError.message}`);
+        log.info('⏭️ Skipping folder registration - using existing ClaraCore database');
       }
 
-      this.setStartupPhase('Starting service...');
-      log.info('🚀 All checks passed - starting llama-swap service...');
-      log.info(`🎮 Platform: ${this.platformInfo.platformDir}`);
-      log.info(`📁 Binary path: ${this.binaryPaths.llamaSwap}`);
-      log.info(`📁 Config path: ${this.configPath}`);
-      log.info(`🌐 Port: ${this.port}`);
+      // ClaraCore startup - simplified, no config or binary paths needed
+      this.setStartupPhase('Starting ClaraCore...');
+      log.info('🚀 Starting ClaraCore service...');
+      log.info(`� Port: ${this.port}`);
 
-      // Fixed command line arguments according to the binary's help output
+      // ClaraCore is a standalone binary, just needs the port
       const args = [
-        '-config', this.configPath,
-        '-listen', `127.0.0.1:${this.port}` // Bind to localhost only for better security
+        '--port', this.port.toString()
       ];
 
       log.info(`🚀 Starting with args: ${args.join(' ')}`);
       
-      if (this.ipcLogger) {
-        this.ipcLogger.logProcessSpawn(this.binaryPaths.llamaSwap, args, {
-          port: this.port,
-          config: this.configPath
-        });
-      }
-
-      // Final port check right before spawning - catch any lingering processes
-      this.setStartupPhase('Checking port availability...');
-      log.info('🔍 Performing final port availability check...');
-      await this.killProcessesOnPort(this.port);
+      // Get ClaraCore binary path
+      const claraCoreBinary = this.getClaraCoreBinaryPath();
+      log.info(`📁 ClaraCore binary: ${claraCoreBinary}`);
       
-      // Double-check port is actually free by trying to bind to it briefly
-      try {
-        const net = require('net');
-        const testServer = net.createServer();
-        
-        await new Promise((resolve, reject) => {
-          testServer.listen(this.port, '127.0.0.1', () => {
-            testServer.close();
-            log.info(`✅ Port ${this.port} is available for use`);
-            resolve();
-          });
-          
-          testServer.on('error', (err) => {
-            if (err.code === 'EADDRINUSE') {
-              log.error(`❌ Port ${this.port} is still in use after cleanup attempts`);
-              reject(new Error(`Port ${this.port} is still in use after cleanup. Please manually stop any processes using this port.`));
-            } else {
-              reject(err);
-            }
-          });
+      if (this.ipcLogger) {
+        this.ipcLogger.logProcessSpawn(claraCoreBinary, args, {
+          port: this.port
         });
-      } catch (portError) {
-        if (this.ipcLogger) {
-          this.ipcLogger.logError('LlamaSwapService.finalPortCheck', portError);
-        }
-        throw portError;
       }
 
-      // Final preparation delay - ensure all file operations are complete
-      this.setStartupPhase('Final preparations...');
-      log.info('⏱️ Final preparation before spawning process...');
-      await new Promise(resolve => setTimeout(resolve, 1000)); // 1 second final delay
-
-      this.setStartupPhase('Launching Clara\'s Pocket...');
-      this.process = spawn(this.binaryPaths.llamaSwap, args, {
+      this.setStartupPhase('Launching ClaraCore...');
+      this.process = spawn(claraCoreBinary, args, {
         stdio: ['ignore', 'pipe', 'pipe'],
-        env: this.platformManager.getPlatformEnvironment(),
         detached: false
       });
 
