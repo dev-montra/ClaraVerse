@@ -213,7 +213,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getInitializationStatus: () => ipcRenderer.invoke('get-initialization-status')
 });
 
-// Add llama-swap service API
+// Add llama-swap service API - REMOVED (service deprecated)
+/*
 contextBridge.exposeInMainWorld('llamaSwap', {
   start: () => ipcRenderer.invoke('start-llama-swap'),
   stop: () => ipcRenderer.invoke('stop-llama-swap'),
@@ -262,6 +263,7 @@ contextBridge.exposeInMainWorld('llamaSwap', {
   saveModelConfiguration: (modelName, modelConfig) => ipcRenderer.invoke('save-model-configuration', modelName, modelConfig),
   saveAllModelConfigurations: (modelConfigs) => ipcRenderer.invoke('save-all-model-configurations', modelConfigs)
 });
+*/
 
 // Add model management API
 contextBridge.exposeInMainWorld('modelManager', {

@@ -176,14 +176,9 @@ export const useClaraCoreAutostart = (notebook: NotebookResponse | null) => {
   // Check Clara Core status
   const checkClaraCoreStatus = useCallback(async (): Promise<boolean> => {
     try {
-      const llamaSwap = (window as any).llamaSwap;
-      if (!llamaSwap) {
-        console.warn('📝 useClaraCoreAutostart: LlamaSwap service not available');
-        return false;
-      }
-
-      const statusResult = await llamaSwap.getStatusWithHealth();
-      return statusResult.isRunning && statusResult.isResponding;
+      // LlamaSwap service has been removed
+      console.warn('📝 useClaraCoreAutostart: LlamaSwap service not available (removed)');
+      return false;
     } catch (error) {
       console.error('📝 useClaraCoreAutostart: Failed to check Clara Core status:', error);
       return false;

@@ -4772,9 +4772,9 @@ const ClaraAssistantInput: React.FC<ClaraInputProps> = ({
     try {
       // Check if it's Clara's Pocket (Clara Core)
       if (currentProvider.type === 'claras-pocket') {
-        const llamaSwap = (window as any).llamaSwap;
-        if (llamaSwap?.getStatus) {
-          const status = await llamaSwap.getStatus();
+        // LlamaSwap service has been removed
+        const status = { isRunning: false };
+        if (false) {
           const isHealthy = status.isRunning;
           
           if (!isHealthy) {
@@ -4895,9 +4895,9 @@ const ClaraAssistantInput: React.FC<ClaraInputProps> = ({
       }
 
       // Check if Clara Core is running
-      const llamaSwap = (window as any).llamaSwap;
-      if (llamaSwap?.getStatus) {
-        const status = await llamaSwap.getStatus();
+      // LlamaSwap service has been removed
+      const status = { isRunning: false };
+      if (false) {
         
         if (!status.isRunning) {
           // Try to start Clara Core

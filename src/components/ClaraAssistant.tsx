@@ -717,39 +717,7 @@ const ClaraAssistant: React.FC<ClaraAssistantProps> = ({ onPageChange }) => {
     serviceName: string | null;
     phase: string | null;
   }> => {
-    try {
-      // Check Clara's Pocket service status - check regardless of current provider setting
-      // since during startup the provider might not be set yet
-      if (window.llamaSwap) {
-        const status = await window.llamaSwap.getStatus?.();
-        console.log('🔍 Checking llamaSwap service status:', status);
-        
-        if (status?.isStarting) {
-          console.log(`🚀 Service starting detected: ${status.currentStartupPhase || 'Initializing...'}`);
-          return {
-            isStarting: true,
-            serviceName: "Clara's Core",
-            phase: status.currentStartupPhase || 'Initializing...'
-          };
-        }
-        
-        // Also check if service is running but models haven't loaded yet
-        if (status?.isRunning && models.length === 0) {
-          console.log('🔄 Service running but models not loaded yet, checking if it just started...');
-          // If service just started (within last 30 seconds), consider it still starting
-          if (status.startingTimestamp && (Date.now() - status.startingTimestamp) < 30000) {
-            return {
-              isStarting: true,
-              serviceName: "Clara's Core",
-              phase: 'Loading models...'
-            };
-          }
-        }
-      }
-      
-      // Check for other service startup indicators here if needed
-      // For example, check MCP services, other providers, etc.
-      
+    try {      
       return {
         isStarting: false,
         serviceName: null,
@@ -1079,15 +1047,7 @@ const ClaraAssistant: React.FC<ClaraAssistantProps> = ({ onPageChange }) => {
         for (const provider of loadedProviders) {
           try {
             // Special handling for Clara's Pocket provider - wait for service to be ready
-            if (provider.type === 'claras-pocket' && window.llamaSwap) {
-              const status = await window.llamaSwap.getStatus?.();
-              if (status?.isStarting) {
-                console.log(`⏳ Clara's Core is starting, skipping model loading for now...`);
-                // Don't load models yet, they will be loaded once startup completes
-                continue;
-              }
-            }
-            
+            // LlamaSwap service has been removed
             const providerModels = await claraApiService.getModels(provider.id);
             allModels = [...allModels, ...providerModels];
             console.log(`Loaded ${providerModels.length} models from provider: ${provider.name}`);
@@ -3045,7 +3005,8 @@ You can:
     // Only preload for local services that might be down
     if (sessionConfig.aiConfig.provider === 'claras-pocket') {
       try {
-        const status = await window.llamaSwap?.getStatus();
+        // LlamaSwap service has been removed
+        const status = { isRunning: false };
         if (!status?.isRunning) {
           console.log('🚀 Starting local server...');
           await claraApiService.preloadModel(sessionConfig.aiConfig, messages);
