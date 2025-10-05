@@ -3922,7 +3922,7 @@ const ClaraAssistantInput: React.FC<ClaraInputProps> = ({
   const [showProviderOfflineModal, setShowProviderOfflineModal] = useState(false);
   const [providerOfflineMessage, setProviderOfflineMessage] = useState('');
   const [offlineProvider, setOfflineProvider] = useState<ClaraProvider | null>(null);
-  const [showClaraCoreOffer, setShowClaraCoreOffer] = useState(false);
+  const [alternativeProviders, setAlternativeProviders] = useState<ClaraProvider[]>([]);
 
   // Screen sharing state
   const [isScreenSharing, setIsScreenSharing] = useState(false);
@@ -4754,6 +4754,29 @@ const ClaraAssistantInput: React.FC<ClaraInputProps> = ({
     return attachments;
   }, []);
 
+  // Check health of all providers and find working alternatives
+  const checkAlternativeProviders = useCallback(async (excludeProviderId: string): Promise<ClaraProvider[]> => {
+    const alternativeProviders = providers.filter(p => 
+      p.id !== excludeProviderId && 
+      p.isEnabled
+    );
+
+    const healthResults = await Promise.all(
+      alternativeProviders.map(async (provider) => {
+        try {
+          const isHealthy = await claraApiService.testProvider(provider);
+          return { provider, isHealthy };
+        } catch {
+          return { provider, isHealthy: false };
+        }
+      })
+    );
+
+    return healthResults
+      .filter(r => r.isHealthy)
+      .map(r => r.provider);
+  }, [providers]);
+
   // Provider health check function
   const checkProviderHealth = useCallback(async (): Promise<boolean> => {
     if (!sessionConfig?.aiConfig?.provider) {
@@ -4770,57 +4793,26 @@ const ClaraAssistantInput: React.FC<ClaraInputProps> = ({
     setProviderHealthStatus('checking');
 
     try {
-      // Check if it's Clara's Pocket (Clara Core)
-      if (currentProvider.type === 'claras-pocket') {
-        // LlamaSwap service has been removed
-        const status = { isRunning: false };
-        if (false) {
-          const isHealthy = status.isRunning;
-          
-          if (!isHealthy) {
-            setOfflineProvider(currentProvider);
-            
-            // Check if the service is currently starting
-            if (status.isStarting) {
-              const startupMessage = status.currentStartupPhase 
-                ? `Clara's Pocket is starting: ${status.currentStartupPhase}`
-                : 'Clara\'s Pocket is starting up, please wait...';
-              
-              // Calculate duration
-              const durationText = status.startingDuration > 0 
-                ? ` (${status.startingDuration}s)`
-                : '';
-                
-              setProviderOfflineMessage(`${startupMessage}${durationText}`);
-            } else {
-              setProviderOfflineMessage(`Clara's Pocket is not running. Would you like to start it?`);
-            }
-            
-            setShowClaraCoreOffer(false); // Don't offer switch since this IS Clara Core
-            setShowProviderOfflineModal(true);
-            setProviderHealthStatus('unhealthy');
-            return false;
-          }
-        } else {
-          setOfflineProvider(currentProvider);
-          setProviderOfflineMessage(`Clara's Pocket service is not available.`);
-          setShowClaraCoreOffer(false);
-          setShowProviderOfflineModal(true);
-          setProviderHealthStatus('unhealthy');
-          return false;
-        }
-      } else {
-        // For other providers, use the health check API
-        const isHealthy = await claraApiService.testProvider(currentProvider);
+      // Test provider health
+      const isHealthy = await claraApiService.testProvider(currentProvider);
+      
+      if (!isHealthy) {
+        setOfflineProvider(currentProvider);
         
-        if (!isHealthy) {
-          setOfflineProvider(currentProvider);
-          setProviderOfflineMessage(`${currentProvider.name} is not responding. The service may be down or unreachable.`);
-          setShowClaraCoreOffer(true); // Offer to switch to Clara Core
-          setShowProviderOfflineModal(true);
-          setProviderHealthStatus('unhealthy');
-          return false;
+        // Check for alternative working providers
+        const alternatives = await checkAlternativeProviders(currentProvider.id);
+        if (alternatives.length > 0) {
+          const providerNames = alternatives.map(p => p.name).join(', ');
+          setProviderOfflineMessage(`${currentProvider.name} is not responding. Try switching to: ${providerNames}`);
+          setAlternativeProviders(alternatives);
+        } else {
+          setProviderOfflineMessage(`${currentProvider.name} is not responding. No alternative providers are currently available.`);
+          setAlternativeProviders([]);
         }
+        
+        setShowProviderOfflineModal(true);
+        setProviderHealthStatus('unhealthy');
+        return false;
       }
 
       setProviderHealthStatus('healthy');
@@ -4829,12 +4821,12 @@ const ClaraAssistantInput: React.FC<ClaraInputProps> = ({
       console.error('Provider health check failed:', error);
       setOfflineProvider(currentProvider);
       setProviderOfflineMessage(`Failed to check ${currentProvider.name} status: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      setShowClaraCoreOffer(currentProvider.type !== 'claras-pocket');
       setShowProviderOfflineModal(true);
       setProviderHealthStatus('unhealthy');
+      setAlternativeProviders([]);
       return false;
     }
-  }, [sessionConfig?.aiConfig?.provider, providers]);
+  }, [sessionConfig?.aiConfig?.provider, providers, checkAlternativeProviders]);
 
   // Poll for service status when the offline modal is shown and service is starting
   useEffect(() => {
@@ -4860,75 +4852,6 @@ const ClaraAssistantInput: React.FC<ClaraInputProps> = ({
 
     return () => clearInterval(pollInterval);
   }, [showProviderOfflineModal, providerOfflineMessage, checkProviderHealth]);
-
-  // Handle starting Clara Core
-  const handleStartClaraCore = useCallback(async () => {
-    if (offlineProvider?.type === 'claras-pocket') {
-      try {
-        const llamaSwap = (window as any).llamaSwap;
-        if (llamaSwap?.start) {
-          const result = await llamaSwap.start();
-          if (result.success) {
-            setShowProviderOfflineModal(false);
-            setProviderHealthStatus('healthy');
-          } else {
-            setProviderOfflineMessage(`Failed to start Clara's Pocket: ${result.error || 'Unknown error'}`);
-          }
-        }
-      } catch (error) {
-        console.error('Failed to start Clara Core:', error);
-        setProviderOfflineMessage(`Failed to start Clara's Pocket: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      }
-    }
-  }, [offlineProvider]);
-
-  // Handle switching to Clara Core
-  const handleSwitchToClaraCore = useCallback(async () => {
-    try {
-      // Find Clara Core provider
-      const claraCoreProvider = providers.find(p => p.type === 'claras-pocket');
-      
-      if (!claraCoreProvider) {
-        console.error('Clara Core provider not found');
-        setProviderOfflineMessage('Clara Core provider is not available.');
-        return;
-      }
-
-      // Check if Clara Core is running
-      // LlamaSwap service has been removed
-      const status = { isRunning: false };
-      if (false) {
-        
-        if (!status.isRunning) {
-          // Try to start Clara Core
-          if (llamaSwap?.start) {
-            const startResult = await llamaSwap.start();
-            if (!startResult.success) {
-              setProviderOfflineMessage(`Failed to start Clara's Pocket: ${startResult.error || 'Unknown error'}`);
-              return;
-            }
-            // Wait a moment for service to be ready
-            await new Promise(resolve => setTimeout(resolve, 2000));
-          } else {
-            setProviderOfflineMessage('Clara Core service is not available.');
-            return;
-          }
-        }
-
-        // Switch to Clara Core provider
-        if (onProviderChange) {
-          onProviderChange(claraCoreProvider.id);
-          setShowProviderOfflineModal(false);
-          setProviderHealthStatus('healthy');
-        }
-      } else {
-        setProviderOfflineMessage('Clara Core service is not available.');
-      }
-    } catch (error) {
-      console.error('Failed to switch to Clara Core:', error);
-      setProviderOfflineMessage(`Failed to switch to Clara Core: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }, [providers, onProviderChange]);
 
   // Send message
   const handleSend = useCallback(async () => {
@@ -6798,10 +6721,6 @@ You can right-click on the image to save it or use it in your projects.`;
     }
   }, [screenStream, addInfoNotification, addErrorNotification]);
 
-  // Check if Clara's Pocket is currently starting
-  const isServiceStarting = offlineProvider?.type === 'claras-pocket' && 
-    providerOfflineMessage.includes('starting');
-
   return (
     <div 
       ref={containerRef}
@@ -7629,38 +7548,14 @@ You can right-click on the image to save it or use it in your projects.`;
           <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl p-6 m-4 max-w-md w-full mx-auto">
             {/* Icon */}
             <div className="flex justify-center mb-4">
-              <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
-                isServiceStarting 
-                  ? 'bg-blue-100 dark:bg-blue-900' 
-                  : 'bg-red-100 dark:bg-red-900'
-              }`}>
-                {isServiceStarting ? (
-                  <div className="w-6 h-6 text-blue-600 dark:text-blue-400">
-                    <svg className="animate-spin w-full h-full" fill="none" viewBox="0 0 24 24">
-                      <circle
-                        className="opacity-25"
-                        cx="12"
-                        cy="12"
-                        r="10"
-                        stroke="currentColor"
-                        strokeWidth="4"
-                      ></circle>
-                      <path
-                        className="opacity-75"
-                        fill="currentColor"
-                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                      ></path>
-                    </svg>
-                  </div>
-                ) : (
-                  <AlertCircle className="w-6 h-6 text-red-600 dark:text-red-400" />
-                )}
+              <div className="w-12 h-12 rounded-full flex items-center justify-center bg-red-100 dark:bg-red-900">
+                <AlertCircle className="w-6 h-6 text-red-600 dark:text-red-400" />
               </div>
             </div>
 
             {/* Title */}
             <h2 className="text-xl font-bold text-gray-900 dark:text-white text-center mb-3">
-              {isServiceStarting ? 'Starting Clara\'s Pocket' : 'Provider Not Responding (Probably Restarting)'}
+              Provider Not Responding
             </h2>
 
             {/* Message */}
@@ -7668,35 +7563,48 @@ You can right-click on the image to save it or use it in your projects.`;
               {providerOfflineMessage}
             </p>
 
+            {/* Alternative Providers Section */}
+            {alternativeProviders.length > 0 && (
+              <div className="mb-4">
+                <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
+                  Available Providers:
+                </h3>
+                <div className="space-y-2">
+                  {alternativeProviders.map((provider) => {
+                    const ProviderIcon = provider.type === 'ollama' ? Server : 
+                                        provider.type === 'openai' ? Bot : 
+                                        provider.type === 'openrouter' ? Zap : Server;
+                    return (
+                      <button
+                        key={provider.id}
+                        onClick={() => {
+                          if (onProviderChange) {
+                            onProviderChange(provider.id);
+                            setShowProviderOfflineModal(false);
+                          }
+                        }}
+                        className="w-full bg-green-50 dark:bg-green-900/20 hover:bg-green-100 dark:hover:bg-green-900/30 border border-green-200 dark:border-green-700 text-green-700 dark:text-green-300 font-semibold py-3 px-4 rounded-lg transition-colors duration-200 flex items-center space-x-3"
+                      >
+                        <ProviderIcon className="w-5 h-5 flex-shrink-0" />
+                        <div className="flex-1 text-left">
+                          <div className="font-semibold">{provider.name}</div>
+                          <div className="text-xs opacity-75 truncate">{provider.baseUrl}</div>
+                        </div>
+                        <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" />
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Action Buttons */}
             <div className="flex flex-col space-y-3">
-              {offlineProvider?.type === 'claras-pocket' && !isServiceStarting ? (
-                // If current provider is Clara Core and NOT starting, offer to start it
-                <button
-                  onClick={handleStartClaraCore}
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors duration-200 flex items-center justify-center space-x-2"
-                >
-                  <Server className="w-5 h-5" />
-                  <span>Start Clara's Pocket</span>
-                </button>
-              ) : offlineProvider?.type !== 'claras-pocket' ? (
-                // If current provider is not Clara Core, offer to switch
-                showClaraCoreOffer && (
-                  <button
-                    onClick={handleSwitchToClaraCore}
-                    className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors duration-200 flex items-center justify-center space-x-2"
-                  >
-                    <Server className="w-5 h-5" />
-                    <span>Switch to Clara's Pocket</span>
-                  </button>
-                )
-              ) : null}
-              
               <button
                 onClick={() => setShowProviderOfflineModal(false)}
                 className="w-full bg-gray-500 hover:bg-gray-600 text-white font-semibold py-3 px-6 rounded-lg transition-colors duration-200"
               >
-                {isServiceStarting ? 'Hide' : 'Cancel'}
+                Cancel
               </button>
             </div>
           </div>

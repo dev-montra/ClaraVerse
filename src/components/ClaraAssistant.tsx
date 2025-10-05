@@ -1046,8 +1046,6 @@ const ClaraAssistant: React.FC<ClaraAssistantProps> = ({ onPageChange }) => {
         let allModels: ClaraModel[] = [];
         for (const provider of loadedProviders) {
           try {
-            // Special handling for Clara's Pocket provider - wait for service to be ready
-            // LlamaSwap service has been removed
             const providerModels = await claraApiService.getModels(provider.id);
             allModels = [...allModels, ...providerModels];
             console.log(`Loaded ${providerModels.length} models from provider: ${provider.name}`);
@@ -1071,54 +1069,7 @@ const ClaraAssistant: React.FC<ClaraAssistantProps> = ({ onPageChange }) => {
         // Get primary provider and set it in config
         const primaryProvider = loadedProviders.find(p => p.isPrimary) || loadedProviders[0];
         if (primaryProvider) {
-          // AUTO-START CLARA'S POCKET IF IT'S THE PRIMARY PROVIDER
-          if (primaryProvider.type === 'claras-pocket' && window.llamaSwap) {
-            try {
-              console.log("🚀 Checking Clara's Core status on startup...");
-              const status = await window.llamaSwap.getStatus?.();
-              if (!status?.isRunning) {
-                console.log("🔄 Clara's Core is not running, starting automatically...");
-                addInfoNotification(
-                  "Starting Clara's Core...",
-                  'Clara is starting up her local AI service for you. This may take a moment.',
-                  6000
-                );
-                
-                const result = await window.llamaSwap.start();
-                if (!result.success) {
-                  addErrorNotification(
-                    "Failed to Start Clara's Core",
-                    result.error || 'Could not start the local AI service. Please check your installation.',
-                    10000
-                  );
-                  console.error("❌ Failed to start Clara's Core:", result.error);
-                } else {
-                  console.log("✅ Clara's Core started successfully");
-                  addInfoNotification(
-                    "Clara's Core Ready",
-                    'Your local AI service is now running and ready to chat!',
-                    4000
-                  );
-                  // Wait a moment for service to be fully ready
-                  await new Promise(res => setTimeout(res, 2000));
-                }
-              } else {
-                console.log("✅ Clara's Core is already running");
-                addInfoNotification(
-                  "Clara's Core Online",
-                  'Your local AI service is ready and waiting for your messages.',
-                  3000
-                );
-              }
-            } catch (err) {
-              console.error("⚠️ Error checking/starting Clara's Core:", err);
-              addErrorNotification(
-                "Clara's Core Startup Error",
-                err instanceof Error ? err.message : 'Could not communicate with the local AI service.',
-                8000
-              );
-            }
-          }
+          console.log(`Setting primary provider: ${primaryProvider.name}`);
 
           // Update API service to use primary provider
           claraApiService.updateProvider(primaryProvider);
@@ -1235,7 +1186,7 @@ const ClaraAssistant: React.FC<ClaraAssistantProps> = ({ onPageChange }) => {
     loadProvidersAndModels();
   }, [userInfo]);
 
-  // Check if this is a first-time user and show setup modal when Clara Core is ready
+  // Check if this is a first-time user and show setup modal
   useEffect(() => {
     const checkFirstTimeUser = async () => {
       try {
@@ -1243,18 +1194,9 @@ const ClaraAssistant: React.FC<ClaraAssistantProps> = ({ onPageChange }) => {
         const hasCompletedSetup = localStorage.getItem('clara-setup-completed');
         
         if (!hasCompletedSetup && !isLoadingProviders) {
-          // Check if Clara Core is running successfully
-          const llamaSwap = (window as any).llamaSwap;
-          if (llamaSwap) {
-            const configInfo = await llamaSwap.getConfigurationInfo();
-            if (configInfo.success && configInfo.serviceStatus?.isRunning) {
-              console.log('🎯 First-time user detected with Clara Core running - showing setup modal');
-              setIsFirstTimeUser(true);
-              setShowFirstTimeSetup(true);
-            } else {
-              console.log('⏳ Clara Core not ready yet, waiting...');
-            }
-          }
+          console.log('🎯 First-time user detected - showing setup modal');
+          setIsFirstTimeUser(true);
+          setShowFirstTimeSetup(true);
         }
       } catch (error) {
         console.error('Error checking first-time user status:', error);
@@ -1297,18 +1239,17 @@ const ClaraAssistant: React.FC<ClaraAssistantProps> = ({ onPageChange }) => {
     checkModelsAndServices();
   }, [models, isLoadingProviders, checkServiceStartupStatus]);
 
-  // Poll for service startup status changes when a service is starting OR when we have no models
+  // Poll for service startup status changes when a service is starting
   useEffect(() => {
     let pollInterval: NodeJS.Timeout | null = null;
     
-    // Start polling if service is starting OR if we have no models and llamaSwap is available
-    const shouldPoll = serviceStartupStatus.isStarting || 
-                      (models.length === 0 && window.llamaSwap && !isLoadingProviders);
+    // Start polling if service is starting
+    const shouldPoll = serviceStartupStatus.isStarting;
     
     if (shouldPoll) {
       const reason = serviceStartupStatus.isStarting ? 
         `${serviceStartupStatus.serviceName} status` : 
-        'potential service startup (no models detected)';
+        'service startup';
       console.log(`🔄 Starting polling for ${reason}...`);
       
       pollInterval = setInterval(async () => {
@@ -2574,52 +2515,6 @@ You can:
       console.log('=== Switching to provider ===');
       console.log('Provider:', provider.name, '(ID:', providerId, ')');
       
-      // POCKET PROVIDER AUTO-START LOGIC
-      if (provider.type === 'claras-pocket' && window.llamaSwap) {
-        try {
-          console.log("🚀 Switching to Clara's Core - checking status...");
-          // Check if running
-          const status = await window.llamaSwap.getStatus?.();
-          if (!status?.isRunning) {
-            console.log("🔄 Clara's Core is not running, starting for provider switch...");
-            addInfoNotification(
-              "Starting Clara's Core...",
-              'Clara is starting up her local AI service. Please wait a moment.',
-              6000
-            );
-            const result = await window.llamaSwap.start();
-            if (!result.success) {
-              addErrorNotification(
-                "Failed to Start Clara's Core",
-                result.error || 'Could not start the local AI service. Please check your installation.',
-                10000
-              );
-              console.error("❌ Failed to start Clara's Core for provider switch:", result.error);
-              setIsLoadingProviders(false);
-              return;
-            }
-            console.log("✅ Clara's Core started successfully for provider switch");
-            addInfoNotification(
-              "Clara's Core Ready",
-              'Local AI service is now running and ready!',
-              3000
-            );
-            // Wait a moment for service to be ready
-            await new Promise(res => setTimeout(res, 2000));
-          } else {
-            console.log("✅ Clara's Core is already running for provider switch");
-          }
-        } catch (err) {
-          console.error("⚠️ Error starting Clara's Core for provider switch:", err);
-          addErrorNotification(
-            "Clara's Core Startup Error",
-            err instanceof Error ? err.message : 'Could not communicate with the local AI service.',
-            8000
-          );
-          setIsLoadingProviders(false);
-          return;
-        }
-      }
       // STEP 1: Health check the provider before proceeding (with caching)
       console.log('🏥 Testing provider health...');
       
@@ -2998,25 +2893,16 @@ You can:
     setIsLoading(false);
   }, []);
 
-  // Simple preload - only if server is down
+  // Simple preload - treat all providers equally
   const handlePreloadModel = useCallback(async () => {
     if (!sessionConfig.aiConfig) return;
     
-    // Only preload for local services that might be down
-    if (sessionConfig.aiConfig.provider === 'claras-pocket') {
-      try {
-        // LlamaSwap service has been removed
-        const status = { isRunning: false };
-        if (!status?.isRunning) {
-          console.log('🚀 Starting local server...');
-          await claraApiService.preloadModel(sessionConfig.aiConfig, messages);
-        }
-        // If server is running, no preload needed - it handles automatically
-      } catch (error) {
-        console.warn('⚠️ Simple preload check failed:', error);
-      }
+    try {
+      console.log('🚀 Preloading model...');
+      await claraApiService.preloadModel(sessionConfig.aiConfig, messages);
+    } catch (error) {
+      console.warn('⚠️ Preload failed:', error);
     }
-    // For cloud providers (OpenAI, etc.), no preload needed
   }, [sessionConfig.aiConfig, messages]);
 
   // Handle first-time setup completion

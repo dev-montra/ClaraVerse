@@ -2332,6 +2332,57 @@ function registerHandlers() {
     }
   });
 
+  // Watchdog service handlers
+  ipcMain.handle('watchdog-get-services-status', async () => {
+    try {
+      if (!watchdogService) {
+        return { success: false, error: 'Watchdog service not initialized' };
+      }
+      
+      return {
+        success: true,
+        services: watchdogService.getServicesStatus(),
+        overallHealth: watchdogService.getOverallHealth()
+      };
+    } catch (error) {
+      log.error('Error getting watchdog services status:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('watchdog-get-overall-health', async () => {
+    try {
+      if (!watchdogService) {
+        return { success: false, error: 'Watchdog service not initialized' };
+      }
+      
+      return {
+        success: true,
+        health: watchdogService.getOverallHealth()
+      };
+    } catch (error) {
+      log.error('Error getting watchdog overall health:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('watchdog-perform-manual-health-check', async () => {
+    try {
+      if (!watchdogService) {
+        return { success: false, error: 'Watchdog service not initialized' };
+      }
+      
+      const services = await watchdogService.performManualHealthCheck();
+      return {
+        success: true,
+        services: services
+      };
+    } catch (error) {
+      log.error('Error performing manual health check:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
   // Update containers
   ipcMain.handle('docker-update-containers', async (event, containerNames) => {
     try {
