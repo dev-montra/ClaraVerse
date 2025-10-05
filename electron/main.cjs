@@ -800,6 +800,29 @@ function registerMCPHandlers() {
 function registerServiceConfigurationHandlers() {
   console.log('[main] Registering service configuration IPC handlers...');
   
+  // Helper function to ensure Service Config Manager is initialized
+  function ensureServiceConfigManager() {
+    if (!serviceConfigManager) {
+      log.info('Service config manager not initialized, creating new instance...');
+      try {
+        serviceConfigManager = new ServiceConfigurationManager();
+        if (!centralServiceManager) {
+          centralServiceManager = new CentralServiceManager(serviceConfigManager);
+          
+          const { SERVICE_DEFINITIONS } = require('./serviceDefinitions.cjs');
+          Object.keys(SERVICE_DEFINITIONS).forEach(serviceName => {
+            const serviceDefinition = SERVICE_DEFINITIONS[serviceName];
+            centralServiceManager.registerService(serviceName, serviceDefinition);
+          });
+        }
+      } catch (error) {
+        log.warn('Failed to initialize service config manager:', error);
+        return null;
+      }
+    }
+    return serviceConfigManager;
+  }
+  
   // Get platform compatibility information
   ipcMain.handle('service-config:get-platform-compatibility', async () => {
     try {
@@ -1436,6 +1459,29 @@ function registerComfyUIHandlers() {
 
 // Register Python Backend specific IPC handlers
 function registerPythonBackendHandlers() {
+  // Helper function to ensure Service Config Manager is initialized
+  function ensureServiceConfigManager() {
+    if (!serviceConfigManager) {
+      log.info('Service config manager not initialized, creating new instance...');
+      try {
+        serviceConfigManager = new ServiceConfigurationManager();
+        if (!centralServiceManager) {
+          centralServiceManager = new CentralServiceManager(serviceConfigManager);
+          
+          const { SERVICE_DEFINITIONS } = require('./serviceDefinitions.cjs');
+          Object.keys(SERVICE_DEFINITIONS).forEach(serviceName => {
+            const serviceDefinition = SERVICE_DEFINITIONS[serviceName];
+            centralServiceManager.registerService(serviceName, serviceDefinition);
+          });
+        }
+      } catch (error) {
+        log.warn('Failed to initialize service config manager:', error);
+        return null;
+      }
+    }
+    return serviceConfigManager;
+  }
+
   // Check Docker status
   ipcMain.handle('check-docker-status', async () => {
     try {
@@ -1462,18 +1508,18 @@ function registerPythonBackendHandlers() {
       const configManager = ensureServiceConfigManager();
       
       // Get service configuration to determine mode (with fallback if service config manager is not available)
-      let config = null;
       let mode = 'docker'; // Default mode
+      let manualUrl = null;
       
-      if (configManager && typeof configManager.getServiceConfig === 'function') {
+      if (configManager && typeof configManager.getServiceMode === 'function') {
         try {
-          config = await configManager.getServiceConfig('notebooks');
-          mode = config?.deploymentMode || 'docker';
+          mode = configManager.getServiceMode('python-backend') || 'docker';
+          if (mode === 'manual' && typeof configManager.getServiceUrl === 'function') {
+            manualUrl = configManager.getServiceUrl('python-backend');
+          }
         } catch (configError) {
           log.warn('Error getting service config, using default mode:', configError.message);
         }
-      } else {
-        log.warn('Service config manager not available or getServiceConfig method not found, using default mode');
       }
       
       let serviceUrl = null;
@@ -1492,7 +1538,6 @@ function registerPythonBackendHandlers() {
         }
       } else {
         // Manual mode - check configured URL
-        const manualUrl = config?.manualUrl;
         if (manualUrl) {
           serviceUrl = manualUrl;
           // For manual mode, we can try to ping the URL
