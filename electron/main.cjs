@@ -33,6 +33,9 @@ const { getPlatformCompatibility, getCompatibleServices } = require('./serviceDe
 // Network Service Manager to prevent UI refreshes during crashes
 const NetworkServiceManager = require('./networkServiceManager.cjs');
 
+// Immutable Startup Settings Manager
+const { getStartupSettingsManager } = require('./startupSettingsManager.cjs');
+
 // Global helper functions for container configuration
 // These functions can be called from anywhere and will create container configs if needed
 
@@ -263,6 +266,10 @@ app.whenReady().then(() => {
   // Initialize Network Service Manager to prevent UI refreshes during crashes
   networkServiceManager = new NetworkServiceManager();
   log.info('🛡️ Network Service Manager initialized');
+  
+  // Initialize Immutable Startup Settings Manager
+  startupSettingsManager = getStartupSettingsManager();
+  log.info('🔒 Immutable Startup Settings Manager initialized');
 });
 
 // macOS Security Configuration - Prevent unnecessary firewall prompts
@@ -1629,6 +1636,320 @@ function registerPythonBackendHandlers() {
   log.info('Python Backend IPC handlers registered');
 }
 
+// Register isolated startup settings IPC handlers
+function registerStartupSettingsHandlers() {
+  // Initialize startup settings manager
+  if (!startupSettingsManager) {
+    startupSettingsManager = new StartupSettingsManager();
+    log.info('🔒 Isolated startup settings manager initialized');
+  }
+
+  // Get startup settings (read-only for other services)
+  ipcMain.handle('startup-settings:get', async () => {
+    try {
+      const settings = startupSettingsManager.getSettingsWithSync();
+      log.info('📄 Startup settings requested:', Object.keys(settings));
+      return { success: true, settings };
+    } catch (error) {
+      log.error('Error getting startup settings:', error);
+      return { success: false, error: error.message, settings: startupSettingsManager.defaultSettings };
+    }
+  });
+
+  // Update startup settings (requires explicit consent through this handler only)
+  ipcMain.handle('startup-settings:update', async (event, newSettings, userConsent = false) => {
+    try {
+      if (!userConsent) {
+        log.warn('⚠️ Startup settings update attempted without user consent');
+        return { success: false, error: 'User consent required for startup settings changes' };
+      }
+
+      log.info('🔒 Startup settings update with user consent:', Object.keys(newSettings));
+      
+      const updatedSettings = startupSettingsManager.updateSettings(newSettings);
+
+      // Apply auto-start setting immediately if provided
+      if (newSettings.autoStart !== undefined) {
+        const isDevelopment = updatedSettings.isDevelopment;
+        
+        if (isDevelopment) {
+          log.warn('Auto-start disabled in development mode');
+          app.setLoginItemSettings({
+            openAtLogin: false,
+            openAsHidden: false
+          });
+        } else {
+          app.setLoginItemSettings({
+            openAtLogin: newSettings.autoStart,
+            openAsHidden: newSettings.startMinimized || false,
+            path: process.execPath,
+            args: []
+          });
+        }
+      }
+
+      return { success: true, settings: updatedSettings };
+    } catch (error) {
+      log.error('Error updating startup settings:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Validate settings integrity
+  ipcMain.handle('startup-settings:validate', async (event, frontendChecksum) => {
+    try {
+      const settings = startupSettingsManager.getSettingsWithSync();
+      const isValid = settings.checksum === frontendChecksum;
+      
+      if (!isValid) {
+        log.warn('⚠️ Startup settings checksum mismatch detected!');
+        log.warn('Backend checksum:', settings.checksum);
+        log.warn('Frontend checksum:', frontendChecksum);
+      }
+
+      return { 
+        success: true, 
+        isValid, 
+        settings: isValid ? null : settings // Only send settings if mismatch
+      };
+    } catch (error) {
+      log.error('Error validating startup settings:', error);
+      return { success: false, error: error.message, isValid: false };
+    }
+  });
+
+  // Reset to defaults (requires explicit confirmation)
+  ipcMain.handle('startup-settings:reset', async (event, confirmed = false) => {
+    try {
+      if (!confirmed) {
+        return { success: false, error: 'Reset confirmation required' };
+      }
+
+      log.info('🔄 Resetting startup settings to defaults');
+      const defaultSettings = { ...startupSettingsManager.defaultSettings };
+      startupSettingsManager.writeSettings(defaultSettings);
+
+      return { success: true, settings: defaultSettings };
+    } catch (error) {
+      log.error('Error resetting startup settings:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Get file status (for debugging)
+  ipcMain.handle('startup-settings:get-file-status', async () => {
+    try {
+      const stats = {
+        mainFileExists: fs.existsSync(startupSettingsManager.settingsFile),
+        backupFileExists: fs.existsSync(startupSettingsManager.backupFile),
+        lockFileExists: fs.existsSync(startupSettingsManager.lockFile),
+        filePath: startupSettingsManager.settingsFile
+      };
+
+      if (stats.mainFileExists) {
+        const fileStats = fs.statSync(startupSettingsManager.settingsFile);
+        stats.lastModified = fileStats.mtime;
+        stats.fileSize = fileStats.size;
+      }
+
+      return { success: true, stats };
+    } catch (error) {
+      log.error('Error getting startup settings file status:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  log.info('🔒 Isolated startup settings IPC handlers registered');
+}
+
+// Dedicated startup settings manager - isolated from other services
+class StartupSettingsManager {
+  constructor() {
+    this.settingsFile = path.join(app.getPath('userData'), 'clara-startup-settings.json');
+    this.lockFile = this.settingsFile + '.lock';
+    this.backupFile = this.settingsFile + '.backup';
+    this.defaultSettings = {
+      startFullscreen: false,
+      startMinimized: false,
+      autoStart: false,
+      checkUpdates: true,
+      restoreLastSession: true,
+      autoStartMCP: true,
+      isDevelopment: process.env.NODE_ENV === 'development' || !app.isPackaged,
+      version: 1,
+      lastModified: Date.now()
+    };
+  }
+
+  // Check if file is locked by another operation
+  isLocked() {
+    return fs.existsSync(this.lockFile);
+  }
+
+  // Create lock file to prevent concurrent access
+  createLock() {
+    fs.writeFileSync(this.lockFile, JSON.stringify({ pid: process.pid, timestamp: Date.now() }));
+  }
+
+  // Remove lock file
+  removeLock() {
+    try {
+      if (fs.existsSync(this.lockFile)) {
+        fs.unlinkSync(this.lockFile);
+      }
+    } catch (error) {
+      log.warn('Failed to remove startup settings lock:', error);
+    }
+  }
+
+  // Read startup settings with backup recovery
+  readSettings() {
+    try {
+      let settings = null;
+      
+      // Try main file first
+      if (fs.existsSync(this.settingsFile)) {
+        try {
+          const data = fs.readFileSync(this.settingsFile, 'utf8');
+          settings = JSON.parse(data);
+          log.info('📄 Startup settings loaded from main file');
+        } catch (parseError) {
+          log.warn('Main startup settings file corrupted, trying backup...', parseError);
+          
+          // Try backup file
+          if (fs.existsSync(this.backupFile)) {
+            try {
+              const backupData = fs.readFileSync(this.backupFile, 'utf8');
+              settings = JSON.parse(backupData);
+              log.info('📄 Startup settings recovered from backup file');
+              
+              // Restore main file from backup
+              fs.writeFileSync(this.settingsFile, backupData);
+              log.info('📄 Main startup settings file restored from backup');
+            } catch (backupError) {
+              log.error('Backup startup settings file also corrupted:', backupError);
+            }
+          }
+        }
+      }
+
+      // If no valid settings found, use defaults
+      if (!settings || typeof settings !== 'object') {
+        log.info('📄 Using default startup settings');
+        settings = { ...this.defaultSettings };
+        this.writeSettings(settings); // Create initial file
+      }
+
+      // Merge with defaults for any missing properties
+      return { ...this.defaultSettings, ...settings };
+    } catch (error) {
+      log.error('Error reading startup settings:', error);
+      return { ...this.defaultSettings };
+    }
+  }
+
+  // Write startup settings with atomic operation and backup
+  writeSettings(settings) {
+    if (this.isLocked()) {
+      throw new Error('Startup settings are locked by another operation');
+    }
+
+    try {
+      this.createLock();
+
+      // Create backup of current file
+      if (fs.existsSync(this.settingsFile)) {
+        fs.copyFileSync(this.settingsFile, this.backupFile);
+      }
+
+      // Add metadata
+      const settingsWithMeta = {
+        ...settings,
+        version: this.defaultSettings.version,
+        lastModified: Date.now(),
+        isDevelopment: process.env.NODE_ENV === 'development' || !app.isPackaged
+      };
+
+      // Write to temporary file first (atomic operation)
+      const tempFile = this.settingsFile + '.tmp';
+      fs.writeFileSync(tempFile, JSON.stringify(settingsWithMeta, null, 2));
+
+      // Verify write was successful
+      const verifyData = fs.readFileSync(tempFile, 'utf8');
+      const verifySettings = JSON.parse(verifyData);
+      
+      if (!verifySettings || typeof verifySettings !== 'object') {
+        throw new Error('Settings verification failed - corrupted data');
+      }
+
+      // Atomic rename (replaces main file)
+      fs.renameSync(tempFile, this.settingsFile);
+
+      log.info('📄 Startup settings saved successfully:', {
+        startFullscreen: settingsWithMeta.startFullscreen,
+        startMinimized: settingsWithMeta.startMinimized,
+        autoStart: settingsWithMeta.autoStart,
+        checkUpdates: settingsWithMeta.checkUpdates,
+        restoreLastSession: settingsWithMeta.restoreLastSession,
+        autoStartMCP: settingsWithMeta.autoStartMCP,
+        isDevelopment: settingsWithMeta.isDevelopment
+      });
+
+      return { success: true };
+    } catch (error) {
+      log.error('Error writing startup settings:', error);
+      
+      // Clean up temp file if it exists
+      const tempFile = this.settingsFile + '.tmp';
+      if (fs.existsSync(tempFile)) {
+        try {
+          fs.unlinkSync(tempFile);
+        } catch (cleanupError) {
+          log.warn('Failed to cleanup temp file:', cleanupError);
+        }
+      }
+
+      throw error;
+    } finally {
+      this.removeLock();
+    }
+  }
+
+  // Update specific startup settings
+  updateSettings(newSettings) {
+    const currentSettings = this.readSettings();
+    const updatedSettings = { ...currentSettings, ...newSettings };
+    this.writeSettings(updatedSettings);
+    return updatedSettings;
+  }
+
+  // Get settings with frontend sync validation
+  getSettingsWithSync() {
+    const settings = this.readSettings();
+    
+    // Add checksum for frontend validation
+    const settingsString = JSON.stringify({
+      startFullscreen: settings.startFullscreen,
+      startMinimized: settings.startMinimized,
+      autoStart: settings.autoStart,
+      checkUpdates: settings.checkUpdates,
+      restoreLastSession: settings.restoreLastSession,
+      autoStartMCP: settings.autoStartMCP
+    });
+    
+    const crypto = require('crypto');
+    const checksum = crypto.createHash('md5').update(settingsString).digest('hex');
+    
+    return {
+      ...settings,
+      checksum
+    };
+  }
+}
+
+// Global startup settings manager instance (initialized in app ready event)
+let startupSettingsManager;
+
 // Register handlers for various app functions
 function registerHandlers() {
   console.log('[main] Registering IPC handlers...');
@@ -1639,6 +1960,7 @@ function registerHandlers() {
   registerN8NHandlers(); // NEW: Add N8N specific handlers
   registerComfyUIHandlers(); // NEW: Add ComfyUI specific handlers
   registerPythonBackendHandlers(); // NEW: Add Python Backend specific handlers
+  registerStartupSettingsHandlers(); // NEW: Add isolated startup settings handlers
   
   // Add new chat handler
   ipcMain.handle('new-chat', async () => {
@@ -2564,18 +2886,18 @@ function registerHandlers() {
       try {
         log.info('React app ready - checking MCP auto-start setting...');
         
-        // Check startup settings for MCP auto-start
+        // Check startup settings for MCP auto-start using isolated startup settings
         let shouldAutoStartMCP = true; // Default to true for backward compatibility
         
         try {
-          const settingsPath = path.join(app.getPath('userData'), 'clara-settings.json');
-          if (fs.existsSync(settingsPath)) {
-            const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-            const startupSettings = settings.startup || {};
-            shouldAutoStartMCP = startupSettings.autoStartMCP !== false; // Default to true if not set
+          if (!startupSettingsManager) {
+            startupSettingsManager = new StartupSettingsManager();
           }
+          const startupSettings = startupSettingsManager.readSettings();
+          shouldAutoStartMCP = startupSettings.autoStartMCP !== false; // Default to true if not set
+          log.info('🔒 Using isolated startup settings for MCP auto-start:', shouldAutoStartMCP);
         } catch (settingsError) {
-          log.warn('Error reading startup settings for MCP auto-start:', settingsError);
+          log.warn('Error reading isolated startup settings for MCP auto-start:', settingsError);
           // Default to true on error to maintain existing behavior
         }
 
@@ -4108,6 +4430,10 @@ async function createMainWindow() {
 
 // Initialize app when ready
 app.whenReady().then(async () => {
+  // Initialize isolated startup settings manager first
+  startupSettingsManager = new StartupSettingsManager();
+  log.info('🔒 Isolated startup settings manager initialized on app ready');
+  
   await initialize();
   
   // Create system tray
@@ -4116,7 +4442,7 @@ app.whenReady().then(async () => {
   // Register global shortcuts after app is ready
   registerGlobalShortcuts();
   
-  log.info('Application initialization complete with global shortcuts registered');
+  log.info('Application initialization complete with isolated startup settings and global shortcuts registered');
 });
 
 // Quit when all windows are closed
@@ -4211,57 +4537,38 @@ app.on('activate', async () => {
 
 // Register startup settings handler
 ipcMain.handle('set-startup-settings', async (event, settings) => {
+  // DEPRECATED: Redirect to isolated startup settings system
+  log.warn('⚠️ DEPRECATED: set-startup-settings called. Use startup-settings:update instead.');
+  
   try {
-    const userDataPath = app.getPath('userData');
-    const settingsPath = path.join(userDataPath, 'clara-settings.json');
-    
-    // Read current settings
-    let currentSettings = {};
-    if (fs.existsSync(settingsPath)) {
-      const settingsData = fs.readFileSync(settingsPath, 'utf8');
-      currentSettings = JSON.parse(settingsData);
+    if (!startupSettingsManager) {
+      startupSettingsManager = new StartupSettingsManager();
     }
     
-    // Update startup settings
-    currentSettings.startup = {
-      ...currentSettings.startup,
-      ...settings
-    };
-    
-    // For backward compatibility, also set fullscreen_startup
-    if (settings.startFullscreen !== undefined) {
-      currentSettings.fullscreen_startup = settings.startFullscreen;
-    }
-    
-    // Save updated settings
-    fs.writeFileSync(settingsPath, JSON.stringify(currentSettings, null, 2));
+    // Update using isolated system with implicit consent for backward compatibility
+    const result = await startupSettingsManager.updateSettings(settings);
     
     // Apply auto-start setting immediately if provided
     if (settings.autoStart !== undefined) {
-      // Check if we're in development mode
-      const isDevelopment = process.env.NODE_ENV === 'development' || !app.isPackaged;
+      const isDevelopment = result.isDevelopment;
       
       if (isDevelopment) {
-        // In development mode, disable auto-start to prevent issues
-        // with the Electron development executable
         log.warn('Auto-start disabled in development mode to prevent startup issues');
         app.setLoginItemSettings({
           openAtLogin: false,
           openAsHidden: false
         });
       } else {
-        // In production, use the built executable
         app.setLoginItemSettings({
           openAtLogin: settings.autoStart,
           openAsHidden: settings.startMinimized || false,
-          // Explicitly specify the path to avoid issues with electron templates
           path: process.execPath,
           args: []
         });
       }
     }
     
-    log.info('Startup settings updated successfully:', settings);
+    log.info('🔒 Startup settings updated via deprecated handler:', settings);
     return { success: true };
   } catch (error) {
     log.error('Error updating startup settings:', error);
@@ -4270,24 +4577,29 @@ ipcMain.handle('set-startup-settings', async (event, settings) => {
 });
 
 ipcMain.handle('get-startup-settings', async () => {
+  // DEPRECATED: Redirect to isolated startup settings system
+  log.warn('⚠️ DEPRECATED: get-startup-settings called. Use startup-settings:get instead.');
+  
   try {
-    const settingsPath = path.join(app.getPath('userData'), 'clara-settings.json');
-    const isDevelopment = process.env.NODE_ENV === 'development' || !app.isPackaged;
-    
-    let startupSettings = {};
-    if (fs.existsSync(settingsPath)) {
-      const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-      startupSettings = settings.startup || {};
+    if (!startupSettingsManager) {
+      startupSettingsManager = new StartupSettingsManager();
     }
     
-    // Add development mode flag
-    return {
-      ...startupSettings,
-      isDevelopment
-    };
+    const settings = startupSettingsManager.readSettings();
+    log.info('🔒 Startup settings retrieved via deprecated handler');
+    
+    return settings;
   } catch (error) {
-    log.error('Error reading startup settings:', error);
-    return { isDevelopment: false };
+    log.error('Error reading isolated startup settings:', error);
+    return { 
+      isDevelopment: process.env.NODE_ENV === 'development' || !app.isPackaged,
+      startFullscreen: false,
+      startMinimized: false,
+      autoStart: false,
+      checkUpdates: true,
+      restoreLastSession: true,
+      autoStartMCP: true
+    };
   }
 });
 

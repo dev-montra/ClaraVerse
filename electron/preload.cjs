@@ -138,9 +138,18 @@ contextBridge.exposeInMainWorld('electron', {
   hideToTray: () => ipcRenderer.send('hide-to-tray'),
   showFromTray: () => ipcRenderer.send('show-from-tray'),
   
-  // Update startup settings to use the new handle-based IPC
+  // DEPRECATED: Legacy startup settings APIs (use startupSettings instead)
   setStartupSettings: (settings) => ipcRenderer.invoke('set-startup-settings', settings),
   getStartupSettings: () => ipcRenderer.invoke('get-startup-settings'),
+  
+  // NEW: Isolated startup settings API with consent management
+  startupSettings: {
+    get: () => ipcRenderer.invoke('startup-settings:get'),
+    update: (settings, userConsent = false) => ipcRenderer.invoke('startup-settings:update', settings, userConsent),
+    validate: (frontendChecksum) => ipcRenderer.invoke('startup-settings:validate', frontendChecksum),
+    reset: (confirmed = false) => ipcRenderer.invoke('startup-settings:reset', confirmed),
+    getFileStatus: () => ipcRenderer.invoke('startup-settings:get-file-status')
+  },
   
   // Fast startup APIs for dashboard
   getInitializationState: () => ipcRenderer.invoke('get-initialization-state'),

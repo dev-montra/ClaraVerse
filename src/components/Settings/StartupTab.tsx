@@ -24,9 +24,27 @@ const StartupTab = () => {
 
   const handleStartupSettingChange = async (key: keyof StartupSettings, value: boolean) => {
     const startupService = StartupService.getInstance();
-    const newSettings = { ...settings, [key]: value };
-    setSettings(newSettings);
-    await startupService.updateStartupSettings(newSettings);
+    const newSettings = { [key]: value };
+    
+    // Show confirmation dialog for startup setting changes
+    const confirmed = confirm(
+      `Are you sure you want to ${value ? 'enable' : 'disable'} "${key}"?\n\n` +
+      'This will modify your protected startup settings.'
+    );
+    
+    if (confirmed) {
+      try {
+        // Update with explicit user consent
+        await startupService.updateStartupSettings(newSettings, true);
+        
+        // Update local state only after successful backend update
+        const updatedSettings = await startupService.getStartupSettings();
+        setSettings(updatedSettings);
+      } catch (error) {
+        console.error('Failed to update startup setting:', error);
+        alert('Failed to update startup setting: ' + (error instanceof Error ? error.message : String(error)));
+      }
+    }
   };
 
   return (

@@ -520,8 +520,28 @@ const Settings = () => {
       
       await db.updatePersonalInfo(updatedPersonalInfo);
       
-      // Also update the electron main process settings
-      if ((window as any).electron?.setStartupSettings) {
+      // Also update the electron main process settings with user consent
+      if ((window as any).electron?.startupSettings?.update) {
+        // Use new isolated startup settings API with explicit consent
+        const confirmed = confirm(
+          'Update startup settings?\n\n' +
+          'This will modify your protected startup configuration. Changes include:\n' +
+          Object.entries(updates).map(([key, value]) => `• ${key}: ${value}`).join('\n')
+        );
+        
+        if (confirmed) {
+          const result = await (window as any).electron.startupSettings.update(newConfig, true);
+          if (!result.success) {
+            throw new Error(result.error || 'Failed to update startup settings in electron');
+          }
+        } else {
+          // User cancelled, revert the change
+          setStartupConfig(startupConfig);
+          return;
+        }
+      } else if ((window as any).electron?.setStartupSettings) {
+        // Fallback to legacy API (deprecated)
+        console.warn('🔒 Using deprecated startup settings API. Please update to use consent-based system.');
         const result = await (window as any).electron.setStartupSettings(newConfig);
         if (!result.success) {
           throw new Error(result.error || 'Failed to update startup settings in electron');
