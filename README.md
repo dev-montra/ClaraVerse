@@ -74,7 +74,7 @@
 
 **Here's what happened to us (and probably you too):**
 
-We found ourselves constantly jumping between different AI apps — tired of paying for Claude subscriptions, then installing LM Studio for local models, then N8N for automation, then Ollama for model management, then OpenWebUI for a better chat interface...
+We found ourselves constantly jumping between different AI apps — tired of paying for Claude subscriptions, then installing LM Studio for local models, then N8N for automation, then Ollama for model management, then OpenWebUI for a better chat interface..
 
 When using Ollama, downloading models was the only way to get started — but then we were stuck with limited chat features. LM Studio was good for models, but the chat experience felt basic. We'd end up running everything in the background while building UIs and generating images separately.
 
