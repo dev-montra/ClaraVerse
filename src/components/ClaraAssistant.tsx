@@ -4423,7 +4423,6 @@ ${data.timezone ? `• **Timezone:** ${data.timezone}` : ''}`;
                 transition-all duration-300 ease-in-out
                 ${isArtifactPaneOpen ? 'translate-x-0' : 'translate-x-full'}
                 hidden md:block
-                border-l border-gray-200 dark:border-gray-700
               `}>
                 <ClaraArtifactPane
                   artifacts={artifacts}

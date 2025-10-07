@@ -761,6 +761,7 @@ const CodeBlock: React.FC<{
 }> = ({ children, language, className, isInline, isDark, isStreaming, ...props }) => {
   const [copied, setCopied] = useState(false);
   const [showCode, setShowCode] = useState(false);
+  const [isHighlighterReady, setIsHighlighterReady] = useState(false);
   
   const code = String(children).replace(/\n$/, '');
   
@@ -831,102 +832,30 @@ const CodeBlock: React.FC<{
     );
   }
 
-  // If this is a Mermaid diagram, render it visually (but only after streaming is complete)
-  if (isMermaidDiagram && !isStreaming) {
-    return (
-      <div className="my-4">
-        <InlineMermaidRenderer content={code} isDark={isDark} />
-        
-        {/* Show code option */}
-        <div className="mt-2 flex justify-end">
-          <button
-            onClick={() => setShowCode(!showCode)}
-            className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors flex items-center gap-1"
-          >
-            <Code2 className="w-3 h-3" />
-            {showCode ? 'Hide source' : 'Show source'}
-          </button>
-        </div>
-        
-        {showCode && (
-          <div className="mt-2 relative">
-            <div className="absolute top-2 right-2 z-10">
-              <button
-                onClick={handleCopy}
-                className="p-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white rounded transition-colors"
-                title="Copy code"
-              >
-                {copied ? <Eye className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-              </button>
-            </div>
-            <SyntaxHighlighter
-              style={isDark ? oneDark : oneLight}
-              language={language || 'text'}
-              PreTag="div"
-              className="text-sm rounded-lg"
-              showLineNumbers={false}
-              {...props}
-            >
-              {code}
-            </SyntaxHighlighter>
-          </div>
-        )}
-      </div>
-    );
-  }
+  // Mermaid diagrams are now shown in the artifact pane only - just show code here
+  // (The artifact preview button will allow users to open the rendered diagram)
 
-  // If this is a Chart.js JSON, render it visually (but only after streaming is complete)
-  if (isChartJSON && !isStreaming) {
-    return (
-      <div className="my-4">
-        <InlineChartRenderer content={code} isDark={isDark} />
-        
-        {/* Show code option */}
-        <div className="mt-2 flex justify-end">
-          <button
-            onClick={() => setShowCode(!showCode)}
-            className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors flex items-center gap-1"
-          >
-            <Code2 className="w-3 h-3" />
-            {showCode ? 'Hide source' : 'Show source'}
-          </button>
-        </div>
-        
-        {showCode && (
-          <div className="mt-2 relative">
-            <div className="absolute top-2 right-2 z-10">
-              <button
-                onClick={handleCopy}
-                className="p-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white rounded transition-colors"
-                title="Copy code"
-              >
-                {copied ? <Eye className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-              </button>
-            </div>
-            <SyntaxHighlighter
-              style={isDark ? oneDark : oneLight}
-              language="json"
-              PreTag="div"
-              className="text-sm rounded-lg"
-              showLineNumbers={false}
-              {...props}
-            >
-              {code}
-            </SyntaxHighlighter>
-          </div>
-        )}
-      </div>
-    );
-  }
+  // Charts are now shown in the artifact pane only - just show code here
+  // (The artifact preview button will allow users to open the rendered chart)
 
-  // If this is HTML content, render it visually (but only after streaming is complete)
-  if (isHTML && !isStreaming) {
-    return (
-      <div className="my-4">
-        <InlineHTMLRenderer content={code} isDark={isDark} />
-      </div>
-    );
-  }
+  // HTML content is now shown in the artifact pane only - just show code here
+  // (The artifact preview button will allow users to open the rendered HTML)
+
+  // Lazy load syntax highlighter for better performance
+  useEffect(() => {
+    // Delay syntax highlighting to prevent blocking UI on history load
+    const timer = requestIdleCallback ?
+      requestIdleCallback(() => setIsHighlighterReady(true), { timeout: 500 }) :
+      setTimeout(() => setIsHighlighterReady(true), 100);
+
+    return () => {
+      if (requestIdleCallback && typeof timer === 'number') {
+        cancelIdleCallback(timer);
+      } else if (typeof timer !== 'number') {
+        clearTimeout(timer);
+      }
+    };
+  }, []);
 
   // Regular code block rendering
   return (
@@ -942,16 +871,25 @@ const CodeBlock: React.FC<{
         </button>
       </div>
 
-      <SyntaxHighlighter
-        style={isDark ? oneDark : oneLight}
-        language={language || 'text'}
-        PreTag="div"
-        className="text-sm rounded-lg"
-        showLineNumbers={code.split('\n').length > 5}
-        {...props}
-      >
-        {code}
-      </SyntaxHighlighter>
+      {!isHighlighterReady ? (
+        // Show plain pre while waiting for syntax highlighter
+        <pre className={`text-sm rounded-lg p-4 overflow-x-auto ${
+          isDark ? 'bg-gray-900 text-gray-100' : 'bg-gray-50 text-gray-900'
+        } font-mono`}>
+          <code>{code}</code>
+        </pre>
+      ) : (
+        <SyntaxHighlighter
+          style={isDark ? oneDark : oneLight}
+          language={language || 'text'}
+          PreTag="div"
+          className="text-sm rounded-lg"
+          showLineNumbers={code.split('\n').length > 5}
+          {...props}
+        >
+          {code}
+        </SyntaxHighlighter>
+      )}
     </div>
   );
 };

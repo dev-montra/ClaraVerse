@@ -53,8 +53,8 @@ export const ArtifactPaneProvider: React.FC<ArtifactPaneProviderProps> = ({ chil
         return prev;
       }
 
-      // Add new artifacts to the end
-      return [...prev, ...uniqueNewArtifacts];
+      // Add new artifacts to the beginning (newest first)
+      return [...uniqueNewArtifacts, ...prev];
     });
     setCurrentMessageId(messageId);
     setIsOpen(true);
@@ -72,7 +72,8 @@ export const ArtifactPaneProvider: React.FC<ArtifactPaneProviderProps> = ({ chil
       if (prev.some((a) => a.id === artifact.id)) {
         return prev;
       }
-      return [...prev, artifact];
+      // Add new artifact to the beginning (newest first)
+      return [artifact, ...prev];
     });
     setCurrentMessageId(messageId);
     setIsOpen(true);
