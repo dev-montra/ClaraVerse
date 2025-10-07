@@ -65,14 +65,10 @@ const CONTENT_CONFIG = {
 };
 
 /**
- * Smooth auto-scroll configuration (Claude/ChatGPT style)
+ * Industry-standard scroll configuration (ChatGPT/Claude style)
  */
 const SCROLL_CONFIG = {
-  STREAMING_INTERVAL: 100, // How often to auto-scroll during streaming (ms)
-  SCROLL_DURATION: 300, // Duration of smooth scroll animation (ms)
-  EASING: 'cubic-bezier(0.25, 0.46, 0.45, 0.94)', // Smooth easing function
-  SCROLL_THRESHOLD: 100, // Pixels from bottom to consider "at bottom"
-  STREAMING_DELAY: 50, // Delay before starting auto-scroll during streaming
+  SCROLL_THRESHOLD: 150, // Pixels from bottom to consider "at bottom" (ChatGPT uses ~200px)
 };
 
 /**
@@ -353,25 +349,67 @@ const VirtualizedMessageList: React.FC<{
 };
 
 /**
- * Smooth Auto-Scroll Engine (Claude/ChatGPT Style)
- * Provides butter-smooth scrolling experience
+ * Industry-Standard Auto-Scroll Engine (ChatGPT/Claude Style)
+ * Uses direct scrollTop manipulation for instant, natural scrolling
+ * Bottom-pins during streaming for seamless experience
  */
 class SmoothAutoScroller {
   private container: HTMLElement | null = null;
   private target: HTMLElement | null = null;
-  private isScrolling = false;
-  private lastScrollTime = 0;
-  private streamingInterval: NodeJS.Timeout | null = null;
-  private pendingScroll = false;
+  private isUserScrolling = false;
+  private userScrollTimeout: NodeJS.Timeout | null = null;
+  private lastScrollHeight = 0;
+  private rafId: number | null = null;
+  private scrollHandler: ((e: Event) => void) | null = null;
 
   constructor(container: HTMLElement | null, target: HTMLElement | null) {
     this.container = container;
     this.target = target;
+    this.setupScrollListener();
   }
 
   updateRefs(container: HTMLElement | null, target: HTMLElement | null) {
+    // Clean up old listener before updating
+    this.removeScrollListener();
+
     this.container = container;
     this.target = target;
+    this.setupScrollListener();
+  }
+
+  private setupScrollListener(): void {
+    if (!this.container) return;
+
+    // Detect when user manually scrolls
+    this.scrollHandler = () => {
+      const isAtBottom = this.isNearBottom();
+
+      if (!isAtBottom) {
+        this.isUserScrolling = true;
+
+        // Clear existing timeout
+        if (this.userScrollTimeout) {
+          clearTimeout(this.userScrollTimeout);
+        }
+
+        // Reset flag after user stops scrolling for 1 second
+        this.userScrollTimeout = setTimeout(() => {
+          this.isUserScrolling = false;
+        }, 1000);
+      } else {
+        // User scrolled back to bottom
+        this.isUserScrolling = false;
+      }
+    };
+
+    this.container.addEventListener('scroll', this.scrollHandler, { passive: true });
+  }
+
+  private removeScrollListener(): void {
+    if (this.container && this.scrollHandler) {
+      this.container.removeEventListener('scroll', this.scrollHandler);
+      this.scrollHandler = null;
+    }
   }
 
   private isNearBottom(): boolean {
@@ -380,118 +418,93 @@ class SmoothAutoScroller {
     return scrollHeight - scrollTop - clientHeight < SCROLL_CONFIG.SCROLL_THRESHOLD;
   }
 
-  private smoothScrollToBottom(duration = SCROLL_CONFIG.SCROLL_DURATION): Promise<void> {
-    return new Promise((resolve) => {
-      if (!this.container || this.isScrolling) {
-        resolve();
-        return;
-      }
+  /**
+   * Instant scroll to bottom (ChatGPT/Claude style)
+   * No animation, just direct position update
+   */
+  private scrollToBottomInstant(): void {
+    if (!this.container) return;
 
-      this.isScrolling = true;
-      const startTime = performance.now();
-      const startScrollTop = this.container.scrollTop;
-      const targetScrollTop = this.container.scrollHeight - this.container.clientHeight;
-      const distance = targetScrollTop - startScrollTop;
+    // Cancel any pending RAF
+    if (this.rafId !== null) {
+      cancelAnimationFrame(this.rafId);
+    }
 
-      // Don't scroll if already at bottom
-      if (Math.abs(distance) < 5) {
-        this.isScrolling = false;
-        resolve();
-        return;
-      }
+    // Use RAF to sync with browser paint cycle for smoothness
+    this.rafId = requestAnimationFrame(() => {
+      if (!this.container) return;
 
-      const animate = (currentTime: number) => {
-        if (!this.container) {
-          this.isScrolling = false;
-          resolve();
-          return;
-        }
+      const scrollHeight = this.container.scrollHeight;
+      const clientHeight = this.container.clientHeight;
 
-        const elapsed = currentTime - startTime;
-        const progress = Math.min(elapsed / duration, 1);
-        
-        // Smooth easing function (cubic-bezier)
-        const easeProgress = this.cubicBezier(0.25, 0.46, 0.45, 0.94, progress);
-        
-        const currentScrollTop = startScrollTop + (distance * easeProgress);
-        this.container.scrollTop = currentScrollTop;
+      // Direct scrollTop manipulation - instant and natural
+      this.container.scrollTop = scrollHeight - clientHeight;
 
-        if (progress < 1) {
-          requestAnimationFrame(animate);
-        } else {
-          this.isScrolling = false;
-          this.lastScrollTime = currentTime;
-          resolve();
-        }
-      };
-
-      requestAnimationFrame(animate);
+      this.lastScrollHeight = scrollHeight;
+      this.rafId = null;
     });
   }
 
-  private cubicBezier(x1: number, y1: number, x2: number, y2: number, t: number): number {
-    // Simplified cubic bezier calculation
-    const cx = 3 * x1;
-    const bx = 3 * (x2 - x1) - cx;
-    const ax = 1 - cx - bx;
-    
-    const cy = 3 * y1;
-    const by = 3 * (y2 - y1) - cy;
-    const ay = 1 - cy - by;
-    
-    const cubeT = t * t * t;
-    const squareT = t * t;
-    
-    return ay * cubeT + by * squareT + cy * t;
-  }
-
-  // For new messages - immediate smooth scroll
+  /**
+   * For new messages - instant scroll to bottom
+   */
   scrollToNewMessage(): void {
+    // Don't interrupt if user is actively scrolling
+    if (this.isUserScrolling) return;
+
+    // Only scroll if user is near bottom
     if (!this.isNearBottom()) return;
-    
-    // Cancel any existing streaming scroll
-    this.stopStreamingScroll();
-    
-    // Add slight delay to let message render
-    setTimeout(() => {
-      this.smoothScrollToBottom(SCROLL_CONFIG.SCROLL_DURATION);
-    }, 50);
+
+    this.scrollToBottomInstant();
   }
 
-  // For streaming content - gradual continuous scrolling
+  /**
+   * For streaming content - instant bottom-pinning (industry standard)
+   * This is how ChatGPT/Claude keep you locked to bottom during streaming
+   */
   startStreamingScroll(): void {
-    if (this.streamingInterval) return;
-    
-    this.streamingInterval = setInterval(() => {
-      if (!this.isNearBottom()) {
-        this.stopStreamingScroll();
-        return;
-      }
-      
-      // Gentle continuous scroll during streaming
-      if (!this.isScrolling) {
-        this.smoothScrollToBottom(SCROLL_CONFIG.STREAMING_INTERVAL + 50);
-      }
-    }, SCROLL_CONFIG.STREAMING_INTERVAL);
+    // Don't interrupt if user scrolled away
+    if (this.isUserScrolling) return;
+
+    // Only scroll if near bottom
+    if (!this.isNearBottom()) return;
+
+    // Instant scroll - will be called on every content update
+    this.scrollToBottomInstant();
   }
 
   stopStreamingScroll(): void {
-    if (this.streamingInterval) {
-      clearInterval(this.streamingInterval);
-      this.streamingInterval = null;
+    // No intervals to stop in the new approach
+    // Just cancel any pending RAF
+    if (this.rafId !== null) {
+      cancelAnimationFrame(this.rafId);
+      this.rafId = null;
     }
   }
 
-  // Force scroll to bottom (for button click)
+  /**
+   * Force scroll to bottom (for button click)
+   * Even if user scrolled away, bring them back
+   */
   forceScrollToBottom(): void {
-    this.stopStreamingScroll();
-    this.smoothScrollToBottom(SCROLL_CONFIG.SCROLL_DURATION * 1.5); // Slightly longer for user action
+    this.isUserScrolling = false; // Override user scroll state
+    this.scrollToBottomInstant();
   }
 
-  // Clean up
+  /**
+   * Clean up
+   */
   destroy(): void {
     this.stopStreamingScroll();
-    this.isScrolling = false;
+    this.removeScrollListener();
+
+    if (this.userScrollTimeout) {
+      clearTimeout(this.userScrollTimeout);
+    }
+
+    if (this.rafId !== null) {
+      cancelAnimationFrame(this.rafId);
+    }
   }
 }
 
@@ -810,31 +823,23 @@ const ClaraChatWindow: React.FC<ClaraChatWindowProps> = ({
     }
   }, [handleScroll]);
 
-  // Enhanced auto-scroll for new messages
+  // Industry-standard auto-scroll: scroll on EVERY content update (ChatGPT/Claude style)
   useEffect(() => {
     const lastMessage = messages[messages.length - 1];
     if (!lastMessage) return;
 
     const isStreaming = lastMessage?.metadata?.isStreaming;
-    
+
     if (isStreaming) {
-      // Start gentle streaming scroll
+      // Instant bottom-pin on every streaming update (no intervals!)
+      // This is called on EVERY token/chunk, creating seamless scrolling
       autoScrollerRef.current?.startStreamingScroll();
     } else {
-      // Stop streaming and scroll to new message
+      // Stop streaming and do final scroll to new message
       autoScrollerRef.current?.stopStreamingScroll();
       autoScrollerRef.current?.scrollToNewMessage();
     }
-  }, [messages.length]);
-
-  // Handle streaming content updates
-  useEffect(() => {
-    const lastMessage = messages[messages.length - 1];
-    if (lastMessage?.metadata?.isStreaming && lastMessage.content) {
-      // Continue streaming scroll - the engine handles this automatically
-      // No need for manual intervention
-    }
-  }, [messages[messages.length - 1]?.content]);
+  }, [messages.length, messages[messages.length - 1]?.content]); // Triggers on EVERY content change
 
   // Update processing state based on loading and messages
   useEffect(() => {
@@ -878,10 +883,10 @@ const ClaraChatWindow: React.FC<ClaraChatWindowProps> = ({
   const shouldUseVirtualization = messages.length > 50; // Use virtualization for 50+ messages
 
   return (
-    <div 
+    <div
       ref={scrollRef}
       className="flex-1 overflow-y-auto p-6 relative"
-      style={{ scrollBehavior: 'auto' }} // Let our custom scroller handle smooth behavior
+      style={{ scrollBehavior: 'auto' }} // No smooth scrolling - instant updates like ChatGPT/Claude
     >
       <div className="max-w-4xl mx-auto">
         {/* Loading screen when Clara is initializing */}
