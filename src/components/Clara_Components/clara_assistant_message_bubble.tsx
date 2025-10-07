@@ -934,14 +934,24 @@ const ClaraMessageBubble: React.FC<ClaraMessageBubbleProps> = ({
   // Artifact Pane integration
   const { openArtifactPane } = useArtifactPane();
 
+  // Track if we've already detected artifacts for this message to prevent duplicates
+  const artifactsDetectedRef = useRef<string | null>(null);
+
   // Auto-detect artifacts when assistant message completes (not streaming)
   useEffect(() => {
+    // Skip if already detected for this specific message
+    if (artifactsDetectedRef.current === message.id) {
+      return;
+    }
+
     if (
       message.role === 'assistant' &&
       !message.metadata?.isStreaming &&
       message.content &&
       message.content.length > 50 // Only detect for substantial content
     ) {
+      artifactsDetectedRef.current = message.id; // Mark this message as detected
+
       const detectionResult = ArtifactDetectionService.detectArtifacts({
         messageContent: message.content,
         userMessage: '', // Could get from conversation context if available

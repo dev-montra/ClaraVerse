@@ -199,6 +199,44 @@ const MermaidRenderer: React.FC<{ content: string }> = ({ content }) => {
  * Chart Renderer Component
  */
 const ChartRenderer: React.FC<{ chartData: any }> = ({ chartData }) => {
+  // Validate chart data structure
+  if (!chartData || typeof chartData !== 'object') {
+    return (
+      <div className="h-full flex items-center justify-center p-6">
+        <div className="text-center">
+          <p className="text-red-600 dark:text-red-400 text-sm mb-2">Invalid chart data</p>
+          <p className="text-gray-500 dark:text-gray-400 text-xs">Chart data must be an object</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Determine if data is nested or flat
+  // Chart.js expects: { labels: [...], datasets: [...] }
+  // But data might be: { data: { labels: [...], datasets: [...] } }
+  let actualData = chartData;
+
+  // If chartData has a nested 'data' property with labels/datasets, use that
+  if (chartData.data && (chartData.data.labels || chartData.data.datasets)) {
+    actualData = chartData.data;
+  }
+  // If chartData doesn't have labels/datasets at top level, it's invalid
+  else if (!chartData.labels && !chartData.datasets) {
+    return (
+      <div className="h-full flex items-center justify-center p-6">
+        <div className="text-center">
+          <p className="text-red-600 dark:text-red-400 text-sm mb-2">Invalid chart format</p>
+          <p className="text-gray-500 dark:text-gray-400 text-xs">
+            Chart must have 'labels' and 'datasets' properties
+          </p>
+          <pre className="mt-2 text-xs text-left bg-gray-100 dark:bg-gray-800 p-2 rounded">
+            {JSON.stringify(chartData, null, 2).slice(0, 200)}...
+          </pre>
+        </div>
+      </div>
+    );
+  }
+
   // Determine chart type - check multiple possible locations
   let chartType = 'line'; // default
 
@@ -206,8 +244,8 @@ const ChartRenderer: React.FC<{ chartData: any }> = ({ chartData }) => {
     chartType = chartData.chartType;
   } else if (chartData.type && chartData.type !== 'chart') {
     chartType = chartData.type;
-  } else if (chartData.data?.type) {
-    chartType = chartData.data.type;
+  } else if (actualData.type) {
+    chartType = actualData.type;
   }
 
   const ChartComponent = {
@@ -221,7 +259,7 @@ const ChartRenderer: React.FC<{ chartData: any }> = ({ chartData }) => {
     <div className="h-full p-6 bg-white dark:bg-gray-900">
       <div className="h-full max-h-[600px]">
         <ChartComponent
-          data={chartData.data}
+          data={actualData}
           options={{
             ...chartData.options,
             responsive: true,
