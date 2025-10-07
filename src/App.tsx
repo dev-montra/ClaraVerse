@@ -20,6 +20,7 @@ import Tasks from './components/Tasks';
 import Community from './components/Community';
 import { db } from './db';
 import { ProvidersProvider } from './contexts/ProvidersContext';
+import { ArtifactPaneProvider } from './contexts/ArtifactPaneContext';
 import ClaraAssistant from './components/ClaraAssistant';
 import { StartupService } from './services/startupService';
 import { initializeUIPreferences, applyUIPreferences } from './utils/uiPreferences';
@@ -256,21 +257,23 @@ function App() {
 
   return (
     <ProvidersProvider>
-      <div className="min-h-screen bg-gradient-to-br from-white to-sakura-100 dark:from-gray-900 dark:to-sakura-100">
-        {showOnboarding ? (
-          <Onboarding onComplete={handleOnboardingComplete} />
-        ) : (
-          <>
-            {/* Always render Clara in background - visible when activePage is 'clara' */}
-            <div className={activePage === 'clara' ? 'block' : 'hidden'} data-clara-container>
-              <ClaraAssistant onPageChange={setActivePage} />
-            </div>
-            
-            {/* Render other content when not on Clara page */}
-            {activePage !== 'clara' && renderContent()}
-          </>
-        )}
-      </div>
+      <ArtifactPaneProvider>
+        <div className="min-h-screen bg-gradient-to-br from-white to-sakura-100 dark:from-gray-900 dark:to-sakura-100">
+          {showOnboarding ? (
+            <Onboarding onComplete={handleOnboardingComplete} />
+          ) : (
+            <>
+              {/* Always render Clara in background - visible when activePage is 'clara' */}
+              <div className={activePage === 'clara' ? 'block' : 'hidden'} data-clara-container>
+                <ClaraAssistant onPageChange={setActivePage} />
+              </div>
+
+              {/* Render other content when not on Clara page */}
+              {activePage !== 'clara' && renderContent()}
+            </>
+          )}
+        </div>
+      </ArtifactPaneProvider>
     </ProvidersProvider>
   );
 }

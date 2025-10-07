@@ -59,6 +59,10 @@ if (process.env.NODE_ENV === 'development') {
   import('../utils/clipboard.test');
 }
 
+// Import Artifact Pane components
+import { useArtifactPane } from '../contexts/ArtifactPaneContext';
+import ClaraArtifactPane from './Clara_Components/ClaraArtifactPane';
+
 interface ClaraAssistantProps {
   onPageChange: (page: string) => void;
 }
@@ -440,7 +444,89 @@ const useIsVisible = () => {
 const ClaraAssistant: React.FC<ClaraAssistantProps> = ({ onPageChange }) => {
   // Check if Clara is currently visible (for background operation)
   const isVisible = useIsVisible();
-  
+
+  // Artifact Pane state
+  const { isOpen: isArtifactPaneOpen, artifacts, closeArtifactPane, openArtifactPane } = useArtifactPane();
+
+  // TEST: Expose artifact pane test function to window (development only)
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'development') {
+      (window as any).testArtifactPane = () => {
+        const testArtifacts = [
+          {
+            id: 'test-1',
+            type: 'code' as const,
+            title: 'React Counter Component',
+            content: `import React, { useState } from 'react';
+
+const Counter: React.FC = () => {
+  const [count, setCount] = useState(0);
+
+  return (
+    <div className="p-6 space-y-4">
+      <h2 className="text-2xl font-bold">Count: {count}</h2>
+      <div className="flex gap-2">
+        <button
+          onClick={() => setCount(count + 1)}
+          className="px-4 py-2 bg-blue-500 text-white rounded"
+        >
+          Increment
+        </button>
+        <button
+          onClick={() => setCount(count - 1)}
+          className="px-4 py-2 bg-red-500 text-white rounded"
+        >
+          Decrement
+        </button>
+      </div>
+    </div>
+  );
+};
+
+export default Counter;`,
+            language: 'typescript',
+            createdAt: new Date(),
+          },
+          {
+            id: 'test-2',
+            type: 'mermaid' as const,
+            title: 'Component Flow',
+            content: `graph TD
+    A[User Clicks Button] --> B{Update State}
+    B -->|Increment| C[count + 1]
+    B -->|Decrement| D[count - 1]
+    C --> E[Re-render]
+    D --> E`,
+            createdAt: new Date(),
+          },
+          {
+            id: 'test-3',
+            type: 'chart' as const,
+            title: 'Usage Stats',
+            content: JSON.stringify({
+              type: 'bar',
+              data: {
+                labels: ['Jan', 'Feb', 'Mar', 'Apr'],
+                datasets: [{
+                  label: 'Users',
+                  data: [65, 59, 80, 81],
+                  backgroundColor: 'rgba(59, 130, 246, 0.5)',
+                }]
+              }
+            }),
+            createdAt: new Date(),
+          }
+        ];
+
+        openArtifactPane(testArtifacts, 'test-message');
+        console.log('🎨 Artifact Pane opened with 3 test artifacts!');
+        console.log('Use ← → arrows to navigate between artifacts');
+      };
+
+      console.log('🧪 TEST: Run window.testArtifactPane() to open artifact pane with test data');
+    }
+  }, [openArtifactPane]);
+
   // User and session state
   const [userName, setUserName] = useState<string>('');
   const [userInfo, setUserInfo] = useState<{ name?: string; email?: string; timezone?: string } | null>(null);
@@ -2351,7 +2437,10 @@ You can:
   // Handle session selection
   const handleSelectSession = useCallback(async (sessionId: string) => {
     if (currentSession?.id === sessionId) return;
-    
+
+    // Close artifact pane when switching sessions
+    closeArtifactPane();
+
     try {
       const session = await claraDB.getClaraSession(sessionId);
       if (session) {
@@ -2361,7 +2450,7 @@ You can:
     } catch (error) {
       console.error('Failed to load session:', error);
     }
-  }, [currentSession]);
+  }, [currentSession, closeArtifactPane]);
 
   // Ref to prevent multiple simultaneous new chat creations
   const isCreatingNewChatRef = useRef(false);
@@ -2371,30 +2460,33 @@ You can:
   const handleNewChat = useCallback(async () => {
     const now = Date.now();
     const timeSinceLastCall = now - lastNewChatTimeRef.current;
-    
+
     // If we're already processing or called too recently, ignore this call
     if (isCreatingNewChatRef.current || timeSinceLastCall < 500) {
       console.log('New chat request ignored - already processing or called too recently');
       return;
     }
-    
+
     // Update last call time
     lastNewChatTimeRef.current = now;
-    
+
+    // Close artifact pane when creating new chat
+    closeArtifactPane();
+
     // Check if current session is already empty (new chat)
-    if (currentSession && 
-        (currentSession.title === 'New Chat' || currentSession.title.trim() === '') && 
+    if (currentSession &&
+        (currentSession.title === 'New Chat' || currentSession.title.trim() === '') &&
         messages.length === 0) {
       console.log('Already in empty chat session, not creating new one');
       return;
     }
-    
+
     // Check if there's already an empty session in the sessions list
-    const existingEmptySession = sessions.find(session => 
-      (session.title === 'New Chat' || session.title.trim() === '') && 
+    const existingEmptySession = sessions.find(session =>
+      (session.title === 'New Chat' || session.title.trim() === '') &&
       session.messages.length === 0
     );
-    
+
     if (existingEmptySession) {
       console.log('Found existing empty chat session, switching to it');
       setCurrentSession(existingEmptySession);
@@ -2403,10 +2495,10 @@ You can:
       autonomousAgentStatus.reset();
       return;
     }
-    
+
     // Set processing flag
     isCreatingNewChatRef.current = true;
-    
+
     try {
       // No empty session found, create a new one
       console.log('Creating new chat session');
@@ -2421,7 +2513,7 @@ You can:
         isCreatingNewChatRef.current = false;
       }, 100);
     }
-  }, [createNewSession, autonomousAgentStatus, currentSession, messages, sessions]);
+  }, [createNewSession, autonomousAgentStatus, currentSession, messages, sessions, closeArtifactPane]);
 
   // Handle session actions
   const handleSessionAction = useCallback(async (sessionId: string, action: 'star' | 'archive' | 'delete') => {
@@ -4324,8 +4416,36 @@ ${data.timezone ? `• **Timezone:** ${data.timezone}` : ''}`;
       )}
             </div>
 
+            {/* Artifact Pane - Claude-style (between chat and sidebar) */}
+            {isArtifactPaneOpen && activeTab === 'chat' && (
+              <div className={`
+                w-full md:w-[600px] lg:w-[700px] xl:w-[800px]
+                transition-all duration-300 ease-in-out
+                ${isArtifactPaneOpen ? 'translate-x-0' : 'translate-x-full'}
+                hidden md:block
+                border-l border-gray-200 dark:border-gray-700
+              `}>
+                <ClaraArtifactPane
+                  artifacts={artifacts}
+                  isOpen={isArtifactPaneOpen}
+                  onClose={closeArtifactPane}
+                />
+              </div>
+            )}
+
+            {/* Mobile Full-Screen Artifact Pane */}
+            {isArtifactPaneOpen && activeTab === 'chat' && (
+              <div className="md:hidden fixed inset-0 z-50 bg-white dark:bg-gray-900">
+                <ClaraArtifactPane
+                  artifacts={artifacts}
+                  isOpen={isArtifactPaneOpen}
+                  onClose={closeArtifactPane}
+                />
+              </div>
+            )}
+
             {/* Clara Chat History Sidebar on the right */}
-            <ClaraSidebar 
+            <ClaraSidebar
               sessions={sessions}
               currentSessionId={currentSession?.id}
               isLoading={isLoadingSessions}

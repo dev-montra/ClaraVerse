@@ -61,6 +61,10 @@ import { claraTTSService, AudioControlState } from '../../services/claraTTSServi
 // Import ExecutionDetailsModal
 import ExecutionDetailsModal from './ExecutionDetailsModal';
 
+// Import Artifact Pane context and detection service
+import { useArtifactPane } from '../../contexts/ArtifactPaneContext';
+import ArtifactDetectionService from '../../services/artifactDetectionService';
+
 // Import ExtractedImagesRenderer
 import ExtractedImagesRenderer from './ExtractedImagesRenderer';
 import TTSControlPanel from './TTSControlPanel';
@@ -926,7 +930,46 @@ const ClaraMessageBubble: React.FC<ClaraMessageBubbleProps> = ({
   } | null>(null);
   const messageRef = useRef<HTMLDivElement>(null);
   const { Toast } = useCopyWithToast();
-  
+
+  // Artifact Pane integration
+  const { openArtifactPane } = useArtifactPane();
+
+  // Auto-detect artifacts when assistant message completes (not streaming)
+  useEffect(() => {
+    if (
+      message.role === 'assistant' &&
+      !message.metadata?.isStreaming &&
+      message.content &&
+      message.content.length > 50 // Only detect for substantial content
+    ) {
+      const detectionResult = ArtifactDetectionService.detectArtifacts({
+        messageContent: message.content,
+        userMessage: '', // Could get from conversation context if available
+        conversationHistory: [],
+        attachments: message.attachments,
+        artifactConfig: {
+          enableInlineVisuals: false, // IMPORTANT: Disable inline visuals to prevent duplicates
+          enableCodeArtifacts: true,
+          enableChartArtifacts: true,
+          enableTableArtifacts: true,
+          enableMermaidArtifacts: true,
+          enableHtmlArtifacts: true,
+          enableMarkdownArtifacts: true,
+          enableJsonArtifacts: true,
+          enableDiagramArtifacts: true,
+          autoDetectArtifacts: true,
+          maxArtifactsPerMessage: 10
+        }
+      });
+
+      // Only open artifact pane if we detected substantial artifacts
+      if (detectionResult.artifacts.length > 0) {
+        console.log('🎨 Auto-detected', detectionResult.artifacts.length, 'artifacts, opening pane...');
+        openArtifactPane(detectionResult.artifacts, message.id);
+      }
+    }
+  }, [message.content, message.metadata?.isStreaming, message.id, message.role, message.attachments, openArtifactPane]);
+
   // TTS state
   const [isTTSHealthy, setIsTTSHealthy] = useState(false);
   const [isTTSLoading, setIsTTSLoading] = useState(false);

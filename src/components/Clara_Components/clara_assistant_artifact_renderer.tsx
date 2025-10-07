@@ -1952,42 +1952,41 @@ const InteractiveChartRenderer: React.FC<{ content: string; artifact: ClaraArtif
  */
 const HtmlRenderer: React.FC<{ content: string }> = ({ content }) => {
   const [showPreview, setShowPreview] = useState(true);
-  
+
   return (
-    <div className="space-y-4">
+    <div className="h-full flex flex-col">
       {/* HTML controls */}
-      <div className="flex items-center justify-between">
-        <div className="text-sm font-medium">HTML Preview</div>
+      <div className="flex-shrink-0 flex items-center justify-between p-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
+        <div className="text-sm font-medium text-gray-900 dark:text-white">HTML Preview</div>
         <button
           onClick={() => setShowPreview(!showPreview)}
-          className="px-3 py-2 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-md text-sm transition-colors flex items-center gap-2"
+          className="px-3 py-1.5 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-md text-sm transition-colors flex items-center gap-2"
         >
-          <Globe className="w-4 h-4" />
+          {showPreview ? <Code className="w-4 h-4" /> : <Globe className="w-4 h-4" />}
           {showPreview ? 'Show Code' : 'Show Preview'}
         </button>
       </div>
 
-      {/* HTML content */}
-      {showPreview ? (
-        <div className="border border-gray-300 dark:border-gray-600 rounded-lg overflow-hidden">
+      {/* HTML content - Full height */}
+      <div className="flex-1 overflow-auto">
+        {showPreview ? (
           <iframe
             srcDoc={content}
-            className="w-full h-64 bg-white"
+            className="w-full h-full min-h-[500px] bg-white border-0"
             sandbox="allow-scripts allow-same-origin"
             title="HTML Preview"
           />
-        </div>
-      ) : (
-        <div className="border border-gray-300 dark:border-gray-600 rounded-lg overflow-hidden">
+        ) : (
           <SyntaxHighlighter
             language="html"
             style={oneDark}
-            customStyle={{ margin: 0 }}
+            customStyle={{ margin: 0, height: '100%' }}
+            showLineNumbers={true}
           >
-        {content}
+            {content}
           </SyntaxHighlighter>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 };
