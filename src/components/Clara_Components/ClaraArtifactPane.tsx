@@ -185,7 +185,7 @@ const MermaidRenderer: React.FC<{ content: string }> = ({ content }) => {
   return (
     <div className="h-full flex flex-col bg-white dark:bg-gray-900">
       {/* Zoom Controls */}
-      <div className="flex items-center justify-between px-4 py-2 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+      <div className="flex items-center justify-between px-4 py-2 glassmorphic">
         <span className="text-xs text-gray-500 dark:text-gray-400">
           {Math.round(zoom * 100)}% • {isDragging ? 'Dragging...' : 'Click & drag to pan'}
         </span>
@@ -322,7 +322,7 @@ const ArtifactContentRenderer: React.FC<{ artifact: ClaraArtifact }> = ({ artifa
   if (artifact.type === 'html' || artifact.language === 'html') {
     return (
       <div className="h-full flex flex-col bg-transparent dark:bg-transparent">
-        <div className="flex-shrink-0 flex items-center justify-between px-4 py-3 bg-white/50 dark:bg-gray-900/50 backdrop-blur-sm border-b border-gray-200/50 dark:border-gray-700/50">
+        <div className="flex-shrink-0 flex items-center justify-between px-4 py-3 glassmorphic">
           <div className="flex items-center gap-2">
             <Globe className="w-4 h-4 text-sakura-600 dark:text-sakura-400" />
             <span className="text-sm font-medium text-gray-700 dark:text-gray-200">
@@ -354,7 +354,7 @@ const ArtifactContentRenderer: React.FC<{ artifact: ClaraArtifact }> = ({ artifa
   if (artifact.type === 'mermaid' || artifact.language === 'mermaid') {
     return (
       <div className="h-full flex flex-col bg-transparent dark:bg-transparent">
-        <div className="flex-shrink-0 flex items-center justify-between px-4 py-3 bg-white/50 dark:bg-gray-900/50 backdrop-blur-sm border-b border-gray-200/50 dark:border-gray-700/50">
+        <div className="flex-shrink-0 flex items-center justify-between px-4 py-3 glassmorphic">
           <div className="flex items-center gap-2">
             <Globe className="w-4 h-4 text-sakura-600 dark:text-sakura-400" />
             <span className="text-sm font-medium text-gray-700 dark:text-gray-200">
@@ -388,7 +388,7 @@ const ArtifactContentRenderer: React.FC<{ artifact: ClaraArtifact }> = ({ artifa
       const chartData = typeof artifact.content === 'string' ? JSON.parse(artifact.content) : artifact.content;
       return (
         <div className="h-full flex flex-col bg-transparent dark:bg-transparent">
-          <div className="flex-shrink-0 flex items-center justify-between px-4 py-3 bg-white/50 dark:bg-gray-900/50 backdrop-blur-sm border-b border-gray-200/50 dark:border-gray-700/50">
+          <div className="flex-shrink-0 flex items-center justify-between px-4 py-3 glassmorphic">
             <div className="flex items-center gap-2">
               <Globe className="w-4 h-4 text-sakura-600 dark:text-sakura-400" />
               <span className="text-sm font-medium text-gray-700 dark:text-gray-200">
@@ -431,7 +431,7 @@ const ArtifactContentRenderer: React.FC<{ artifact: ClaraArtifact }> = ({ artifa
   if (artifact.type === 'markdown' || artifact.language === 'markdown' || artifact.language === 'md') {
     return (
       <div className="h-full flex flex-col bg-transparent dark:bg-transparent">
-        <div className="flex-shrink-0 flex items-center justify-between px-4 py-3 bg-white/50 dark:bg-gray-900/50 backdrop-blur-sm border-b border-gray-200/50 dark:border-gray-700/50">
+        <div className="flex-shrink-0 flex items-center justify-between px-4 py-3 glassmorphic">
           <div className="flex items-center gap-2">
             <Globe className="w-4 h-4 text-sakura-600 dark:text-sakura-400" />
             <span className="text-sm font-medium text-gray-700 dark:text-gray-200">
@@ -556,8 +556,8 @@ const ClaraArtifactPane: React.FC<ArtifactPaneProps> = ({ artifacts, isOpen, onC
   };
 
   return (
-    <div className={`h-full flex flex-col bg-transparent dark:bg-transparent border-l border-gray-200/50 dark:border-gray-700/50 ${className}`}>
-      <div className="flex-shrink-0 bg-white/50 dark:bg-gray-900/50 backdrop-blur-sm border-b border-gray-200/50 dark:border-gray-700/50">
+    <div className={`h-full flex flex-col glassmorphic ${className}`}>
+      <div className="flex-shrink-0 glassmorphic">
         <div className="flex items-center justify-between p-4">
           <div className="flex items-center gap-3 flex-1 min-w-0">
             <div className="flex-shrink-0 w-8 h-8 rounded-lg bg-gradient-to-br from-sakura-400 to-sakura-600 flex items-center justify-center shadow-sm">
@@ -610,7 +610,7 @@ const ClaraArtifactPane: React.FC<ArtifactPaneProps> = ({ artifacts, isOpen, onC
         )}
       </div>
       {hasMultipleArtifacts && (
-        <div className="flex-shrink-0 border-t border-gray-200/50 dark:border-gray-700/50 bg-white/50 dark:bg-gray-900/50 backdrop-blur-sm px-4 py-2">
+        <div className="flex-shrink-0 glassmorphic px-4 py-2">
           <p className="text-xs text-gray-500 dark:text-gray-400 text-center">← → to navigate • Esc to close</p>
         </div>
       )}
