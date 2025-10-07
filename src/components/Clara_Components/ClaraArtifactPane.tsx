@@ -117,7 +117,39 @@ const MermaidRenderer: React.FC<{ content: string }> = ({ content }) => {
 
   const handleZoomIn = () => setZoom(prev => Math.min(prev + 0.2, 3));
   const handleZoomOut = () => setZoom(prev => Math.max(prev - 0.2, 0.5));
-  const handleZoomReset = () => setZoom(1);
+  const handleZoomReset = () => {
+    setZoom(1);
+    setPan({ x: 0, y: 0 });
+  };
+
+  // Pan (drag to move) functionality
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    setIsDragging(true);
+    setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
+    e.preventDefault();
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (isDragging) {
+      setPan({
+        x: e.clientX - dragStart.x,
+        y: e.clientY - dragStart.y
+      });
+    }
+  };
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
+  };
+
+  const handleMouseLeave = () => {
+    setIsDragging(false);
+  };
 
   if (error) {
     return (
@@ -155,7 +187,7 @@ const MermaidRenderer: React.FC<{ content: string }> = ({ content }) => {
       {/* Zoom Controls */}
       <div className="flex items-center justify-between px-4 py-2 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
         <span className="text-xs text-gray-500 dark:text-gray-400">
-          {Math.round(zoom * 100)}%
+          {Math.round(zoom * 100)}% • {isDragging ? 'Dragging...' : 'Click & drag to pan'}
         </span>
         <div className="flex items-center gap-2">
           <button
@@ -168,7 +200,7 @@ const MermaidRenderer: React.FC<{ content: string }> = ({ content }) => {
           <button
             onClick={handleZoomReset}
             className="px-2 py-1 text-xs text-gray-600 dark:text-gray-400 hover:text-sakura-600 dark:hover:text-sakura-400 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 rounded transition-colors"
-            title="Reset zoom"
+            title="Reset zoom and pan"
           >
             Reset
           </button>
@@ -182,11 +214,23 @@ const MermaidRenderer: React.FC<{ content: string }> = ({ content }) => {
         </div>
       </div>
 
-      {/* Diagram with scroll */}
-      <div className="flex-1 overflow-auto p-6">
+      {/* Diagram with pan and zoom */}
+      <div
+        ref={containerRef}
+        className="flex-1 overflow-hidden p-6 relative"
+        style={{ cursor: isDragging ? 'grabbing' : 'grab' }}
+        onMouseDown={handleMouseDown}
+        onMouseMove={handleMouseMove}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseLeave}
+      >
         <div
           className="inline-block min-w-full"
-          style={{ transform: `scale(${zoom})`, transformOrigin: 'top center', transition: 'transform 0.2s ease' }}
+          style={{
+            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+            transformOrigin: 'center center',
+            transition: isDragging ? 'none' : 'transform 0.2s ease'
+          }}
         >
           <div dangerouslySetInnerHTML={{ __html: svg }} className="mermaid-diagram" />
         </div>
