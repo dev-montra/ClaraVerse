@@ -601,22 +601,26 @@ class ClaraMemoryManager {
       };
     }
 
-    // Merge with existing profile
+    // 🔧 REPLACE strategy: Extracted data IS the complete memory
+    // AI provides deduplicated, complete data - just replace everything
+    console.log('🧠 REPLACING old memory with newly extracted data (not merging)');
+
     return {
       ...existingProfile,
-      coreIdentity: { ...existingProfile.coreIdentity, ...extractedData.coreIdentity },
-      personalCharacteristics: { ...existingProfile.personalCharacteristics, ...extractedData.personalCharacteristics },
-      preferences: { ...existingProfile.preferences, ...extractedData.preferences },
-      relationship: { ...existingProfile.relationship, ...extractedData.relationship },
-      interactions: { ...existingProfile.interactions, ...extractedData.interactions },
-      context: { ...existingProfile.context, ...extractedData.context },
-      emotional: { ...existingProfile.emotional, ...extractedData.emotional },
-      practical: { ...existingProfile.practical, ...extractedData.practical },
+      // Replace each section entirely with extracted data
+      coreIdentity: extractedData.coreIdentity || existingProfile.coreIdentity,
+      personalCharacteristics: extractedData.personalCharacteristics || existingProfile.personalCharacteristics,
+      preferences: extractedData.preferences || existingProfile.preferences,
+      relationship: extractedData.relationship || existingProfile.relationship,
+      interactions: extractedData.interactions || existingProfile.interactions,
+      context: extractedData.context || existingProfile.context,
+      emotional: extractedData.emotional || existingProfile.emotional,
+      practical: extractedData.practical || existingProfile.practical,
       metadata: {
         ...existingProfile.metadata,
-        confidenceLevel: Math.max(existingProfile.metadata.confidenceLevel, confidence),
+        confidenceLevel: confidence,
         lastUpdated: now,
-        relevanceScore: Math.max(existingProfile.metadata.relevanceScore, confidence)
+        relevanceScore: confidence
       },
       version: existingProfile.version + 1,
       updatedAt: now
