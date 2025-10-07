@@ -102,7 +102,6 @@
 /* Make code blocks consistent in both modes */
 .prose pre,
 .dark .prose pre {
-  background-color: #1E1E1E !important;
   color: #e5e7eb !important;
   border-radius: 4px !important;
   /* padding: 0.75rem 1rem !important; */
@@ -473,10 +472,16 @@ textarea {
 /* Code block enhancements */
 .prose pre {
   @apply bg-transparent p-0 m-0;
+  overflow-x: visible !important; /* Remove unwanted horizontal scroll */
 }
 
 .prose :not(pre) > code {
   @apply bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 px-1.5 py-0.5 rounded text-sm font-mono;
+}
+
+/* Override prose default overflow on pre elements */
+.prose :where(pre):not(:where([class~="not-prose"],[class~="not-prose"] *)) {
+  overflow-x: visible !important;
 }
 
 /* Enhanced glassmorphism effects for voice chat */

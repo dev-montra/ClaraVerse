@@ -15,7 +15,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { Copy, Eye, EyeOff, ExternalLink, Code2, Loader2, BarChart3, GitBranch, Maximize2, Download } from 'lucide-react';
+import { Copy, Check, Eye, EyeOff, ExternalLink, Code2, Loader2, BarChart3, GitBranch, Maximize2, Download } from 'lucide-react';
 import { copyToClipboard } from '../../utils/clipboard';
 import { ClaraFileAttachment } from '../../types/clara_assistant_types';
 
@@ -857,39 +857,62 @@ const CodeBlock: React.FC<{
     };
   }, []);
 
-  // Regular code block rendering
+  // Regular code block rendering with beautiful styling
   return (
     <div className="relative my-4 group">
-      {/* Copy button */}
-      <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
+      {/* Language badge and copy button header */}
+      <div className="flex items-center justify-between px-4 py-2 rounded-t-lg bg-gray-100/80 dark:bg-gray-800/80">
+        <span className="text-xs font-medium text-gray-600 dark:text-gray-400 uppercase tracking-wide">
+          {language || 'code'}
+        </span>
         <button
           onClick={handleCopy}
-          className="p-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white rounded transition-colors"
+          className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-200/50 dark:hover:bg-gray-700/50 rounded transition-colors"
           title="Copy code"
         >
-          {copied ? <Eye className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+          {copied ? (
+            <>
+              <Check className="w-3.5 h-3.5 text-green-500" />
+              <span className="text-green-500">Copied!</span>
+            </>
+          ) : (
+            <>
+              <Copy className="w-3.5 h-3.5" />
+              <span>Copy</span>
+            </>
+          )}
         </button>
       </div>
 
-      {!isHighlighterReady ? (
-        // Show plain pre while waiting for syntax highlighter
-        <pre className={`text-sm rounded-lg p-4 overflow-x-auto ${
-          isDark ? 'bg-gray-900 text-gray-100' : 'bg-gray-50 text-gray-900'
-        } font-mono`}>
-          <code>{code}</code>
-        </pre>
-      ) : (
-        <SyntaxHighlighter
-          style={isDark ? oneDark : oneLight}
-          language={language || 'text'}
-          PreTag="div"
-          className="text-sm rounded-lg"
-          showLineNumbers={code.split('\n').length > 5}
-          {...props}
-        >
-          {code}
-        </SyntaxHighlighter>
-      )}
+      {/* Code content */}
+      <div className="rounded-b-lg overflow-hidden shadow-sm">
+        {!isHighlighterReady ? (
+          // Show plain pre while waiting for syntax highlighter
+          <pre className={`text-sm p-4 overflow-x-auto ${
+            isDark ? 'bg-[#1e1e1e] text-gray-100' : 'bg-[#fafafa] text-gray-900'
+          } font-mono leading-relaxed`}>
+            <code>{code}</code>
+          </pre>
+        ) : (
+          <SyntaxHighlighter
+            style={isDark ? oneDark : oneLight}
+            language={language || 'text'}
+            PreTag="div"
+            className="text-sm"
+            showLineNumbers={code.split('\n').length > 5}
+            customStyle={{
+              margin: 0,
+              padding: '1rem',
+              background: isDark ? '#1e1e1e' : '#fafafa',
+              fontSize: '0.875rem',
+              lineHeight: '1.6',
+            }}
+            {...props}
+          >
+            {code}
+          </SyntaxHighlighter>
+        )}
+      </div>
     </div>
   );
 };
@@ -901,8 +924,27 @@ const MessageContentRenderer: React.FC<MessageContentRendererProps> = React.memo
   isStreaming = false,
   attachments = [] // Default to empty array
 }) => {
-  // Auto-detect dark mode if not explicitly provided
-  const [darkMode, setDarkMode] = useState(isDark);
+  // Auto-detect dark mode from system/document
+  const [darkMode, setDarkMode] = useState(() => {
+    if (isDark !== false) return isDark;
+    // Check if dark mode is enabled in the document
+    return document.documentElement.classList.contains('dark');
+  });
+
+  // Listen for theme changes
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      const isDarkMode = document.documentElement.classList.contains('dark');
+      setDarkMode(isDarkMode);
+    });
+
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class']
+    });
+
+    return () => observer.disconnect();
+  }, []);
   
   // State to hold extracted images
   const [extractedImages, setExtractedImages] = useState<Array<{
