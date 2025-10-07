@@ -16,11 +16,10 @@
  */
 
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { 
-  MessageCircle, 
-  Sparkles, 
-  FileText, 
-  Image as ImageIcon, 
+import {
+  MessageCircle,
+  Sparkles,
+  FileText,
   Code,
   Search,
   Bot,
@@ -514,33 +513,69 @@ class SmoothAutoScroller {
 const WelcomeScreen: React.FC<{
   userName?: string;
   onStartChat?: () => void;
-}> = ({ userName, onStartChat }) => {
-  const suggestions = [
+  onSendExamplePrompt?: (prompt: string) => void;
+}> = ({ userName, onStartChat, onSendExamplePrompt }) => {
+  // Random example selection
+  const getRandomExample = (examples: string[]) => {
+    return examples[Math.floor(Math.random() * examples.length)];
+  };
+
+  const allSuggestions = [
     {
       icon: FileText,
       title: "Analyze Documents",
       description: "Upload PDFs, docs, or text files for analysis",
-      action: "Upload a document and ask me about it"
+      examples: [
+        "Summarize the main points from this document",
+        "Extract key information and create a table",
+        "What are the action items in this file?"
+      ],
+      mode: "chat" as const
     },
     {
-      icon: ImageIcon,
-      title: "Image Understanding",
-      description: "Upload images for description and analysis",
-      action: "Share an image and I'll describe what I see"
+      icon: Brain,
+      title: "Clara Remembers",
+      description: "I remember our conversations and your preferences",
+      examples: [
+        "What do you know about me?",
+        "What have we discussed before?",
+        "What are my preferences?"
+      ],
+      mode: "chat" as const
     },
     {
       icon: Code,
       title: "Code Assistance",
       description: "Get help with programming and debugging",
-      action: "Show me some code you'd like help with"
+      examples: [
+        "Make a page in HTML that shows an animation of a ball bouncing in a rotating hypercube",
+        "Help me generate an SVG of 5 Pokémons, include details",
+        "How many 'r's are in the word 'strawberry'? Make a cute little card!",
+        "I want a TODO list that allows me to add tasks, delete tasks, and I would like the overall color theme to be purple"
+      ],
+      mode: "chat" as const
     },
     {
       icon: Search,
       title: "Research & Analysis",
-      description: "Ask complex questions and get detailed answers",
-      action: "Ask me anything you'd like to research"
+      description: "Deep research with web search (Agent Mode)",
+      examples: [
+        "Search about ClaraVerse on the web",
+        "Research the latest AI developments",
+        "Find information about quantum computing trends"
+      ],
+      mode: "agent" as const
     }
   ];
+
+  // Select random examples for each suggestion
+  const suggestions = React.useMemo(() =>
+    allSuggestions.map(suggestion => ({
+      ...suggestion,
+      example: getRandomExample(suggestion.examples)
+    })),
+    [] // Only randomize once on mount
+  );
 
   return (
     <div className="flex items-center justify-center h-full p-8">
@@ -551,60 +586,77 @@ const WelcomeScreen: React.FC<{
             {/* support dark mode and light mode */}
             <Bot className="w-10 h-10 dark:text-white text-gray-500" />
           </div>
-          
+
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-3">
-            Welcome{userName ? ` back, ${userName}` : ''} to Clara! 
+            Welcome{userName ? ` back, ${userName}` : ''} to Clara!
             <Sparkles className="inline-block w-6 h-6 ml-2 text-sakura-500" />
           </h1>
-          
+
           <p className="text-lg text-gray-600 dark:text-gray-400 mb-6">
-            Your intelligent assistant for documents, images, code, and more.
-            Just upload files and start asking questions!
+           Clara Can Help You With Anything - From Quick Answers to Deep Research
           </p>
 
-          {/* Feature highlights */}
-          <div className="flex flex-wrap justify-center gap-2 mb-8">
-            <span className="px-3 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded-full text-sm font-medium">
-              Multi-modal AI
-            </span>
-            <span className="px-3 py-1 bg-sakura-100 dark:bg-sakura-900/30 text-sakura-700 dark:text-sakura-300 rounded-full text-sm font-medium">
-              Document Analysis
-            </span>
-            <span className="px-3 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-full text-sm font-medium">
-              Image Understanding
-            </span>
-            <span className="px-3 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-full text-sm font-medium">
-              Code Assistant
-            </span>
-          </div>
+        
         </div>
 
         {/* Suggestions Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
           {suggestions.map((suggestion, index) => (
-            <button
+            <div
               key={index}
-              onClick={() => onStartChat?.()}
               className="p-4 bg-white/50 dark:bg-gray-800/50 rounded-xl hover:bg-white/70 dark:hover:bg-gray-800/70 transition-all hover:shadow-md group text-left"
             >
-              <div className="flex items-start gap-3">
-                <div className="p-2 bg-gradient-to-br from-purple-500 to-pink-500 rounded-lg group-hover:scale-110 transition-transform">
-                  <suggestion.icon className="w-5 h-5 dark:text-white text-gray-500" />
+              <div className="flex items-start gap-3 mb-3">
+                <div className="p-2 bg-gradient-to-br from-purple-500 to-pink-500 rounded-lg group-hover:scale-110 transition-transform flex-shrink-0">
+                  <suggestion.icon className="w-5 h-5 text-white" />
                 </div>
-                <div className="flex-1">
+                <div className="flex-1 min-w-0">
                   <h3 className="font-semibold text-gray-900 dark:text-white text-sm mb-1">
                     {suggestion.title}
                   </h3>
-                  <p className="text-xs text-gray-600 dark:text-gray-400 mb-2">
+                  <p className="text-xs text-gray-600 dark:text-gray-400">
                     {suggestion.description}
-                  </p>
-                  <p className="text-xs text-sakura-600 dark:text-sakura-400 font-medium">
-                    "{suggestion.action}"
                   </p>
                 </div>
               </div>
-            </button>
+
+              {/* Example prompt with mode badge */}
+              <button
+                onClick={() => onSendExamplePrompt?.(suggestion.example, suggestion.mode)}
+                className="w-full text-left px-3 py-2 text-xs text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-900/50 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-lg transition-colors border border-transparent hover:border-sakura-300 dark:hover:border-sakura-600 mt-2 group"
+                title={suggestion.mode === 'agent' ? '🤖 Uses autonomous capabilities & web search' : '💬 Fast, direct conversation'}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="flex-1 min-w-0">Try: "{suggestion.example}"</span>
+                  <span className={`flex-shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                    suggestion.mode === 'agent'
+                      ? 'bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300'
+                      : 'bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300'
+                  }`}>
+                    {suggestion.mode === 'agent' ? '🤖 Agent' : '💬 Chat'}
+                  </span>
+                </div>
+              </button>
+            </div>
           ))}
+        </div>
+
+        {/* Mode explanation */}
+        <div className="mb-6 p-4 bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 rounded-xl border border-blue-200 dark:border-blue-800">
+          <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-2 flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-purple-500" />
+            Understanding Modes
+          </h4>
+          <div className="space-y-2 text-xs text-gray-600 dark:text-gray-400">
+            <div className="flex items-start gap-2">
+              <span className="text-blue-600 dark:text-blue-400 font-bold">💬 Chat Mode:</span>
+              <span>Quick responses, document analysis, code help, conversations</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="text-purple-600 dark:text-purple-400 font-bold">🤖 Agent Mode:</span>
+              <span>Deep research, web search, multi-step tasks, autonomous problem solving</span>
+            </div>
+          </div>
         </div>
 
         {/* Quick start tips */}
@@ -744,7 +796,8 @@ const ClaraChatWindow: React.FC<ClaraChatWindowProps> = ({
   isInitializing = false,
   onRetryMessage,
   onCopyMessage,
-  onEditMessage
+  onEditMessage,
+  onSendExamplePrompt
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -893,7 +946,7 @@ const ClaraChatWindow: React.FC<ClaraChatWindowProps> = ({
         {isInitializing ? (
           <LoadingScreen userName={userName} />
         ) : /* Welcome screen when no messages */ messages.length === 0 ? (
-          <WelcomeScreen userName={userName} />
+          <WelcomeScreen userName={userName} onSendExamplePrompt={onSendExamplePrompt} />
         ) : shouldUseVirtualization ? (
           // Use virtualized rendering for large message lists
           <VirtualizedMessageList

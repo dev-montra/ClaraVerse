@@ -457,16 +457,41 @@ textarea {
   @apply mb-0;
 }
 
+/* Table styling - ChatGPT/Claude style */
 .prose table {
-  @apply border-collapse border border-gray-300 dark:border-gray-600;
+  @apply w-full border-collapse;
+  border: none !important;
 }
 
-.prose th, .prose td {
-  @apply border border-gray-300 dark:border-gray-600 px-4 py-2;
+.prose thead {
+  border-bottom: 1px solid rgba(47, 52, 61, 0.5) !important;
 }
 
 .prose th {
-  @apply bg-gray-100 dark:bg-gray-800 font-semibold;
+  @apply px-4 py-2 text-left font-medium text-gray-700 dark:text-gray-300;
+  border: none !important;
+  background: transparent !important;
+}
+
+.prose td {
+  @apply px-4 py-2 text-gray-800 dark:text-gray-200;
+  border: none !important;
+  background: transparent !important;
+}
+
+.prose tbody tr {
+  border-bottom: 1px solid rgba(47, 52, 61, 0.5) !important;
+  border-top: none !important;
+  border-left: none !important;
+  border-right: none !important;
+}
+
+.prose tbody tr:last-child {
+  border-bottom: none !important;
+}
+
+.prose tbody tr:hover {
+  @apply bg-gray-50/50 dark:bg-gray-800/30 transition-colors duration-150;
 }
 
 /* Code block enhancements */

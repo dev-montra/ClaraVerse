@@ -15,7 +15,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { Copy, Check, Eye, EyeOff, ExternalLink, Code2, Loader2, BarChart3, GitBranch, Maximize2, Download } from 'lucide-react';
+import { Copy, Check, Eye, EyeOff, ExternalLink, Code2, Loader2, BarChart3, GitBranch, Maximize2, Download, FileDown } from 'lucide-react';
 import { copyToClipboard } from '../../utils/clipboard';
 import { ClaraFileAttachment } from '../../types/clara_assistant_types';
 
@@ -748,6 +748,125 @@ const InlineChartRenderer: React.FC<{ content: string; isDark?: boolean }> = ({ 
 };
 
 /**
+ * Enhanced Table Component with CSV Download
+ */
+const EnhancedTable: React.FC<{
+  children: React.ReactNode;
+  [key: string]: any;
+}> = ({ children, ...props }) => {
+  const tableRef = useRef<HTMLTableElement>(null);
+  const [downloaded, setDownloaded] = useState(false);
+
+  const downloadAsCSV = () => {
+    if (!tableRef.current) return;
+
+    try {
+      const table = tableRef.current;
+      const rows: string[][] = [];
+
+      // Extract headers
+      const headers = Array.from(table.querySelectorAll('thead th, thead td')).map(
+        (cell) => (cell as HTMLElement).innerText.trim()
+      );
+      if (headers.length > 0) {
+        rows.push(headers);
+      }
+
+      // Extract body rows
+      const bodyRows = table.querySelectorAll('tbody tr');
+      bodyRows.forEach((row) => {
+        const cells = Array.from(row.querySelectorAll('td, th')).map(
+          (cell) => (cell as HTMLElement).innerText.trim()
+        );
+        if (cells.length > 0) {
+          rows.push(cells);
+        }
+      });
+
+      // If no thead/tbody structure, try direct tr extraction
+      if (rows.length === 0) {
+        const allRows = table.querySelectorAll('tr');
+        allRows.forEach((row, index) => {
+          const cells = Array.from(row.querySelectorAll('td, th')).map(
+            (cell) => (cell as HTMLElement).innerText.trim()
+          );
+          if (cells.length > 0) {
+            rows.push(cells);
+          }
+        });
+      }
+
+      // Convert to CSV format
+      const csvContent = rows
+        .map((row) =>
+          row
+            .map((cell) => {
+              // Escape quotes and wrap in quotes if contains comma, quote, or newline
+              const escaped = cell.replace(/"/g, '""');
+              return /[",\n]/.test(escaped) ? `"${escaped}"` : escaped;
+            })
+            .join(',')
+        )
+        .join('\n');
+
+      // Create and download file
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `table-${Date.now()}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+
+      // Show feedback
+      setDownloaded(true);
+      setTimeout(() => setDownloaded(false), 2000);
+    } catch (error) {
+      console.error('Failed to download table as CSV:', error);
+    }
+  };
+
+  return (
+    <div className="my-0">
+      {/* Table header with download button */}
+      <div className="flex items-center justify-between mb-1 px-1">
+        <span className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+          Table
+        </span>
+        <button
+          onClick={downloadAsCSV}
+          className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors"
+          title="Download as CSV"
+        >
+          {downloaded ? (
+            <>
+              <Check className="w-3.5 h-3.5 text-green-500" />
+              <span className="text-green-500">Downloaded!</span>
+            </>
+          ) : (
+            <>
+              <FileDown className="w-3.5 h-3.5" />
+              <span>CSV</span>
+            </>
+          )}
+        </button>
+      </div>
+
+      {/* Table container */}
+      <div className="overflow-x-auto rounded-lg" style={{ border: '1px solid rgba(47, 52, 61, 0.5)' }}>
+        <table
+          ref={tableRef}
+          className="min-w-full"
+          {...props}
+        >
+          {children}
+        </table>
+      </div>
+    </div>
+  );
+};
+
+/**
  * Enhanced Code Block Component with Inline Visual Rendering
  */
 const CodeBlock: React.FC<{
@@ -1249,13 +1368,11 @@ const MessageContentRenderer: React.FC<MessageContentRendererProps> = React.memo
                   );
                 },
                 
-                // Enhanced table renderer
+                // Enhanced table renderer with CSV download
                 table: ({ children, ...props }) => (
-                  <div className="overflow-x-auto my-4">
-                    <table className="min-w-full border border-gray-200 dark:border-gray-700 rounded-lg" {...props}>
-                      {children}
-                    </table>
-                  </div>
+                  <EnhancedTable {...props}>
+                    {children}
+                  </EnhancedTable>
                 ),
                 
                 // Enhanced blockquote renderer
@@ -1324,6 +1441,7 @@ const MessageContentRenderer: React.FC<MessageContentRendererProps> = React.memo
 });
 
 // Set display names for React DevTools
+EnhancedTable.displayName = 'EnhancedTable';
 CodeBlock.displayName = 'CodeBlock';
 MessageContentRenderer.displayName = 'MessageContentRenderer';
 

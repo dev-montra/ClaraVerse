@@ -671,10 +671,13 @@ export interface ClaraChatWindowProps {
   
   /** Callback when user wants to retry a message */
   onRetryMessage?: (messageId: string) => void;
-  
+
   /** Callback when user wants to copy a message */
   onCopyMessage?: (content: string) => void;
-  
+
+  /** Callback when user clicks an example prompt */
+  onSendExamplePrompt?: (prompt: string, mode?: 'chat' | 'agent') => void;
+
   /** Callback when user wants to edit a message */
   onEditMessage?: (messageId: string, newContent: string) => void;
 }

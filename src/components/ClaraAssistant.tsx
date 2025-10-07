@@ -4268,6 +4268,11 @@ ${data.timezone ? `• **Timezone:** ${data.timezone}` : ''}`;
                     onRetryMessage={handleRetryMessage}
                     onCopyMessage={handleCopyMessage}
                     onEditMessage={handleEditMessage}
+                    onSendExamplePrompt={(prompt) => {
+                      // Autonomous agent activates automatically based on prompt content
+                      // No need to switch tabs
+                      handleSendMessage(prompt);
+                    }}
                   />
               
               {/* Autonomous Agent Status Panel - Above Advanced Options */}
