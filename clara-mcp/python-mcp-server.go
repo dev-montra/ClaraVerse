@@ -75,6 +75,7 @@ type WebContentFetcher struct {
 	jsEngine          *JSEngine          // Self-contained JavaScript engine
 	smartMode         bool               // Enable smart dynamic content detection
 	playwrightManager *PlaywrightManager // Progressive Playwright integration
+	chromedpManager   *ChromeDPManager   // Fast chromedp integration
 }
 
 // Self-contained JavaScript engine for basic DOM simulation
@@ -855,6 +856,7 @@ func NewWebContentFetcher() *WebContentFetcher {
 		},
 		smartMode:         true,
 		playwrightManager: NewPlaywrightManager(),
+		chromedpManager:   NewChromeDPManager(),
 	}
 }
 
@@ -1146,11 +1148,11 @@ func (sm *SearXNGManager) SearchSearXNG(query string, numResults int) (*SearchRe
 	return &searchResp, nil
 }
 
-// FetchContent fetches and extracts content from a URL using Playwright as the default standard
+// FetchContent fetches and extracts content from a URL using chromedp for dynamic content
 func (wf *WebContentFetcher) FetchContent(targetURL string) *WebContent {
 	result := &WebContent{
 		URL:             targetURL,
-		LoadingStrategy: "playwright",
+		LoadingStrategy: "chromedp",
 	}
 	startTime := time.Now()
 
@@ -1167,67 +1169,24 @@ func (wf *WebContentFetcher) FetchContent(targetURL string) *WebContent {
 		result.URL = targetURL
 	}
 
-	// PLAYWRIGHT-FIRST APPROACH: Always ensure Playwright is available
-	log.Printf("Ensuring Playwright is available for %s", targetURL)
+	// Use chromedp for fast dynamic content fetching
+	log.Printf("Fetching content using chromedp for %s", targetURL)
 
-	// If Playwright is not available, force synchronous download
-	if !wf.playwrightManager.IsAvailable() {
-		log.Printf("Playwright not available, forcing synchronous download...")
-
-		// Start download if not already downloading
-		if !wf.playwrightManager.IsDownloading() {
-			go wf.playwrightManager.EnsureAvailable()
-		}
-
-		// Wait for Playwright to become available (up to 120 seconds for reliable installation)
-		maxWait := 120 * time.Second
-		checkInterval := 1 * time.Second
-		waited := time.Duration(0)
-
-		log.Printf("Waiting for Playwright installation to complete...")
-		for waited < maxWait && !wf.playwrightManager.IsAvailable() {
-			if !wf.playwrightManager.IsDownloading() {
-				downloadErr := wf.playwrightManager.GetDownloadError()
-				if downloadErr != nil {
-					result.Error = fmt.Sprintf("Playwright installation failed: %v", downloadErr)
-					return result
-				}
-				// Download completed but not available - retry
-				go wf.playwrightManager.EnsureAvailable()
-			}
-			time.Sleep(checkInterval)
-			waited += checkInterval
-			if waited%10*time.Second == 0 { // Log every 10 seconds
-				log.Printf("Still waiting for Playwright... (%v/%v)", waited, maxWait)
-			}
-		}
-
-		if !wf.playwrightManager.IsAvailable() {
-			result.Error = "Playwright installation timed out. Please check your internet connection and try again."
-			return result
-		}
-
-		log.Printf("Playwright installation completed successfully!")
-	}
-
-	// Use Playwright to fetch content
-	playwrightResult, err := wf.playwrightManager.FetchContent(targetURL, nil)
+	chromedpResult, err := wf.chromedpManager.FetchContent(targetURL, 10*time.Second)
 	if err != nil {
-		result.Error = fmt.Sprintf("Playwright content extraction failed: %v", err)
-		return result
-	}
-
-	if playwrightResult == nil {
-		result.Error = "Playwright returned no content"
+		// Fallback to static fetch if chromedp fails
+		log.Printf("ChromeDP failed, falling back to HTTP: %v", err)
+		result = wf.fetchStatic(targetURL)
+		result.LoadTime = time.Since(startTime)
+		result.LoadingStrategy = "http-fallback"
 		return result
 	}
 
 	// Update timing and return successful result
-	playwrightResult.LoadTime = time.Since(startTime)
-	playwrightResult.LoadingStrategy = "playwright"
-	log.Printf("Successfully extracted content using Playwright for %s", targetURL)
+	chromedpResult.LoadTime = time.Since(startTime)
+	log.Printf("Successfully extracted content using chromedp for %s (took %v)", targetURL, chromedpResult.LoadTime)
 
-	return playwrightResult
+	return chromedpResult
 }
 
 // fetchStatic performs standard static HTML fetching
