@@ -1,9 +1,9 @@
 /**
  * Artifact Detection Service
- * 
+ *
  * This service automatically detects and extracts various types of structured content
  * from AI responses to create artifacts for enhanced display and interaction.
- * 
+ *
  * Features:
  * - Automatic detection of code blocks, tables, charts, diagrams
  * - Language detection for 25+ programming languages
@@ -14,6 +14,52 @@
  */
 
 import { ClaraArtifact, ClaraArtifactType, ClaraAIConfig } from '../types/clara_assistant_types';
+
+/**
+ * Artifact Type Rendering Configuration
+ *
+ * Controls which artifact types should be rendered in the artifact pane.
+ * Only types marked as `true` will create artifacts that appear in the pane.
+ *
+ * Usage:
+ * - Set to `true` to render in artifact pane
+ * - Set to `false` to skip artifact creation (content stays inline in chat)
+ *
+ * Current Configuration:
+ * - HTML: Rendered (live preview with iframe)
+ * - Chart: Rendered (interactive Chart.js visualizations)
+ * - Mermaid: Rendered (SVG diagrams with zoom)
+ * - Others: Not rendered (stays inline in chat)
+ */
+export const ARTIFACT_RENDER_MAP: Record<ClaraArtifactType | string, boolean> = {
+  // Rendered in artifact pane
+  html: true,        // Live HTML preview with code toggle
+  chart: true,       // Interactive charts (line, bar, pie, doughnut)
+  mermaid: true,     // Mermaid diagrams with zoom controls
+
+  // Not rendered in artifact pane (stays inline)
+  code: false,       // Code blocks with syntax highlighting
+  table: false,      // Markdown/CSV tables
+  markdown: false,   // Markdown content
+  json: false,       // JSON data
+  diagram: false,    // Generic diagrams
+  csv: false,        // CSV data
+};
+
+/**
+ * Check if an artifact type should be rendered in the artifact pane
+ * @param type - The artifact type
+ * @param language - Optional language (for code artifacts)
+ */
+export function shouldRenderArtifact(type: ClaraArtifactType | string, language?: string): boolean {
+  // Special handling for 'code' type - check if the language should be rendered
+  if (type === 'code' && language) {
+    // Check if this specific language should be rendered as an artifact
+    return ARTIFACT_RENDER_MAP[language] ?? false;
+  }
+
+  return ARTIFACT_RENDER_MAP[type] ?? false;
+}
 
 export interface DetectionContext {
   userMessage?: string;
@@ -486,21 +532,36 @@ export class ArtifactDetectionService {
         detectionConfidence += contextArtifacts.confidence;
       }
 
+      // **FILTER: Only keep artifacts that should be rendered in the pane**
+      const renderableArtifacts = artifacts.filter(artifact => {
+        const shouldRender = shouldRenderArtifact(artifact.type, artifact.language);
+        if (!shouldRender) {
+          console.log(`⏭️ Skipping artifact (type: ${artifact.type}, language: ${artifact.language || 'none'}) - not configured for rendering in artifact pane`);
+        }
+        return shouldRender;
+      });
+
       // Apply max artifacts limit
-      const limitedArtifacts = artifacts.slice(0, config.maxArtifactsPerMessage);
-      
+      const limitedArtifacts = renderableArtifacts.slice(0, config.maxArtifactsPerMessage);
+
       // Log configuration usage
-      if (artifacts.length > limitedArtifacts.length) {
-        console.log(`🎨 Artifact limit applied: ${artifacts.length} detected, ${limitedArtifacts.length} kept (max: ${config.maxArtifactsPerMessage})`);
+      if (artifacts.length > renderableArtifacts.length) {
+        console.log(`🎨 Artifact render filter applied: ${artifacts.length} detected, ${renderableArtifacts.length} renderable (filtered by ARTIFACT_RENDER_MAP)`);
       }
-      
+
+      if (renderableArtifacts.length > limitedArtifacts.length) {
+        console.log(`🎨 Artifact limit applied: ${renderableArtifacts.length} renderable, ${limitedArtifacts.length} kept (max: ${config.maxArtifactsPerMessage})`);
+      }
+
       if (limitedArtifacts.length > 0) {
         console.log(`🎨 Artifact detection config used:`, {
           enabledTypes: Object.entries(config)
             .filter(([key, value]) => key.startsWith('enable') && value === true)
             .map(([key]) => key.replace('enable', '').replace('Artifacts', '')),
           maxLimit: config.maxArtifactsPerMessage,
-          detected: limitedArtifacts.length
+          detected: artifacts.length,
+          renderable: renderableArtifacts.length,
+          final: limitedArtifacts.length
         });
       }
 
