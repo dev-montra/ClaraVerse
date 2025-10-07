@@ -16,14 +16,14 @@
  */
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { 
-  User, 
-  Bot, 
-  Copy, 
-  Check, 
-  Edit3, 
-  RotateCcw, 
-  FileText, 
+import {
+  User,
+  Bot,
+  Copy,
+  Check,
+  Edit3,
+  RotateCcw,
+  FileText,
   Image as ImageIcon,
   File,
   Code,
@@ -39,14 +39,19 @@ import {
   Volume2,
   VolumeX,
   Loader2,
-  Activity
+  Activity,
+  Layout,
+  BarChart,
+  Table,
+  Box
 } from 'lucide-react';
 
 // Import types and components
-import { 
-  ClaraMessage, 
+import {
+  ClaraMessage,
   ClaraMessageBubbleProps,
-  ClaraFileAttachment
+  ClaraFileAttachment,
+  ClaraArtifact
 } from '../../types/clara_assistant_types';
 
 import MessageContentRenderer from './MessageContentRenderer';
@@ -244,9 +249,97 @@ const ThinkingDisplay: React.FC<{
 };
 
 /**
+ * Artifact preview buttons - show when artifact pane is closed
+ */
+const ArtifactPreviewButtons: React.FC<{
+  artifacts: ClaraArtifact[];
+  onOpenArtifacts: () => void;
+  isPaneClosed: boolean;
+}> = ({ artifacts, onOpenArtifacts, isPaneClosed }) => {
+  if (!isPaneClosed || artifacts.length === 0) return null;
+
+  const getArtifactIcon = (type: string) => {
+    switch (type) {
+      case 'html':
+      case 'react':
+        return Layout;
+      case 'mermaid':
+        return Box;
+      case 'chart':
+        return BarChart;
+      case 'table':
+        return Table;
+      case 'code':
+        return Code;
+      default:
+        return FileCode;
+    }
+  };
+
+  const getArtifactLabel = (type: string) => {
+    switch (type) {
+      case 'html':
+        return 'HTML Preview';
+      case 'react':
+        return 'React Component';
+      case 'mermaid':
+        return 'Mermaid Diagram';
+      case 'chart':
+        return 'Chart';
+      case 'table':
+        return 'Table';
+      case 'code':
+        return 'Code';
+      default:
+        return 'Artifact';
+    }
+  };
+
+  // Group artifacts by type
+  const artifactGroups = artifacts.reduce((groups, artifact) => {
+    const type = artifact.type || 'code';
+    if (!groups[type]) {
+      groups[type] = [];
+    }
+    groups[type].push(artifact);
+    return groups;
+  }, {} as Record<string, any[]>);
+
+  return (
+    <div className="mt-4 flex flex-wrap gap-2">
+      {Object.entries(artifactGroups).map(([type, artifactsOfType]) => {
+        const Icon = getArtifactIcon(type);
+        const label = getArtifactLabel(type);
+        const count = artifactsOfType.length;
+
+        return (
+          <button
+            key={type}
+            onClick={onOpenArtifacts}
+            className="flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-900/30 dark:to-purple-900/30 hover:from-blue-100 hover:to-purple-100 dark:hover:from-blue-800/40 dark:hover:to-purple-800/40 border border-blue-200 dark:border-blue-700 rounded-lg transition-all duration-200 shadow-sm hover:shadow-md group"
+            title={`Click to view ${count} ${label}${count > 1 ? 's' : ''}`}
+          >
+            <Icon className="w-4 h-4 text-blue-600 dark:text-blue-400 group-hover:scale-110 transition-transform" />
+            <span className="text-sm font-medium text-blue-700 dark:text-blue-300">
+              {label}
+            </span>
+            {count > 1 && (
+              <span className="text-xs px-1.5 py-0.5 bg-blue-200 dark:bg-blue-800 text-blue-700 dark:text-blue-300 rounded-full font-semibold">
+                {count}
+              </span>
+            )}
+            <Eye className="w-3 h-3 text-blue-500 dark:text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+          </button>
+        );
+      })}
+    </div>
+  );
+};
+
+/**
  * File attachment display component
  */
-const FileAttachmentDisplay: React.FC<{ 
+const FileAttachmentDisplay: React.FC<{
   attachment: ClaraFileAttachment;
   onPreview?: (attachment: ClaraFileAttachment) => void;
 }> = ({ attachment, onPreview }) => {
@@ -932,10 +1025,13 @@ const ClaraMessageBubble: React.FC<ClaraMessageBubbleProps> = ({
   const { Toast } = useCopyWithToast();
 
   // Artifact Pane integration
-  const { openArtifactPane } = useArtifactPane();
+  const { openArtifactPane, isOpen: isArtifactPaneOpen } = useArtifactPane();
 
   // Track if we've already detected artifacts for this message to prevent duplicates
   const artifactsDetectedRef = useRef<string | null>(null);
+
+  // Store detected artifacts for this message
+  const [detectedArtifacts, setDetectedArtifacts] = useState<ClaraArtifact[]>([]);
 
   // Auto-detect artifacts when assistant message completes (not streaming)
   useEffect(() => {
@@ -975,6 +1071,7 @@ const ClaraMessageBubble: React.FC<ClaraMessageBubbleProps> = ({
       // Only open artifact pane if we detected substantial artifacts
       if (detectionResult.artifacts.length > 0) {
         console.log('🎨 Auto-detected', detectionResult.artifacts.length, 'artifacts, opening pane...');
+        setDetectedArtifacts(detectionResult.artifacts);
         openArtifactPane(detectionResult.artifacts, message.id);
       }
     }
@@ -1376,7 +1473,14 @@ const ClaraMessageBubble: React.FC<ClaraMessageBubbleProps> = ({
           {/* Streaming indicator */}
           {message.metadata?.isStreaming && <StreamingIndicator />}
 
-          {/* Artifacts are now handled inline within MessageContentRenderer - no separate artifact cards needed */}
+          {/* Artifact preview buttons - show when pane is closed */}
+          {isAssistant && detectedArtifacts.length > 0 && (
+            <ArtifactPreviewButtons
+              artifacts={detectedArtifacts}
+              onOpenArtifacts={() => openArtifactPane(detectedArtifacts, message.id)}
+              isPaneClosed={!isArtifactPaneOpen}
+            />
+          )}
         </div>
 
         {/* TTS Control Panel - Show when audio is playing */}

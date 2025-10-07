@@ -446,7 +446,7 @@ const ClaraAssistant: React.FC<ClaraAssistantProps> = ({ onPageChange }) => {
   const isVisible = useIsVisible();
 
   // Artifact Pane state
-  const { isOpen: isArtifactPaneOpen, artifacts, closeArtifactPane, openArtifactPane } = useArtifactPane();
+  const { isOpen: isArtifactPaneOpen, artifacts, closeArtifactPane, openArtifactPane, clearArtifacts } = useArtifactPane();
 
   // TEST: Expose artifact pane test function to window (development only)
   useEffect(() => {
@@ -2438,8 +2438,8 @@ You can:
   const handleSelectSession = useCallback(async (sessionId: string) => {
     if (currentSession?.id === sessionId) return;
 
-    // Close artifact pane when switching sessions
-    closeArtifactPane();
+    // Clear artifacts when switching sessions to prevent persistence across chats
+    clearArtifacts();
 
     try {
       const session = await claraDB.getClaraSession(sessionId);
@@ -2450,7 +2450,7 @@ You can:
     } catch (error) {
       console.error('Failed to load session:', error);
     }
-  }, [currentSession, closeArtifactPane]);
+  }, [currentSession, clearArtifacts]);
 
   // Ref to prevent multiple simultaneous new chat creations
   const isCreatingNewChatRef = useRef(false);
@@ -2470,8 +2470,8 @@ You can:
     // Update last call time
     lastNewChatTimeRef.current = now;
 
-    // Close artifact pane when creating new chat
-    closeArtifactPane();
+    // Clear artifacts when creating new chat to prevent persistence across chats
+    clearArtifacts();
 
     // Check if current session is already empty (new chat)
     if (currentSession &&
@@ -2513,7 +2513,7 @@ You can:
         isCreatingNewChatRef.current = false;
       }, 100);
     }
-  }, [createNewSession, autonomousAgentStatus, currentSession, messages, sessions, closeArtifactPane]);
+  }, [createNewSession, autonomousAgentStatus, currentSession, messages, sessions, clearArtifacts]);
 
   // Handle session actions
   const handleSessionAction = useCallback(async (sessionId: string, action: 'star' | 'archive' | 'delete') => {

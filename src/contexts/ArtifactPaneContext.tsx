@@ -42,21 +42,29 @@ export const ArtifactPaneProvider: React.FC<ArtifactPaneProviderProps> = ({ chil
   const [currentMessageId, setCurrentMessageId] = useState<string | null>(null);
 
   const openArtifactPane = useCallback((newArtifacts: ClaraArtifact[], messageId: string) => {
-    setArtifactsState(newArtifacts);
+    // Accumulate artifacts from all messages instead of replacing
+    setArtifactsState((prev) => {
+      // Add new artifacts, avoiding duplicates
+      const existingIds = new Set(prev.map((a) => a.id));
+      const uniqueNewArtifacts = newArtifacts.filter((a) => !existingIds.has(a.id));
+
+      if (uniqueNewArtifacts.length === 0) {
+        // No new artifacts, keep previous state
+        return prev;
+      }
+
+      // Add new artifacts to the end
+      return [...prev, ...uniqueNewArtifacts];
+    });
     setCurrentMessageId(messageId);
     setIsOpen(true);
   }, []);
 
   const closeArtifactPane = useCallback(() => {
     setIsOpen(false);
-    // Keep artifacts for a moment in case user wants to reopen
-    setTimeout(() => {
-      if (!isOpen) {
-        setArtifactsState([]);
-        setCurrentMessageId(null);
-      }
-    }, 300);
-  }, [isOpen]);
+    // DON'T clear artifacts when closing - keep them for the conversation
+    // Only clear when explicitly requested via clearArtifacts()
+  }, []);
 
   const addArtifact = useCallback((artifact: ClaraArtifact, messageId: string) => {
     setArtifactsState((prev) => {
