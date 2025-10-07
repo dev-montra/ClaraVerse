@@ -54,6 +54,8 @@ import { claraMemoryIntegration } from '../services/ClaraMemoryIntegration';
 // Clara Memory Dashboard
 import ClaraBrainDashboard from './Clara_Components/ClaraBrainDashboard';
 
+// Memory compression now happens automatically in background - no dialog needed
+
 // Import clipboard test functions for development
 if (process.env.NODE_ENV === 'development') {
   import('../utils/clipboard.test');
@@ -550,7 +552,28 @@ export default Counter;`,
     const saved = localStorage.getItem('clara-memory-enabled');
     return saved !== null ? JSON.parse(saved) : true;
   });
-  
+
+  // Listen for memory compression events (background auto-compression)
+  useEffect(() => {
+    const unsubscribe = claraMemoryIntegration.addEventListener((event) => {
+      if (event.type === 'compression_needed' && event.sizeInfo) {
+        console.log('🗜️ Compression needed (auto-compressing in background)');
+        // With autoCompress=true, compression happens automatically in background
+      } else if (event.type === 'compression_complete' && event.compressionResult) {
+        console.log('🗜️ Background compression complete:', event);
+
+        // Show success notification with compression stats
+        const ratio = event.compressionResult.compressionRatio.toFixed(0);
+        addInfoNotification(
+          'Memory Optimized',
+          `Clara automatically compressed her memories by ${ratio}%!`
+        );
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
   // Listen for memory settings changes from other components (like the dashboard)
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
@@ -558,7 +581,7 @@ export default Counter;`,
         setMemoryEnabled(JSON.parse(e.newValue));
       }
     };
-    
+
     window.addEventListener('storage', handleStorageChange);
     return () => window.removeEventListener('storage', handleStorageChange);
   }, []);
@@ -4582,6 +4605,8 @@ ${data.timezone ? `• **Timezone:** ${data.timezone}` : ''}`;
         knowledgeLevel={memoryToastState.knowledgeLevel}
         duration={4000}
       />
+
+      {/* Memory compression now happens automatically in background - no dialog needed */}
     </div>
   );
 };

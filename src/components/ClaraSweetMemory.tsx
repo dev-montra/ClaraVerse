@@ -1782,15 +1782,32 @@ Store whatever feels important in whatever format makes sense. You can create ne
       processingRef.current.add(messageId);
       lastProcessedRef.current = Date.now();
 
+      // Get current user profile FIRST to check size
+      const currentUserId = 'current_user';
+      let existingProfile = await getUserMemoryProfile(currentUserId);
+
+      // 🗜️ CHECK MEMORY SIZE BEFORE EXTRACTION - Skip extraction if compression needed
+      if (existingProfile) {
+        const profileJson = JSON.stringify(existingProfile);
+        const sizeBytes = new Blob([profileJson]).size;
+        const sizeKB = (sizeBytes / 1024).toFixed(2);
+
+        console.log(`🗜️ Memory size check: ${sizeKB} KB (${sizeBytes} bytes)`);
+
+        // If over 5KB, skip extraction and let user compress first
+        if (sizeBytes >= 5 * 1024) {
+          console.warn('🗜️ ⚠️ Memory is too large (>5KB) - SKIPPING extraction until compression happens');
+          console.warn('🗜️ The compression dialog should appear shortly to handle this.');
+          processingRef.current.delete(messageId);
+          return;
+        }
+      }
+
       // Prepare conversation context (last 3 messages for context)
       const contextMessages = conversationHistory
         .slice(-3)
         .filter(msg => msg.role === 'user')
         .map(msg => msg.content);
-
-      // Get current user profile (using consistent user ID for single-user app)
-      const currentUserId = 'current_user';
-      let existingProfile = await getUserMemoryProfile(currentUserId);
       
       // 🔍 MIGRATION: Check if there's old data under 'anonymous' and migrate it
       if (!existingProfile) {
