@@ -1081,6 +1081,9 @@ const ClaraMessageBubble: React.FC<ClaraMessageBubbleProps> = ({
     );
   }, [message.content, message.role]);
 
+  // State to show "no artifacts" feedback
+  const [showNoArtifactsFeedback, setShowNoArtifactsFeedback] = useState(false);
+
   // On-demand artifact detection - only when user clicks the button
   const detectArtifactsOnDemand = useCallback(() => {
     // Skip if already detected or currently detecting
@@ -1121,6 +1124,11 @@ const ClaraMessageBubble: React.FC<ClaraMessageBubbleProps> = ({
       console.log('🎨 On-demand detected', detectionResult.artifacts.length, 'artifacts for message', message.id);
       setDetectedArtifacts(detectionResult.artifacts);
       openArtifactPane(detectionResult.artifacts, message.id);
+      setShowNoArtifactsFeedback(false);
+    } else {
+      // Show feedback when no artifacts are found
+      setShowNoArtifactsFeedback(true);
+      setTimeout(() => setShowNoArtifactsFeedback(false), 3000);
     }
 
     setIsDetecting(false);
@@ -1544,13 +1552,25 @@ const ClaraMessageBubble: React.FC<ClaraMessageBubbleProps> = ({
 
           {/* Artifact preview buttons - show when pane is closed and message has potential artifacts */}
           {isAssistant && (detectedArtifacts.length > 0 || hasPotentialArtifacts) && (
-            <ArtifactPreviewButtons
-              artifacts={detectedArtifacts}
-              onOpenArtifacts={detectArtifactsOnDemand}
-              isPaneClosed={!isArtifactPaneOpen}
-              isDetecting={isDetecting}
-              hasArtifacts={detectedArtifacts.length > 0}
-            />
+            <>
+              <ArtifactPreviewButtons
+                artifacts={detectedArtifacts}
+                onOpenArtifacts={detectArtifactsOnDemand}
+                isPaneClosed={!isArtifactPaneOpen}
+                isDetecting={isDetecting}
+                hasArtifacts={detectedArtifacts.length > 0}
+              />
+
+              {/* No artifacts feedback message */}
+              {showNoArtifactsFeedback && (
+                <div className="mt-3 p-3 bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 rounded-lg flex items-center gap-2 animate-in fade-in-0 slide-in-from-top-2">
+                  <AlertCircle className="w-4 h-4 text-gray-500 dark:text-gray-400" />
+                  <span className="text-sm text-gray-600 dark:text-gray-400">
+                    No artifacts found in this message
+                  </span>
+                </div>
+              )}
+            </>
           )}
         </div>
 
