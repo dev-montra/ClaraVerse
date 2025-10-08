@@ -8,6 +8,9 @@
 /* Clara specific styles */
 @import './styles/claraSidebar.css';
 
+/* Bolt.new Dark Theme */
+@import './styles/bolt-theme.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;

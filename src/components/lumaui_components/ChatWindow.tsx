@@ -1924,51 +1924,51 @@ Please check your request and try again. Make sure the file exists and your inst
   const fileOptions = useMemo(() => flatFiles.filter(f => f.type === 'file'), [flatFiles]);
 
   return (
-    <div className="h-full flex flex-col glassmorphic">
-      {/* Enhanced Header */}
-      <div className="chat-header glassmorphic-card border-b border-white/20 dark:border-gray-700/50 shrink-0 h-14">
+    <div className="h-full flex flex-col bolt-chat-container bg-bolt-bg-primary">
+      {/* Enhanced Header - Bolt Style */}
+      <div className="chat-header bg-bolt-bg-secondary border-b border-bolt-border shrink-0 h-14">
         <div className="flex items-center justify-between px-4 py-3">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-gradient-to-br from-sakura-100 to-pink-100 dark:from-sakura-900/30 dark:to-pink-900/30 rounded-lg flex items-center justify-center">
-              <Bot className="w-4 h-4 text-sakura-600 dark:text-sakura-400" />
+            <div className="w-8 h-8 bg-bolt-accent-blue/20 rounded-lg flex items-center justify-center">
+              <Bot className="w-4 h-4 text-bolt-accent-blue" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="font-semibold text-gray-800 dark:text-gray-100 text-sm">AI Agent</h3>
+                <h3 className="font-semibold text-bolt-text-primary text-sm">AI Agent</h3>
                 {isLoading && (
                   <div className="flex items-center gap-1">
-                    <div className="w-2 h-2 bg-sakura-500 rounded-full animate-pulse"></div>
-                    <span className="text-xs px-2 py-0.5 bg-sakura-100 dark:bg-sakura-900/30 text-sakura-700 dark:text-sakura-300 rounded-full font-medium">
+                    <div className="w-2 h-2 bg-bolt-accent-blue rounded-full animate-pulse"></div>
+                    <span className="text-xs px-2 py-0.5 bg-bolt-accent-blue/20 text-bolt-accent-blue rounded-full font-medium">
                       Working
                     </span>
                   </div>
                 )}
               </div>
-              <p className="text-xs text-gray-600 dark:text-gray-400">
+              <p className="text-xs text-bolt-text-secondary">
                 {currentPlanning && showPlanning
                   ? `🧠 Planning • Step ${currentPlanning.currentStep}/${currentPlanning.totalSteps}`
-                  : currentToolExecution && showLiveExecution 
-                    ? `${currentToolExecution.toolName.replace('_', ' ')} • ${currentToolExecution.status}` 
+                  : currentToolExecution && showLiveExecution
+                    ? `${currentToolExecution.toolName.replace('_', ' ')} • ${currentToolExecution.status}`
                     : currentTask || (isLoading ? 'Working...' : 'Ready to help')}
               </p>
             </div>
           </div>
-          
+
           <div className="flex items-center gap-2">
             <div className="relative">
               <button
                 onClick={() => setShowSettingsModal(true)}
-                className="p-2 glassmorphic-card border border-white/30 dark:border-gray-700/50 text-gray-600 dark:text-gray-400 hover:text-sakura-500 dark:hover:text-sakura-400 rounded-lg transition-all duration-200 hover:shadow-md transform hover:scale-105"
+                className="bolt-button-icon"
                 title="Settings"
               >
                 <Settings className="w-4 h-4" />
               </button>
-                
+
             </div>
-            
+
             <button
               onClick={clearChat}
-              className="p-2 glassmorphic-card border border-white/30 dark:border-gray-700/50 text-gray-600 dark:text-gray-400 hover:text-red-500 dark:hover:text-red-400 rounded-lg transition-all duration-200 hover:shadow-md transform hover:scale-105"
+              className="bolt-button-icon hover:text-bolt-error"
               title="Clear chat"
             >
               <Trash2 className="w-4 h-4" />
@@ -1977,8 +1977,8 @@ Please check your request and try again. Make sure the file exists and your inst
         </div>
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto scrollbar-none p-4 space-y-4">
+      {/* Messages - Bolt Style */}
+      <div className="flex-1 overflow-y-auto bolt-scrollbar p-4 space-y-4 bg-bolt-bg-primary">
         {/* Live Tool Execution Animation */}
         <LiveToolExecution
           currentExecution={currentToolExecution}
@@ -1996,16 +1996,16 @@ Please check your request and try again. Make sure the file exists and your inst
           
           return (
             <div key={message.id} className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`group max-w-[85%] relative ${
-                message.type === 'user' 
-                  ? `${hasCheckpoint 
-                      ? 'bg-gradient-to-r from-amber-400 to-orange-500 border-2 border-amber-300/50' 
-                      : 'bg-gradient-to-r from-sakura-500 to-pink-500'} text-white shadow-lg shadow-sakura-500/25` 
+              <div className={`group max-w-[85%] relative overflow-hidden ${
+                message.type === 'user'
+                  ? `${hasCheckpoint
+                      ? 'bg-gradient-to-r from-amber-400 to-orange-500 border-2 border-amber-300/50'
+                      : 'bg-bolt-bg-tertiary border border-bolt-border'} text-bolt-text-primary shadow-md`
                   : message.type === 'tool'
-                  ? 'glassmorphic-card border border-emerald-200/30 dark:border-emerald-700/30 text-gray-900 dark:text-gray-100'
-                  : 'glassmorphic-card border border-white/30 dark:border-gray-700/50 text-gray-900 dark:text-gray-100'
-              } rounded-xl px-4 py-3 shadow-sm backdrop-blur-sm`}>
-              <div className="text-sm leading-relaxed">
+                  ? 'bg-bolt-bg-elevated border border-bolt-success/30 text-bolt-text-primary'
+                  : 'bg-bolt-bg-secondary border border-bolt-border text-bolt-text-primary'
+              } rounded-xl px-4 py-3 shadow-sm`}>
+              <div className="text-sm leading-relaxed overflow-x-auto">
                 {message.type === 'user' ? (
                   <div className="whitespace-pre-wrap break-words">
                     {message.content}
@@ -2026,13 +2026,16 @@ Please check your request and try again. Make sure the file exists and your inst
                             style={vscDarkPlus}
                             language={match[1]}
                             PreTag="div"
-                            className="rounded-lg !mt-2 !mb-2"
+                            className="rounded-lg !mt-2 !mb-2 overflow-x-auto"
                             customStyle={{
                               margin: 0,
                               padding: '1rem',
                               backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                              fontSize: '0.875rem'
+                              fontSize: '0.875rem',
+                              overflowX: 'auto',
+                              maxWidth: '100%'
                             }}
+                            wrapLongLines={false}
                           >
                             {String(children).replace(/\n$/, '')}
                           </SyntaxHighlighter>
@@ -2172,8 +2175,8 @@ Please check your request and try again. Make sure the file exists and your inst
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Enhanced Input */}
-      <div className="glassmorphic-card border-t border-white/20 dark:border-gray-700/50 p-4">
+      {/* Enhanced Input - Bolt Style */}
+      <div className="bg-bolt-bg-secondary border-t border-bolt-border p-4">
         <div className="flex gap-3">
           <div className="flex-1 relative">
             <textarea
@@ -2182,11 +2185,11 @@ Please check your request and try again. Make sure the file exists and your inst
               onKeyPress={handleKeyPress}
               placeholder="Ask me to help with your project, create files, debug code, or explain concepts..."
               disabled={isLoading || !apiClient || !selectedModel}
-              className="w-full resize-none rounded-xl border border-white/30 dark:border-gray-700/50 px-4 py-4 text-sm glassmorphic-card text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-sakura-500 focus:border-transparent disabled:opacity-50 transition-all leading-relaxed backdrop-blur-sm"
+              className="bolt-textarea text-bolt-text-primary placeholder-bolt-text-muted disabled:opacity-50 transition-all leading-relaxed"
               rows={4}
             />
             {inputMessage.trim() && (
-              <div className="absolute bottom-3 right-3 text-xs text-gray-400 bg-white/60 dark:bg-gray-800/60 px-2 py-1 rounded-md backdrop-blur-sm">
+              <div className="absolute bottom-3 right-3 text-xs text-bolt-text-muted bg-bolt-bg-tertiary px-2 py-1 rounded-md">
                 Press Ctrl+Enter to send
               </div>
             )}
@@ -2195,7 +2198,7 @@ Please check your request and try again. Make sure the file exists and your inst
             <button
               onClick={handleSendMessage}
               disabled={!inputMessage.trim() || isLoading || !apiClient || !selectedModel}
-              className="p-4 bg-gradient-to-r from-sakura-500 to-pink-500 text-white rounded-xl hover:from-sakura-600 hover:to-pink-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl shadow-sakura-500/25 transform hover:scale-105 disabled:transform-none flex items-center justify-center"
+              className="bolt-button-primary p-4 rounded-xl disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none flex items-center justify-center"
             >
               {isLoading ? (
                 <Loader2 className="w-5 h-5 animate-spin" />
@@ -2203,21 +2206,21 @@ Please check your request and try again. Make sure the file exists and your inst
                 <Send className="w-5 h-5" />
               )}
             </button>
-            
+
             {/* AI Precision Editor Button */}
             <button
               onClick={() => setShowPrecisionEdit(v => !v)}
-              className="p-3 bg-gradient-to-r from-purple-500 to-indigo-500 text-white rounded-xl hover:from-purple-600 hover:to-indigo-600 transition-all duration-200 shadow-lg hover:shadow-xl shadow-purple-500/25 transform hover:scale-105 flex items-center justify-center"
+              className="p-3 bg-gradient-to-r from-purple-500 to-indigo-500 text-white rounded-xl hover:from-purple-600 hover:to-indigo-600 transition-all duration-200 shadow-md hover:shadow-lg transform hover:scale-105 flex items-center justify-center"
               title="AI Precision Editor"
             >
               <Scissors className="w-4 h-4" />
             </button>
           </div>
         </div>
-        
+
         {(!apiClient || !selectedModel) && (
-          <div className="mt-3 p-3 glassmorphic-card border border-amber-200/30 dark:border-amber-700/30 rounded-lg">
-            <p className="text-sm text-amber-700 dark:text-amber-400 flex items-center gap-2">
+          <div className="mt-3 p-3 bg-bolt-warning/10 border border-bolt-warning/30 rounded-lg">
+            <p className="text-sm text-bolt-warning flex items-center gap-2">
               <Settings className="w-4 h-4" />
               Please configure a provider and model in settings to start chatting
             </p>

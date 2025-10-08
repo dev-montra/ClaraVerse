@@ -14,6 +14,7 @@ import TerminalComponent from './lumaui_components/TerminalComponent';
 import PreviewPane from './lumaui_components/PreviewPane';
 import ChatWindow from './lumaui_components/ChatWindow';
 import ResizeHandle from './lumaui_components/ResizeHandle';
+import RightPanelWorkspace from './lumaui_components/RightPanelWorkspace';
 
 // Hooks
 import { useResizable } from '../hooks/useResizable';
@@ -46,56 +47,35 @@ const LumaUICore: React.FC = () => {
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [selectedFileContent, setSelectedFileContent] = useState<string>('');
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['']));
-  const [activeTab, setActiveTab] = useState<'editor' | 'preview' | 'terminal'>('editor');
+  const [rightPanelMode, setRightPanelMode] = useState<'editor' | 'preview' | 'settings'>('editor');
   const [scaffoldProgress, setScaffoldProgress] = useState<ScaffoldProgress | null>(null);
   const [wallpaperUrl, setWallpaperUrl] = useState<string | null>(null);
 
-  
-  // Resizable panels (using percentages)
-  const leftPanel = useResizable({ 
-    initialPercentage: 25, 
-    minPercentage: 15, 
-    maxPercentage: 50, 
-    direction: 'horizontal' 
+
+  // Resizable panels (using percentages) - NOW ONLY 2 PANELS: Left (Chat) and Right (Workspace)
+  const leftPanel = useResizable({
+    initialPercentage: 30,
+    minPercentage: 20,
+    maxPercentage: 50,
+    direction: 'horizontal'
   });
-  
-  const rightPanel = useResizable({ 
-    initialPercentage: 40, 
-    minPercentage: 25, 
-    maxPercentage: 60, 
-    direction: 'horizontal',
-    reverse: true // Right panel needs inverted drag behavior
-  });
+
+  // Calculate right panel percentage
+  const rightPanelPercentage = 100 - leftPanel.percentage;
 
   // Debug logs for resize functionality
   useEffect(() => {
-    console.log('🔧 RESIZE DEBUG - Left Panel:', {
+    console.log('🔧 RESIZE DEBUG - Left Panel (Chat):', {
       percentage: leftPanel.percentage,
       isResizing: leftPanel.isResizing
     });
   }, [leftPanel.percentage, leftPanel.isResizing]);
 
   useEffect(() => {
-    console.log('🔧 RESIZE DEBUG - Right Panel:', {
-      percentage: rightPanel.percentage,
-      isResizing: rightPanel.isResizing
+    console.log('🔧 RESIZE DEBUG - Right Panel (Workspace):', {
+      percentage: rightPanelPercentage
     });
-  }, [rightPanel.percentage, rightPanel.isResizing]);
-  
-  // Removed terminal panel resizing since it's now integrated with tabs
-
-  // Calculate middle panel percentage
-  const middlePanelPercentage = 100 - leftPanel.percentage - rightPanel.percentage;
-  
-  // Debug middle panel calculation
-  useEffect(() => {
-    console.log('🔧 RESIZE DEBUG - Middle Panel:', {
-      percentage: middlePanelPercentage,
-      leftPanel: leftPanel.percentage,
-      rightPanel: rightPanel.percentage,
-      total: leftPanel.percentage + rightPanel.percentage + middlePanelPercentage
-    });
-  }, [middlePanelPercentage, leftPanel.percentage, rightPanel.percentage]);
+  }, [rightPanelPercentage]);
   
   // Refs
   const terminalRef = useRef<Terminal | null>(null);
@@ -233,8 +213,8 @@ This is a browser security requirement for WebContainer.`;
       throw new Error(`Unknown project template: ${configId}`);
     }
 
-    // Switch to terminal tab during creation
-    setActiveTab('terminal');
+    // Switch to editor mode during creation (no tabs anymore - terminal is in editor mode)
+    setRightPanelMode('editor');
 
     const newProject: Project = {
       id: `project-${Date.now()}`,
@@ -1119,7 +1099,7 @@ This is a browser security requirement for WebContainer.`;
   }, [webContainer, files, selectedProject?.name, handleFileSelect, writeToTerminal, refreshFileTree]);
 
   return (
-    <div className="h-[89vh] bg-gradient-to-br from-white to-sakura-50 dark:from-gray-900 dark:to-gray-800 overflow-hidden relative">
+    <div className="h-[calc(100vh-3rem)] bg-gradient-to-br from-bolt-bg-primary to-bolt-bg-secondary overflow-hidden relative">
       {/* Wallpaper Background */}
       {wallpaperUrl && (
         <div 
@@ -1136,7 +1116,8 @@ This is a browser security requirement for WebContainer.`;
       )}
 
       {/* Content with relative z-index */}
-      <div className="relative z-10 h-full">
+      {/* h- minus the top bar height */}
+      <div className="relative z-10 h-[calc(100vh-48px)]"> 
         {/* Scaffold Progress - Overlay */}
         {scaffoldProgress && !scaffoldProgress.isComplete && (
           <div className="absolute top-4 left-4 right-4 z-50 p-4 glassmorphic rounded-xl border border-white/30 dark:border-gray-700/50 shadow-xl backdrop-blur-lg">
@@ -1161,7 +1142,7 @@ This is a browser security requirement for WebContainer.`;
         )}
       
               {/* Main Layout */}
-        <div className="h-full flex flex-col">
+        <div className="h-[calc(100vh-48px)] flex flex-col">
           {/* Enhanced Header - Glassmorphic Design */}
           {selectedProject && (
             <div className="glassmorphic border-b border-white/20 dark:border-gray-700/50 shrink-0 h-12 flex items-center justify-between px-4">
@@ -1241,312 +1222,72 @@ This is a browser security requirement for WebContainer.`;
             </div>
           )}
 
-        {/* Main Content Area - Three Panel Layout */}
-        <div 
+        {/* Main Content Area - Two Panel Layout (Bolt.new Style) */}
+        <div
           ref={(el) => {
             // Store reference for resize calculations
             if (el) {
               el.setAttribute('data-resize-container', 'true');
             }
           }}
-          className={`flex overflow-hidden ${selectedProject ? 'h-[calc(89vh-2rem)]' : 'h-[89vh]'}`}
+          className={`flex overflow-hidden ${selectedProject ? 'h-[calc(100vh-6rem)]' : 'h-[calc(100vh-3rem)]'}`}
         >
-          {/* Project Content */}
-          <div className="flex flex-1 overflow-hidden h-full">
-      {selectedProject ? (
-            <>
-              {/* Left Panel - File Explorer Only */}
-              <div 
-                className="flex flex-col glassmorphic border-r border-white/20 dark:border-gray-700/50 h-full"
-                style={{ 
-                  width: `${leftPanel.percentage}%`,
-                  backgroundColor: leftPanel.isResizing ? 'rgba(254, 226, 226, 0.3)' : '' // Debug: translucent red tint when resizing
-                }}
-                onMouseEnter={() => console.log('🔧 RESIZE DEBUG - Left panel hover, width:', `${leftPanel.percentage}%`)}
-              >
-                {/* Explorer Header */}
-                <div className="flex items-center gap-2 px-3 py-2 text-xs font-semibold text-gray-700 dark:text-gray-200 glassmorphic-card border-b border-white/20 dark:border-gray-700/50 shrink-0 h-10">
-                  <FolderOpen className="w-4 h-4 text-sakura-500" />
-                  <span>Explorer</span>
-                  <div className="ml-auto text-xs px-2 py-0.5 bg-sakura-100 dark:bg-sakura-900/30 text-sakura-700 dark:text-sakura-300 rounded-full">
-                    {files.length}
-                  </div>
-                </div>
-
-                {/* File Explorer Content */}
-                <div className="flex-1 overflow-auto min-h-0 p-2">
-                                  <FileExplorer
-                  files={files}
-                  selectedFile={selectedFile}
-                  onFileSelect={handleFileSelect}
-                  expandedFolders={expandedFolders}
-                  onToggleFolder={handleToggleFolder}
-                  onCreateFile={handleCreateFile}
-                  onCreateFolder={handleCreateFolder}
-                  onDeleteFile={handleDeleteFile}
-                  onDeleteFolder={handleDeleteFolder}
-                  onRenameFile={handleRenameFile}
-                  onDuplicateFile={handleDuplicateFile}
-                />
-                </div>
-              </div>
-
-              {/* Left Panel Resize Handle */}
-              <ResizeHandle
-                direction="horizontal"
-                onMouseDown={(e) => {
-                  console.log('🔧 RESIZE DEBUG - Left resize handle clicked', e);
-                  leftPanel.startResize(e);
-                }}
-                isResizing={leftPanel.isResizing}
-              />
-          
-          {/* Center Panel - Tabbed Interface */}
-              <div 
-                className="min-w-0 glassmorphic flex flex-col h-full"
-                style={{ width: `${middlePanelPercentage}%` }}
-              >
-                {/* Tab Headers */}
-                <div className="flex items-center border-b border-white/20 dark:border-gray-700/50 glassmorphic-card shrink-0 h-10">
-                  <button
-                    onClick={() => setActiveTab('editor')}
-                    className={`flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-t-lg border-b-2 h-full transition-all ${
-                      activeTab === 'editor'
-                        ? 'border-sakura-500 text-sakura-600 dark:text-sakura-400 bg-gradient-to-b from-sakura-50 to-transparent dark:from-sakura-900/20 dark:to-transparent'
-                        : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/30'
-                    }`}
-                  >
-                    <Code className="w-4 h-4" />
-                    <span>Editor</span>
-                  </button>
-                  
-                  {selectedProject && (
-                    <button
-                      onClick={() => setActiveTab('preview')}
-                      className={`flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-t-lg border-b-2 h-full transition-all ${
-                        activeTab === 'preview'
-                          ? 'border-sakura-500 text-sakura-600 dark:text-sakura-400 bg-gradient-to-b from-sakura-50 to-transparent dark:from-sakura-900/20 dark:to-transparent'
-                          : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/30'
-                      }`}
-                    >
-                      <Eye className="w-4 h-4" />
-                      <span>Preview</span>
-                      {selectedProject.status === 'running' && (
-                        <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse shadow-sm"></div>
-                      )}
-                    </button>
-                  )}
-                  
-                  <button
-                    onClick={() => setActiveTab('terminal')}
-                    className={`flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-t-lg border-b-2 h-full transition-all ${
-                      activeTab === 'terminal'
-                        ? 'border-sakura-500 text-sakura-600 dark:text-sakura-400 bg-gradient-to-b from-sakura-50 to-transparent dark:from-sakura-900/20 dark:to-transparent'
-                        : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/30'
-                    }`}
-                  >
-                    <MessageSquare className="w-4 h-4" />
-                    <span>Terminal</span>
-                  </button>
-                </div>
-                
-                {/* Tab Content */}
-                <div className="flex-1 overflow-hidden min-h-0">
-                  {activeTab === 'editor' && (
-                    <MonacoEditor
-                      content={selectedFileContent}
-                      fileName={selectedFile || 'No file selected'}
-                      onChange={handleFileContentChange}
-                      isPreviewVisible={false}
-                      onTogglePreview={() => setActiveTab('preview')}
-                      showPreviewToggle={selectedProject !== null}
-                      projectFiles={files}
-                      webContainer={webContainer}
-                    />
-                  )}
-                  
-                  {activeTab === 'preview' && selectedProject && (
-                    <PreviewPane
-                      project={selectedProject}
-                      isStarting={isStarting}
-                      onStartProject={startProject}
-                    />
-                  )}
-                  
-                  {activeTab === 'terminal' && (
-                    <TerminalComponent
-                      webContainer={webContainer}
-                      isVisible={true}
-                      onToggle={() => setActiveTab('editor')}
-                      terminalRef={terminalRef}
-                    />
-                  )}
-                </div>
-              </div>
-
-              {/* Right Panel Resize Handle */}
-              <ResizeHandle
-                direction="horizontal"
-                onMouseDown={(e) => {
-                  console.log('🔧 RESIZE DEBUG - Right resize handle clicked', e);
-                  rightPanel.startResize(e);
-                }}
-                isResizing={rightPanel.isResizing}
-              />
-          
-                        {/* Chat Panel */}
-              <div 
-                className="glassmorphic border-l border-white/20 dark:border-gray-700/50 h-full overflow-hidden"
-                style={{ 
-                  width: `${rightPanel.percentage}%`,
-                  backgroundColor: rightPanel.isResizing ? 'rgba(254, 226, 226, 0.3)' : '' // Debug: translucent red tint when resizing
-                }}
-                onMouseEnter={() => console.log('🔧 RESIZE DEBUG - Right panel hover, width:', `${rightPanel.percentage}%`)}
-              >
-                <ChatWindow
-                  selectedFile={selectedFile}
-                  fileContent={selectedFileContent}
-                  files={files}
-                  onFileContentChange={handleFileContentChange}
-                  onFileSelect={handleFileSelect}
-                  workingDirectory={selectedProject?.name || '.'}
-                  lumaTools={lumaTools}
-                  projectId={selectedProject?.id}
-                  projectName={selectedProject?.name}
-                  refreshFileTree={refreshFileTree}
-                />
-                </div>
-            </>
-            ) : (
-              <>
-                {/* Left Panel - Empty Explorer */}
-                <div 
-                  className="flex flex-col glassmorphic border-r border-white/20 dark:border-gray-700/50 h-full"
-                  style={{ width: `${leftPanel.percentage}%` }}
-                >
-                  <div className="flex items-center gap-2 px-3 py-2 text-xs font-semibold text-gray-700 dark:text-gray-200 glassmorphic-card border-b border-white/20 dark:border-gray-700/50 shrink-0 h-10">
-                    <FolderOpen className="w-4 h-4 text-gray-400" />
-                    <span>Explorer</span>
-                  </div>
-                  <div className="flex-1 flex items-center justify-center p-4 min-h-0">
-                    <div className="text-center">
-                      <div className="w-12 h-12 mx-auto mb-3 bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-600 rounded-full flex items-center justify-center opacity-50">
-                        <FolderOpen className="w-6 h-6 text-gray-400" />
-                      </div>
-                      <p className="text-xs text-gray-500 dark:text-gray-400 font-medium">
-                        No project open
-                      </p>
-                    </div>
-                  </div>
-                </div>
-                
-                {/* Left Panel Resize Handle */}
-                <ResizeHandle
-                  direction="horizontal"
-                  onMouseDown={(e) => {
-                    console.log('🔧 RESIZE DEBUG - Left resize handle clicked (no project)', e);
-                    leftPanel.startResize(e);
-                  }}
-                  isResizing={leftPanel.isResizing}
-                />
-                
-                {/* Center Welcome Area - Tabbed Interface */}
-                <div 
-                  className="min-w-0 glassmorphic flex flex-col h-full"
-                  style={{ width: `${middlePanelPercentage}%` }}
-                >
-                  {/* Tab Headers */}
-                  <div className="flex items-center border-b border-white/20 dark:border-gray-700/50 glassmorphic-card shrink-0 h-10">
-                    <button
-                      onClick={() => setActiveTab('editor')}
-                      className={`flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-t-lg border-b-2 h-full transition-all ${
-                        activeTab === 'editor'
-                          ? 'border-sakura-500 text-sakura-600 dark:text-sakura-400 bg-gradient-to-b from-sakura-50 to-transparent dark:from-sakura-900/20 dark:to-transparent'
-                          : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/30'
-                      }`}
-                    >
-                      <Code className="w-4 h-4" />
-                      <span>Editor</span>
-                    </button>
-                    
-                    <button
-                      onClick={() => setActiveTab('terminal')}
-                      className={`flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-t-lg border-b-2 h-full transition-all ${
-                        activeTab === 'terminal'
-                          ? 'border-sakura-500 text-sakura-600 dark:text-sakura-400 bg-gradient-to-b from-sakura-50 to-transparent dark:from-sakura-900/20 dark:to-transparent'
-                          : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/30'
-                      }`}
-                    >
-                      <MessageSquare className="w-4 h-4" />
-                      <span>Terminal</span>
-                    </button>
-                  </div>
-                  
-                  {/* Tab Content */}
-                  <div className="flex-1 overflow-hidden min-h-0">
-                    {activeTab === 'editor' && (
-                      <div className="h-full flex items-center justify-center p-8">
-                        <div className="text-center max-w-md">
-                          <div className="w-20 h-20 mx-auto mb-6 bg-gradient-to-br from-sakura-100 to-sakura-200 dark:from-sakura-900/30 dark:to-sakura-800/30 rounded-full flex items-center justify-center shadow-lg">
-                            <Code className="w-10 h-10 text-sakura-600 dark:text-sakura-400" />
-                          </div>
-                          <h3 className="text-xl font-bold text-gray-800 dark:text-gray-100 mb-3">
-                            Welcome to LumaUI
-                          </h3>
-                          <p className="text-sm text-gray-600 dark:text-gray-400 mb-6 leading-relaxed">
-                            Create powerful web applications with our intuitive project builder. Get started by creating your first project.
-                          </p>
-                          <button
-                            onClick={() => setIsCreateModalOpen(true)}
-                            className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-sakura-500 to-pink-500 text-white rounded-xl hover:from-sakura-600 hover:to-pink-600 transition-all mx-auto text-sm font-semibold shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
-                          >
-                            <Plus className="w-4 h-4" />
-                            Create New Project
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                    
-                    {activeTab === 'terminal' && (
-                      <TerminalComponent
-                        webContainer={webContainer}
-                        isVisible={true}
-                        onToggle={() => setActiveTab('editor')}
-                        terminalRef={terminalRef}
-                      />
-                    )}
-                  </div>
-                </div>
-                
-                {/* Right Panel Resize Handle */}
-                <ResizeHandle
-                  direction="horizontal"
-                  onMouseDown={(e) => {
-                    console.log('🔧 RESIZE DEBUG - Right resize handle clicked (no project)', e);
-                    rightPanel.startResize(e);
-                  }}
-                  isResizing={rightPanel.isResizing}
-                />
-                
-                {/* Right Panel - Chat (even without project) */}
-                <div 
-                  className="glassmorphic border-l border-white/20 dark:border-gray-700/50 h-full overflow-hidden"
-                  style={{ width: `${rightPanel.percentage}%` }}
-                >
-                  <ChatWindow
-                    selectedFile={null}
-                    fileContent=""
-                    files={[]}
-                    onFileContentChange={() => {}}
-                    onFileSelect={() => {}}
-                    workingDirectory="."
-                    projectId="no-project"
-                    projectName="No Project"
-                  />
-                </div>
-              </>
-            )}
+          {/* Left Panel - Chat */}
+          <div
+            className="flex flex-col bg-bolt-bg-primary border-r border-bolt-border h-full"
+            style={{
+              width: `${leftPanel.percentage}%`,
+              backgroundColor: leftPanel.isResizing ? 'rgba(31, 111, 235, 0.1)' : ''
+            }}
+          >
+            <ChatWindow
+              selectedFile={selectedFile}
+              fileContent={selectedFileContent}
+              files={files}
+              onFileContentChange={handleFileContentChange}
+              onFileSelect={handleFileSelect}
+              workingDirectory={selectedProject?.name || '.'}
+              lumaTools={lumaTools}
+              projectId={selectedProject?.id || 'no-project'}
+              projectName={selectedProject?.name || 'No Project'}
+              refreshFileTree={refreshFileTree}
+            />
           </div>
+
+          {/* Resize Handle */}
+          <ResizeHandle
+            direction="horizontal"
+            onMouseDown={(e) => {
+              console.log('🔧 RESIZE DEBUG - Resize handle clicked', e);
+              leftPanel.startResize(e);
+            }}
+            isResizing={leftPanel.isResizing}
+          />
+
+          {/* Right Panel - Workspace with Mode Switching */}
+          <RightPanelWorkspace
+            mode={rightPanelMode}
+            onModeChange={setRightPanelMode}
+            files={files}
+            selectedFile={selectedFile}
+            onFileSelect={handleFileSelect}
+            expandedFolders={expandedFolders}
+            onToggleFolder={handleToggleFolder}
+            onCreateFile={handleCreateFile}
+            onCreateFolder={handleCreateFolder}
+            onDeleteFile={handleDeleteFile}
+            onDeleteFolder={handleDeleteFolder}
+            onRenameFile={handleRenameFile}
+            onDuplicateFile={handleDuplicateFile}
+            selectedFileContent={selectedFileContent}
+            onFileContentChange={handleFileContentChange}
+            terminalRef={terminalRef}
+            webContainer={webContainer}
+            project={selectedProject}
+            isStarting={isStarting}
+            onStartProject={startProject}
+            width={rightPanelPercentage}
+          />
         </div>
       </div>
 
