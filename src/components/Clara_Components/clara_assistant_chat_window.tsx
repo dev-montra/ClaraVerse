@@ -642,7 +642,7 @@ const WelcomeScreen: React.FC<{
         <div className="mb-6 p-4 bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 rounded-xl border border-blue-200 dark:border-blue-800">
           <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-2 flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-purple-500" />
-            Understanding Modes
+            Understanding Modes - Which One to Use? 
           </h4>
           <div className="space-y-2 text-xs text-gray-600 dark:text-gray-400">
             <div className="flex items-start gap-2">
@@ -652,6 +652,11 @@ const WelcomeScreen: React.FC<{
             <div className="flex items-start gap-2">
               <span className="text-purple-600 dark:text-purple-400 font-bold">🤖 Agent Mode:</span>
               <span>Deep research, web search, multi-step tasks, autonomous problem solving</span>
+            </div>
+            {/* how to toggle between modes */}
+            <div className="flex items-start gap-2">
+              <span className="text-gray-600 dark:text-gray-400">🔄 Toggle Modes:</span>
+              <span>Click the mode button to switch between Chat and Agent modes or Ctrl+M</span>
             </div>
           </div>
         </div>

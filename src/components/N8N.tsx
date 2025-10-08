@@ -1109,7 +1109,7 @@ const N8N: React.FC<N8NProps> = ({ onPageChange }) => {
             backgroundImage: `url(${wallpaperUrl})`,
             backgroundSize: 'cover',
             backgroundPosition: 'center',
-            opacity: 0.1,
+            opacity: 0.4,
             filter: 'blur(1px)',
             pointerEvents: 'none'
           }}

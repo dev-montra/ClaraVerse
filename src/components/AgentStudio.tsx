@@ -427,7 +427,7 @@ const AgentStudioContent: React.FC<{ onPageChange: (page: string) => void; userN
             backgroundImage: `url(${wallpaperUrl})`,
             backgroundSize: 'cover',
             backgroundPosition: 'center',
-            opacity: 0.1,
+            opacity: 0.4,
             filter: 'blur(1px)',
             pointerEvents: 'none'
           }}

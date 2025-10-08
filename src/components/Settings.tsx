@@ -1734,7 +1734,7 @@ const Settings = () => {
             backgroundImage: `url(${wallpaperUrl})`,
             backgroundSize: 'cover',
             backgroundPosition: 'center',
-            opacity: 0.15, // Subtle background opacity for readability
+            opacity: 0.45, // Subtle background opacity for readability
             pointerEvents: 'none'
           }}
         />
