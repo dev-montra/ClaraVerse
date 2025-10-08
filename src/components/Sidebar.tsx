@@ -65,7 +65,7 @@ interface MenuItem {
   disabled?: boolean;
 }
 
-const Sidebar = ({ activePage = 'dashboard', onPageChange, alphaFeaturesEnabled = false }: SidebarProps) => {
+const Sidebar = ({ activePage = 'dashboard', onPageChange }: SidebarProps) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [activeDownloads, setActiveDownloads] = useState<Record<string, DownloadProgress>>({});
   const [claraBackgroundActivity, setClaraBackgroundActivity] = useState(false);
@@ -371,7 +371,8 @@ const Sidebar = ({ activePage = 'dashboard', onPageChange, alphaFeaturesEnabled 
     { icon: Bot, label: 'Chat', id: 'clara' },
     { icon: BrainCircuit, label: 'Agents', id: 'agents' },
     { icon: BookOpen, label: 'RAG', id: 'notebooks' },
-    ...(alphaFeaturesEnabled ? [{ icon: Zap, label: 'Lumaui (Alpha)', id: 'lumaui' }] : []),
+    // Unhide LumaUI (Alpha) unconditionally
+    { icon: Zap, label: 'Lumaui (Alpha)', id: 'lumaui' },
     { icon: Code2, label: 'LumaUI (Beta)', id: 'lumaui-lite' },
     // Show Image Gen if ComfyUI feature is enabled OR if ComfyUI service is running
     ...(featureConfig.comfyUI || isServiceResponding('comfyui') ? [{

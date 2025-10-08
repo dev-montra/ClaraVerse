@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { X, Plus } from 'lucide-react';
-import { PROJECT_CONFIGS } from '../../services/projectScaffolder';
+import { PROJECT_TEMPLATES } from '../../services/projectScaffolderV2';
 
 interface CreateProjectModalProps {
   isOpen: boolean;
@@ -36,7 +36,7 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
     }
   };
 
-  const projectConfigs = Object.values(PROJECT_CONFIGS);
+  const projectTemplates = Object.values(PROJECT_TEMPLATES);
   
   // Add coming soon options that are not yet implemented
   const comingSoonOptions = [
@@ -93,12 +93,12 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
               Choose Your Framework
             </label>
             <div className="space-y-3">
-              {/* Available Project Configurations */}
-              {projectConfigs.map((config) => (
+              {/* Available Project Templates */}
+              {projectTemplates.map((template) => (
                 <label
-                  key={config.id}
+                  key={template.id}
                   className={`flex items-center p-4 border-2 rounded-xl cursor-pointer transition-all duration-200 group ${
-                    selectedConfig === config.id
+                    selectedConfig === template.id
                       ? 'border-sakura-500 bg-gradient-to-r from-sakura-50 to-pink-50 dark:from-sakura-900/20 dark:to-pink-900/20 shadow-lg'
                       : 'border-white/30 dark:border-gray-700/50 glassmorphic-card hover:border-sakura-300 dark:hover:border-sakura-600'
                   } ${isCreating ? 'opacity-50 cursor-not-allowed' : ''}`}
@@ -106,29 +106,29 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
                   <input
                     type="radio"
                     name="framework"
-                    value={config.id}
-                    checked={selectedConfig === config.id}
+                    value={template.id}
+                    checked={selectedConfig === template.id}
                     onChange={(e) => setSelectedConfig(e.target.value)}
                     disabled={isCreating}
                     className="sr-only"
                   />
                   <div className="flex items-center space-x-4 flex-1">
                     <div className="text-3xl transition-transform group-hover:scale-110">
-                      {config.icon}
+                      {template.icon}
                     </div>
                     <div className="flex-1">
                       <div className="font-semibold text-gray-900 dark:text-gray-100 mb-1">
-                        {config.name}
+                        {template.name}
                       </div>
                       <div className="text-sm text-gray-600 dark:text-gray-400 mb-2">
-                        {config.description}
+                        {template.description}
                       </div>
                       <div className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-gradient-to-r from-sakura-100 to-pink-100 text-sakura-700 dark:from-sakura-900/30 dark:to-pink-900/30 dark:text-sakura-300">
-                        {config.category}
+                        {template.category}
                       </div>
                     </div>
                   </div>
-                  {selectedConfig === config.id && (
+                  {selectedConfig === template.id && (
                     <div className="w-5 h-5 bg-gradient-to-r from-sakura-500 to-pink-500 rounded-full flex items-center justify-center shadow-lg">
                       <Plus className="w-3 h-3 text-white" />
                     </div>

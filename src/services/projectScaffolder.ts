@@ -39,6 +39,28 @@ export class ProjectScaffolder {
     this.writeToTerminal = writeToTerminal;
   }
 
+  /**
+   * Helper method to create a file in WebContainer
+   */
+  private async createFile(path: string, content: string): Promise<void> {
+    try {
+      // Ensure parent directories exist
+      const pathParts = path.split('/');
+      const fileName = pathParts.pop();
+      const dirPath = pathParts.join('/');
+      
+      if (dirPath) {
+        await this.webContainer.fs.mkdir(dirPath, { recursive: true });
+      }
+      
+      await this.webContainer.fs.writeFile(path, content);
+      this.writeToTerminal(`\x1b[90m   ✓ Created: ${path}\x1b[0m\n`);
+    } catch (error) {
+      this.writeToTerminal(`\x1b[31m   ✗ Failed to create ${path}: ${error}\x1b[0m\n`);
+      throw error;
+    }
+  }
+
   async scaffoldProject(
     config: ProjectScaffoldConfig,
     projectName: string,

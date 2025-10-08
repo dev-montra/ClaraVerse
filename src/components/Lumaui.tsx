@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Plus, Code, Play, Square, Loader2, ExternalLink, FolderOpen, MessageSquare, Eye, EyeOff } from 'lucide-react';
+import { Plus, Code, Play, Square, Loader2, ExternalLink, FolderOpen, MessageSquare, Eye } from 'lucide-react';
 import { WebContainer } from '@webcontainer/api';
 import { Terminal } from '@xterm/xterm';
 import { createLumaTools } from '../services/lumaTools';
@@ -21,8 +21,7 @@ import { useResizable } from '../hooks/useResizable';
 // Types and Data
 import { Project, FileNode } from '../types';
 import { useIndexedDB } from '../hooks/useIndexedDB';
-import { ProjectScaffolder, PROJECT_CONFIGS, ScaffoldProgress } from '../services/projectScaffolder';
-import { LumaUIAPIClient } from './lumaui_components/services/lumaUIApiClient';
+import { ProjectScaffolderV2, PROJECT_TEMPLATES, ScaffoldProgress } from '../services/projectScaffolderV2';
 import { useProviders } from '../contexts/ProvidersContext';
 import { db } from '../db';
 import { getDefaultWallpaper } from '../utils/uiPreferences';
@@ -229,9 +228,9 @@ This is a browser security requirement for WebContainer.`;
       return;
     }
 
-    const config = PROJECT_CONFIGS[configId];
-    if (!config) {
-      throw new Error(`Unknown project configuration: ${configId}`);
+    const template = PROJECT_TEMPLATES[configId];
+    if (!template) {
+      throw new Error(`Unknown project template: ${configId}`);
     }
 
     // Switch to terminal tab during creation
@@ -257,7 +256,7 @@ This is a browser security requirement for WebContainer.`;
       // Stop existing project if running (WebContainer can only have one instance)
       if (previousContainer) {
         writeToTerminal('\x1b[36m💡 Note: WebContainer allows only one instance at a time\x1b[0m\n');
-        writeToTerminal('\x1b[33m🛑 Stopping existing project to create new one...\x1b[0m\n');
+        writeToTerminal('\x1b[33m🛑 Cleaning up existing WebContainer to create new project...\x1b[0m\n');
         
         if (selectedProject) {
           // Update the current project status
@@ -281,33 +280,61 @@ This is a browser security requirement for WebContainer.`;
           runningProcessesRef.current = [];
         }
         
-        // Teardown existing container
+        // Teardown existing container with proper error handling
         try {
+          writeToTerminal('\x1b[33m🧹 Tearing down existing WebContainer...\x1b[0m\n');
           await previousContainer.teardown();
           writeToTerminal('\x1b[32m✅ Previous WebContainer cleaned up\x1b[0m\n');
         } catch (cleanupError) {
-          writeToTerminal('\x1b[33m⚠️ Warning: Error cleaning up previous container, proceeding anyway...\x1b[0m\n');
+          writeToTerminal('\x1b[33m⚠️ Warning: Error during teardown, forcing cleanup...\x1b[0m\n');
+          console.error('WebContainer teardown error:', cleanupError);
         }
         
         setWebContainer(null);
         
-        // Wait a moment for cleanup to complete
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // Wait longer for cleanup to complete and browser to release resources
+        writeToTerminal('\x1b[90m⏳ Waiting for cleanup to complete...\x1b[0m\n');
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
       
-      // Initialize WebContainer for scaffolding
+      // Initialize WebContainer for scaffolding with retry logic
       writeToTerminal('\x1b[36m🚀 Initializing project scaffolder...\x1b[0m\n');
       writeToTerminal('\x1b[33m📋 Project: ' + name + '\x1b[0m\n');
-      writeToTerminal('\x1b[33m📋 Template: ' + config.name + '\x1b[0m\n');
+      writeToTerminal('\x1b[33m📋 Template: ' + template.name + '\x1b[0m\n');
       writeToTerminal('\x1b[90m📋 Cross-Origin Isolation: ✅ Available\x1b[0m\n\n');
       
-      container = await WebContainer.boot();
-      writeToTerminal('\x1b[32m✅ WebContainer booted successfully\x1b[0m\n');
+      // Try to boot with retry logic
+      let bootAttempts = 0;
+      const maxBootAttempts = 3;
+      
+      while (bootAttempts < maxBootAttempts && !container) {
+        try {
+          writeToTerminal(`\x1b[33m🔧 Booting WebContainer (attempt ${bootAttempts + 1}/${maxBootAttempts})...\x1b[0m\n`);
+          container = await WebContainer.boot();
+          writeToTerminal('\x1b[32m✅ WebContainer booted successfully\x1b[0m\n');
+          break;
+        } catch (bootError) {
+          bootAttempts++;
+          const errorMessage = bootError instanceof Error ? bootError.message : String(bootError);
+          writeToTerminal(`\x1b[31m❌ Boot attempt ${bootAttempts} failed: ${errorMessage}\x1b[0m\n`);
+          
+          if (bootAttempts < maxBootAttempts) {
+            writeToTerminal('\x1b[33m⏳ Waiting 3 seconds before retry...\x1b[0m\n');
+            await new Promise(resolve => setTimeout(resolve, 3000));
+          } else {
+            throw new Error(`Failed to boot WebContainer after ${maxBootAttempts} attempts. Please refresh the page and try again.`);
+          }
+        }
+      }
+      
+      if (!container) {
+        throw new Error('Failed to initialize WebContainer. Please refresh the page and try again.');
+      }
       
       // Create scaffolder and run project setup
-      const scaffolder = new ProjectScaffolder(container, writeToTerminal);
+      const scaffolder = new ProjectScaffolderV2(container, writeToTerminal);
       
-      const success = await scaffolder.scaffoldProject(config, name, (progress) => {
+      const success = await scaffolder.scaffoldProject(template, name, (progress: ScaffoldProgress) => {
         setScaffoldProgress(progress);
         writeToTerminal(`\x1b[36m📊 Progress: ${progress.currentStep}/${progress.totalSteps} - ${progress.stepName}\x1b[0m\n`);
       });
@@ -536,37 +563,43 @@ This is a browser security requirement for WebContainer.`;
       }
       
       // Try to boot new WebContainer with retry logic
-      let container: WebContainer;
+      let container: WebContainer | undefined;
       let retryCount = 0;
       const maxRetries = 3;
       
-      while (retryCount < maxRetries) {
+      while (retryCount < maxRetries && !container) {
         try {
           writeToTerminal(`\x1b[33m🔧 Attempting to boot WebContainer (attempt ${retryCount + 1}/${maxRetries})...\x1b[0m\n`);
           container = await WebContainer.boot();
+          writeToTerminal('\x1b[32m✅ WebContainer initialized successfully\x1b[0m\n');
           break;
         } catch (bootError) {
           retryCount++;
-          writeToTerminal(`\x1b[31m❌ Boot attempt ${retryCount} failed: ${bootError}\x1b[0m\n, Try Hard Reshing Please`);
+          const errorMessage = bootError instanceof Error ? bootError.message : String(bootError);
+          writeToTerminal(`\x1b[31m❌ Boot attempt ${retryCount} failed: ${errorMessage}\x1b[0m\n`);
           
           if (retryCount < maxRetries) {
-            writeToTerminal('\x1b[33m⏳ Waiting 2 seconds before retry...\x1b[0m\n');
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            writeToTerminal('\x1b[33m⏳ Waiting 3 seconds before retry...\x1b[0m\n');
+            await new Promise(resolve => setTimeout(resolve, 3000));
             
             // Force global cleanup if needed
             if (bootError instanceof Error && bootError.message.includes('single WebContainer instance')) {
-              writeToTerminal('\x1b[33m🔨 Attempting to force cleanup existing instances...\x1b[0m\n');
+              writeToTerminal('\x1b[33m🔨 Forcing extended cleanup time for existing instances...\x1b[0m\n');
+              writeToTerminal('\x1b[33m💡 If this keeps failing, try hard refreshing the page (Ctrl+Shift+R)\x1b[0m\n');
               // Give extra time for cleanup
-              await new Promise(resolve => setTimeout(resolve, 3000));
+              await new Promise(resolve => setTimeout(resolve, 2000));
             }
           } else {
-            throw new Error(`Failed to boot WebContainer after ${maxRetries} attempts: ${bootError}`);
+            throw new Error(`Failed to boot WebContainer after ${maxRetries} attempts. Please hard refresh the page (Ctrl+Shift+R) and try again.`);
           }
         }
       }
       
-      setWebContainer(container!);
-      writeToTerminal('\x1b[32m✅ WebContainer initialized successfully\x1b[0m\n');
+      if (!container) {
+        throw new Error('Failed to initialize WebContainer. Please hard refresh the page (Ctrl+Shift+R) and try again.');
+      }
+      
+      setWebContainer(container);
       
       // Debug: Check files array before creating structure
       writeToTerminal(`\x1b[90m🔍 Debug: projectFiles array contains ${projectFiles.length} items\x1b[0m\n`);
@@ -819,7 +852,7 @@ This is a browser security requirement for WebContainer.`;
   }, [webContainer, selectedProject, saveProjectToDB, writeToTerminal]);
 
   // Debounced auto-save function
-  const debouncedSave = useCallback(async (content: string, filePath: string, projectFiles: FileNode[]) => {
+  const debouncedSave = useCallback(async (_content: string, filePath: string, projectFiles: FileNode[]) => {
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
     }

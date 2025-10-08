@@ -14,7 +14,6 @@ interface TerminalComponentProps {
 }
 
 const TerminalComponent: React.FC<TerminalComponentProps> = ({ 
-  webContainer, 
   isVisible, 
   onToggle, 
   terminalRef 
@@ -24,56 +23,115 @@ const TerminalComponent: React.FC<TerminalComponentProps> = ({
 
   useEffect(() => {
     if (terminalElementRef.current && !terminalRef.current) {
-      // Initialize terminal
-      const terminal = new Terminal({
-        theme: {
-          background: '#1e1e1e',
-          foreground: '#cccccc',
-          cursor: '#ffffff',
-        },
-        fontSize: 14,
-        fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-        cursorBlink: true,
-        convertEol: true,
-      });
+      // Wait for the DOM element to have dimensions before initializing
+      const element = terminalElementRef.current;
+      
+      // Check if element has dimensions
+      const hasValidDimensions = () => {
+        const rect = element.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
 
-      const fitAddon = new FitAddon();
-      const webLinksAddon = new WebLinksAddon();
-      
-      terminal.loadAddon(fitAddon);
-      terminal.loadAddon(webLinksAddon);
-      
-      terminal.open(terminalElementRef.current);
-      fitAddon.fit();
-      
-      terminalRef.current = terminal;
-      fitAddonRef.current = fitAddon;
+      const initializeTerminal = () => {
+        if (!hasValidDimensions()) {
+          // Element not ready, wait and retry
+          const retryTimeout = setTimeout(initializeTerminal, 50);
+          return () => clearTimeout(retryTimeout);
+        }
 
-      // Add some initial text
-      terminal.writeln('\x1b[32m🚀 Lumaui Terminal Ready\x1b[0m');
-      terminal.writeln('WebContainer processes will appear here when you start a project...\n');
+        try {
+          // Initialize terminal
+          const terminal = new Terminal({
+            theme: {
+              background: '#1e1e1e',
+              foreground: '#cccccc',
+              cursor: '#ffffff',
+            },
+            fontSize: 14,
+            fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+            cursorBlink: true,
+            convertEol: true,
+          });
+
+          const fitAddon = new FitAddon();
+          const webLinksAddon = new WebLinksAddon();
+          
+          terminal.loadAddon(fitAddon);
+          terminal.loadAddon(webLinksAddon);
+          
+          terminal.open(element);
+          
+          // Wait a frame before fitting to ensure layout is complete
+          requestAnimationFrame(() => {
+            try {
+              fitAddon.fit();
+            } catch (error) {
+              console.warn('Terminal fit failed on initialization, will retry:', error);
+              // Retry fit after a short delay
+              setTimeout(() => {
+                try {
+                  fitAddon.fit();
+                } catch (retryError) {
+                  console.warn('Terminal fit retry failed:', retryError);
+                }
+              }, 100);
+            }
+          });
+          
+          terminalRef.current = terminal;
+          fitAddonRef.current = fitAddon;
+
+          // Add some initial text
+          terminal.writeln('\x1b[32m🚀 Lumaui Terminal Ready\x1b[0m');
+          terminal.writeln('WebContainer processes will appear here when you start a project...\n');
+        } catch (error) {
+          console.error('Failed to initialize terminal:', error);
+        }
+      };
+
+      initializeTerminal();
     }
 
     return () => {
       if (terminalRef.current) {
-        terminalRef.current.dispose();
+        try {
+          terminalRef.current.dispose();
+        } catch (error) {
+          console.warn('Error disposing terminal:', error);
+        }
         terminalRef.current = null;
+      }
+      if (fitAddonRef.current) {
+        fitAddonRef.current = null;
       }
     };
   }, [terminalRef]);
 
   useEffect(() => {
-    if (fitAddonRef.current && isVisible) {
+    if (fitAddonRef.current && isVisible && terminalElementRef.current) {
       // Fit terminal when visibility changes or container resizes
       const fitTerminal = () => {
-        fitAddonRef.current?.fit();
+        try {
+          // Check if element has valid dimensions before fitting
+          const element = terminalElementRef.current;
+          if (element) {
+            const rect = element.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0) {
+              fitAddonRef.current?.fit();
+            }
+          }
+        } catch (error) {
+          // Silently ignore fit errors - they're not critical
+          console.debug('Terminal fit error (non-critical):', error);
+        }
       };
       
-      // Initial fit
-      setTimeout(fitTerminal, 100);
+      // Initial fit with delay to ensure layout is complete
+      const initialFitTimeout = setTimeout(fitTerminal, 100);
       
       // Add resize observer to handle container size changes
       const resizeObserver = new ResizeObserver(() => {
+        // Debounce resize events
         setTimeout(fitTerminal, 50);
       });
       
@@ -82,6 +140,7 @@ const TerminalComponent: React.FC<TerminalComponentProps> = ({
       }
       
       return () => {
+        clearTimeout(initialFitTimeout);
         resizeObserver.disconnect();
       };
     }
