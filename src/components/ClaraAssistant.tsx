@@ -1719,8 +1719,11 @@ Now tell me what is the result "`;
     };
 
     // Add user message to state and get current conversation
-    const currentMessages = [...messages, userMessage];
-    setMessages(currentMessages);
+    let currentMessages: ClaraMessage[] = [];
+    setMessages(prev => {
+      currentMessages = [...prev, userMessage];
+      return currentMessages;
+    });
     setIsLoading(true);
 
     // Track background activity
@@ -1990,8 +1993,12 @@ Now tell me what is the result "`;
 
       // **FIX: Preserve tool execution blocks from streaming message**
       // Get the current streaming message to preserve any data added during streaming
-      const currentStreamingMessage = messages.find(msg => msg.id === streamingMessageId);
-      const preservedToolExecutionBlock = currentStreamingMessage?.metadata?.toolExecutionBlock;
+      let preservedToolExecutionBlock: any = undefined;
+      setMessages(prev => {
+        const currentStreamingMessage = prev.find(msg => msg.id === streamingMessageId);
+        preservedToolExecutionBlock = currentStreamingMessage?.metadata?.toolExecutionBlock;
+        return prev; // No state change, just reading
+      });
       
       if (preservedToolExecutionBlock) {
         console.log(`🔄 Preserving tool execution block with ${preservedToolExecutionBlock.tools?.length || 0} tools from streaming to final message`);
@@ -2455,7 +2462,7 @@ You can:
         }, 10000); // 10 second safety timeout (reduced from 30)
       }
     }
-  }, [currentSession, messages, sessionConfig, isVisible, models]);
+  }, [currentSession, sessionConfig, isVisible, models]);
 
   // Handle session selection
   const handleSelectSession = useCallback(async (sessionId: string) => {

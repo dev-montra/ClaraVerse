@@ -49,7 +49,7 @@ const Topbar = ({
       }
     });
     return () => clearInterval(timer);
-  }, [setTheme]);
+  }, []);
 
   const timeString = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: timezone });
   const dateString = now.toLocaleDateString('en-CA', { year: 'numeric', month: '2-digit', day: '2-digit', timeZone: timezone });
