@@ -323,7 +323,7 @@ const ArtifactPreviewButtons: React.FC<{
             <Box className="w-4 h-4 text-blue-600 dark:text-blue-400 group-hover:scale-110 transition-transform" />
           )}
           <span className="text-sm font-medium text-blue-700 dark:text-blue-300">
-            {isDetecting ? 'Detecting...' : 'View Artifacts'}
+            {isDetecting ? 'Detecting...' : 'View Artifacts if Available'}
           </span>
           {!isDetecting && (
             <Eye className="w-3 h-3 text-blue-500 dark:text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity" />
