@@ -582,10 +582,7 @@ const WelcomeScreen: React.FC<{
       <div className="max-w-2xl text-center">
         {/* Hero Section */}
         <div className="mb-8">
-          <div className="w-20 h-20 bg-gradient-to-br from-purple-500 via-pink-500 to-sakura-500 rounded-full flex items-center justify-center mx-auto mb-6 shadow-lg">
-            {/* support dark mode and light mode */}
-            <Bot className="w-10 h-10 dark:text-white text-gray-500" />
-          </div>
+          
 
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-3">
             Welcome{userName ? ` back, ${userName}` : ''} to Clara!
