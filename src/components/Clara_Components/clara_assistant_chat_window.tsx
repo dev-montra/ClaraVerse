@@ -898,21 +898,28 @@ const ClaraChatWindow: React.FC<ClaraChatWindowProps> = ({
 
   // Update processing state based on loading and messages
   useEffect(() => {
+    let timeoutId: NodeJS.Timeout | null = null;
+
     if (isLoading) {
       setProcessingState('processing');
     } else {
       const lastMessage = messages[messages.length - 1];
       if (lastMessage?.metadata?.error) {
         setProcessingState('error');
-        setTimeout(() => setProcessingState('idle'), 3000);
+        timeoutId = setTimeout(() => setProcessingState('idle'), 3000);
       } else if (lastMessage && lastMessage.role === 'assistant') {
         setProcessingState('success');
-        setTimeout(() => setProcessingState('idle'), 2000);
+        timeoutId = setTimeout(() => setProcessingState('idle'), 2000);
       } else {
         setProcessingState('idle');
       }
     }
-  }, [isLoading, messages]);
+
+    // Cleanup timeout on dependency change
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [isLoading, messages.length, messages[messages.length - 1]?.metadata?.error]);
 
   // Handle message actions
   const handleMessageAction = useCallback((action: string, messageId: string, data?: any) => {
