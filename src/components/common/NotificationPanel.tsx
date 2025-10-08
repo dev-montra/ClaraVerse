@@ -171,7 +171,7 @@ const NotificationPanel: React.FC<NotificationPanelProps> = ({ className = '', o
 
       {/* Notification Panel */}
       {isOpen && (
-        <div className="absolute right-0 top-full mt-2 w-80 max-h-96 bg-white/95 dark:bg-gray-800/95 rounded-lg shadow-xl border border-gray-200/50 dark:border-gray-700/50 z-[9999] overflow-hidden backdrop-blur-xl animate-fadeIn">
+        <div className="absolute right-0 top-full mt-2 w-80 max-h-96 bg-white/95 dark:bg-gray-800/95 rounded-lg shadow-xl border border-gray-200/50 dark:border-gray-700/50 z-50 overflow-hidden backdrop-blur-xl animate-fadeIn">
           {/* Header */}
           <div className="p-4 border-b border-gray-200/30 dark:border-gray-700/30 flex items-center justify-between">
             <h3 className="font-semibold text-gray-900 dark:text-white">
