@@ -3665,9 +3665,26 @@ const ClaraAssistantInput: React.FC<ClaraInputProps> = ({
   const notebookDropdownRef = useRef<HTMLDivElement>(null); // For notebook dropdown click-outside detection
   const screenDropdownRef = useRef<HTMLDivElement>(null); // For screen dropdown click-outside detection
 
-  // Model preloading state
+  /**
+   * Model Preloading for llama-swap optimization
+   *
+   * llama-swap unloads models from VRAM when idle and loads them on-demand.
+   * This preloading mechanism loads the model while the user is typing,
+   * reducing perceived latency when they send the message.
+   *
+   * Protections:
+   * - 500ms debounce: Only triggers after user stops typing for 500ms
+   * - 30s cooldown: Prevents rapid successive preloads
+   * - Deduplication: Skips if preload already in progress
+   * - AbortController: Cancels preload if user sends message or clears input
+   * - Single trigger: Only debounced typing triggers preload (no onFocus/onInput)
+   */
   const [hasPreloaded, setHasPreloaded] = useState(false);
   const preloadTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const preloadCooldownRef = useRef<number>(0); // Timestamp of last preload
+  const isPreloadingRef = useRef<boolean>(false); // Track in-flight preload requests
+  const preloadAbortControllerRef = useRef<AbortController | null>(null); // Cancel in-flight preloads
+  const PRELOAD_COOLDOWN_MS = 30000; // 30 seconds cooldown between preloads
 
   // Streaming vs Tools mode state
   const [isStreamingMode, setIsStreamingMode] = useState(
@@ -4153,43 +4170,75 @@ const ClaraAssistantInput: React.FC<ClaraInputProps> = ({
     }
     
 
-    
-    // Trigger model preloading when user starts typing (debounced) - COMPLETELY SILENT
+
+    // Trigger model preloading when user starts typing (debounced with cooldown)
     if (value.trim() && !hasPreloaded && onPreloadModel && !isLoading) {
       // Clear any existing timeout
       if (preloadTimeoutRef.current) {
         clearTimeout(preloadTimeoutRef.current);
       }
-      
+
       // Set a debounced timeout to trigger preloading
       preloadTimeoutRef.current = setTimeout(() => {
-        console.log('🚀 User started typing, preloading model silently...');
-        // Removed setIsPreloading(true) - no UI feedback during preload
-        onPreloadModel();
+        const now = Date.now();
+        const timeSinceLastPreload = now - preloadCooldownRef.current;
+
+        // Check cooldown period and if already preloading
+        if (timeSinceLastPreload < PRELOAD_COOLDOWN_MS) {
+          console.log(`⏳ Preload cooldown active (${Math.ceil((PRELOAD_COOLDOWN_MS - timeSinceLastPreload) / 1000)}s remaining)`);
+          return;
+        }
+
+        if (isPreloadingRef.current) {
+          console.log('⏸️ Preload already in progress, skipping...');
+          return;
+        }
+
+        console.log('🚀 User started typing, preloading model (llama-swap optimization)...');
+        isPreloadingRef.current = true;
+        preloadCooldownRef.current = now;
+
+        // Create new AbortController for this preload request
+        preloadAbortControllerRef.current = new AbortController();
+
+        // Call preload and track completion
+        Promise.resolve(onPreloadModel()).finally(() => {
+          isPreloadingRef.current = false;
+          preloadAbortControllerRef.current = null;
+        });
+
         setHasPreloaded(true);
-        
-        // No UI feedback timeout needed anymore
       }, 500); // 500ms debounce delay
     }
   }, [hasPreloaded, onPreloadModel, isLoading, showAdvancedOptionsPanel, onAdvancedOptionsToggle]);
 
-  // Reset preload state when input is cleared or message is sent
+  // Reset preload state when input is cleared (but respect cooldown)
   useEffect(() => {
     if (!input.trim()) {
       setHasPreloaded(false);
-      // Removed setIsPreloading(false) - no UI feedback needed
       if (preloadTimeoutRef.current) {
         clearTimeout(preloadTimeoutRef.current);
         preloadTimeoutRef.current = null;
       }
+      // Abort any in-flight preload when input is cleared
+      if (preloadAbortControllerRef.current) {
+        console.log('🛑 Aborting in-flight preload (input cleared)');
+        preloadAbortControllerRef.current.abort();
+        preloadAbortControllerRef.current = null;
+        isPreloadingRef.current = false;
+      }
+      // Don't reset cooldown timer - it continues to prevent rapid re-preloads
     }
   }, [input]);
 
-  // Cleanup timeout on unmount
+  // Cleanup timeout and abort controller on unmount
   useEffect(() => {
     return () => {
       if (preloadTimeoutRef.current) {
         clearTimeout(preloadTimeoutRef.current);
+      }
+      if (preloadAbortControllerRef.current) {
+        preloadAbortControllerRef.current.abort();
       }
     };
   }, []);
@@ -4865,13 +4914,22 @@ const ClaraAssistantInput: React.FC<ClaraInputProps> = ({
     setInput('');
     setFiles([]);
     adjustTextareaHeight();
-    
-    // Reset preload state for next typing session
+
+    // Abort any in-flight preload when user sends message (actual request is more important)
+    if (preloadAbortControllerRef.current) {
+      console.log('🛑 Aborting in-flight preload (user sent message)');
+      preloadAbortControllerRef.current.abort();
+      preloadAbortControllerRef.current = null;
+      isPreloadingRef.current = false;
+    }
+
+    // Reset preload state for next typing session (cooldown timer persists)
     setHasPreloaded(false);
     if (preloadTimeoutRef.current) {
       clearTimeout(preloadTimeoutRef.current);
       preloadTimeoutRef.current = null;
     }
+    // Note: preloadCooldownRef persists to prevent rapid successive preloads
     
     // Focus the textarea after sending for immediate next input
     focusTextarea();
@@ -6856,21 +6914,10 @@ You can right-click on the image to save it or use it in your projects.`;
                     onKeyDown={handleKeyDown}
                     onPaste={handlePaste}
                     onFocus={() => {
-                      // Trigger aggressive preload on focus for fastest TTFT - SILENT
-                      console.log('⚡ Input focused - triggering silent immediate preload');
-                      onPreloadModel?.();
-                      
                       // Close autonomous agent status panel when user focuses input
                       if (autonomousAgentStatus?.isActive) {
                         console.log('🏁 Input focused - closing autonomous agent status panel');
                         autonomousAgentStatus.completeAgent('Input focused - closing status panel', 0);
-                      }
-                    }}
-                    onInput={() => {
-                      // Trigger preload on very first keystroke - SILENT
-                      if (input.length === 0) {
-                        console.log('🚀 First keystroke detected - silent aggressive preload');
-                        onPreloadModel?.();
                       }
                     }}
                     placeholder="Ask me anything..."
