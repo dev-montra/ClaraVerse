@@ -38,7 +38,7 @@ interface SDKExecutionLog {
 }
 
 const formatMessage = (content: string, isBase64Image?: (value: any) => boolean, getImageSrc?: (value: string) => string) => {
-  // Check if the content is a base64 image
+  // Check if the content is a base64 image (entire content is just an image)
   if (isBase64Image && getImageSrc && isBase64Image(content)) {
     return (
       <div className="space-y-2">
@@ -62,7 +62,92 @@ const formatMessage = (content: string, isBase64Image?: (value: any) => boolean,
       </div>
     );
   }
-  
+
+  // Check if content contains embedded base64 image data URLs
+  const imageDataUrlRegex = /data:image\/[a-zA-Z]+;base64,[A-Za-z0-9+/=]+/g;
+  const hasEmbeddedImages = imageDataUrlRegex.test(content);
+
+  if (hasEmbeddedImages && getImageSrc) {
+    // Extract all image data URLs and split the content
+    const parts: Array<{ type: 'text' | 'image'; content: string }> = [];
+    let lastIndex = 0;
+    const matches = content.matchAll(/data:image\/[a-zA-Z]+;base64,[A-Za-z0-9+/=]+/g);
+
+    for (const match of matches) {
+      // Add text before the image
+      if (match.index! > lastIndex) {
+        const textBefore = content.substring(lastIndex, match.index);
+        if (textBefore.trim()) {
+          parts.push({ type: 'text', content: textBefore });
+        }
+      }
+
+      // Add the image
+      parts.push({ type: 'image', content: match[0] });
+      lastIndex = match.index! + match[0].length;
+    }
+
+    // Add remaining text after the last image
+    if (lastIndex < content.length) {
+      const textAfter = content.substring(lastIndex);
+      if (textAfter.trim()) {
+        parts.push({ type: 'text', content: textAfter });
+      }
+    }
+
+    return (
+      <div className="space-y-3">
+        {parts.map((part, index) => (
+          <div key={index}>
+            {part.type === 'image' ? (
+              <div className="space-y-2">
+                <div className="text-xs text-green-600 dark:text-green-400 font-medium">
+                  🖼️ Image {parts.filter(p => p.type === 'image').length > 1 ? `#${parts.slice(0, index + 1).filter(p => p.type === 'image').length}` : ''}
+                </div>
+                <img
+                  src={part.content}
+                  alt={`Generated image ${index}`}
+                  className="max-w-full h-auto rounded-md shadow-sm max-h-64 object-contain bg-white border border-gray-200 dark:border-purple-500/30"
+                  onError={(e) => {
+                    e.currentTarget.style.display = 'none';
+                  }}
+                />
+              </div>
+            ) : (
+              <ReactMarkdown
+                className="prose prose-sm max-w-none dark:prose-invert"
+                components={{
+                  p: ({ children }) => <p className="text-gray-800 dark:text-purple-100 mb-2 last:mb-0">{children}</p>,
+                  h1: ({ children }) => <h1 className="text-gray-900 dark:text-purple-100 text-lg font-bold mb-2">{children}</h1>,
+                  h2: ({ children }) => <h2 className="text-gray-900 dark:text-purple-100 text-base font-bold mb-2">{children}</h2>,
+                  h3: ({ children }) => <h3 className="text-gray-900 dark:text-purple-100 text-sm font-bold mb-1">{children}</h3>,
+                  ul: ({ children }) => <ul className="text-gray-800 dark:text-purple-100 list-disc list-inside mb-2 space-y-1">{children}</ul>,
+                  ol: ({ children }) => <ol className="text-gray-800 dark:text-purple-100 list-decimal list-inside mb-2 space-y-1">{children}</ol>,
+                  li: ({ children }) => <li className="text-gray-800 dark:text-purple-100">{children}</li>,
+                  strong: ({ children }) => <strong className="text-gray-900 dark:text-purple-100 font-semibold">{children}</strong>,
+                  em: ({ children }) => <em className="text-gray-800 dark:text-purple-100 italic">{children}</em>,
+                  code: ({ children }) => (
+                    <code className="bg-gray-100 dark:bg-purple-800/40 text-gray-800 dark:text-purple-200 px-2 py-1 rounded text-xs font-mono border border-gray-300 dark:border-purple-600/30">
+                      {children}
+                    </code>
+                  ),
+                  pre: ({ children }) => (
+                    <pre className="bg-gray-100 dark:bg-purple-800/40 text-gray-800 dark:text-purple-200 p-3 rounded-lg overflow-x-auto text-xs font-mono mb-2 border border-gray-300 dark:border-purple-600/30">
+                      {children}
+                    </pre>
+                  ),
+                }}
+              >
+                {part.content}
+              </ReactMarkdown>
+            )}
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // Regular markdown rendering for text without images
   return (
     <ReactMarkdown
       className="prose prose-sm max-w-none dark:prose-invert"

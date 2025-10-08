@@ -15,10 +15,11 @@ export class NodeRegistry {
 
   private registerBuiltInNodes(): void {
     // Input Node
-    this.nodeExecutors.set('input', (node: FlowNode) => {
-      const value = node.data.value || '';
+    this.nodeExecutors.set('input', (node: FlowNode, inputs: Record<string, any>) => {
+      // Check for runtime input first, then fall back to saved workflow value
+      const value = inputs.input !== undefined ? inputs.input : (node.data.value || '');
       const inputType = node.data.inputType || 'text';
-      
+
       switch (inputType) {
         case 'number':
           return { output: Number(value) || 0 };
