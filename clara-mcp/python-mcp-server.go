@@ -436,6 +436,11 @@ func (s *PythonMCPServer) getTools() []Tool {
 						"type":        "string",
 						"description": "Complete file content to save. Can be Python code, JSON data, CSV content, configuration text, or any text-based format. Use proper formatting and newlines as needed.",
 					},
+					"auto_open": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Whether to automatically open the file after saving (default: true). Set to false when uploading files to workspace to avoid unnecessary file opening.",
+						"default":     true,
+					},
 				},
 				"required": []string{"name", "text"},
 			},
@@ -587,6 +592,16 @@ func (s *PythonMCPServer) py(params map[string]interface{}) string {
 		}
 	}
 
+	// Get list of files before execution
+	filesBefore := make(map[string]bool)
+	if files, err := ioutil.ReadDir(s.workspaceDir); err == nil {
+		for _, f := range files {
+			if !f.IsDir() && f.Name() != ".venv" {
+				filesBefore[f.Name()] = true
+			}
+		}
+	}
+
 	// Execute Python directly with -c flag using venv Python
 	cmd := exec.Command(s.pythonPath, "-c", code)
 	cmd.Dir = s.workspaceDir
@@ -620,6 +635,29 @@ func (s *PythonMCPServer) py(params map[string]interface{}) string {
 	if result == "" {
 		result = "OK (no output)"
 	}
+
+	// Check for newly created files and auto-open them
+	if files, err := ioutil.ReadDir(s.workspaceDir); err == nil {
+		var newFiles []string
+		for _, f := range files {
+			if !f.IsDir() && f.Name() != ".venv" && !filesBefore[f.Name()] {
+				if shouldAutoOpenFile(f.Name()) {
+					newFiles = append(newFiles, f.Name())
+				}
+			}
+		}
+
+		// Auto-open new files
+		if len(newFiles) > 0 {
+			for _, fileName := range newFiles {
+				filePath := filepath.Join(s.workspaceDir, fileName)
+				if err := s.openFile(filePath); err == nil {
+					result += fmt.Sprintf("\n✓ Opened %s", fileName)
+				}
+			}
+		}
+	}
+
 	return result
 }
 
@@ -734,7 +772,22 @@ func (s *PythonMCPServer) save(params map[string]interface{}) string {
 		return fmt.Sprintf("ERROR: %v", err)
 	}
 
-	return fmt.Sprintf("Saved %s (%d bytes)", filepath.Base(name), len(text))
+	// Auto-open file if it's a viewable type (unless explicitly disabled)
+	result := fmt.Sprintf("Saved %s (%d bytes)", filepath.Base(name), len(text))
+
+	// Check if auto_open parameter is provided (defaults to true for backwards compatibility)
+	autoOpen := true
+	if autoOpenParam, ok := params["auto_open"].(bool); ok {
+		autoOpen = autoOpenParam
+	}
+
+	if autoOpen && shouldAutoOpenFile(name) {
+		if err := s.openFile(fullPath); err == nil {
+			result += fmt.Sprintf("\n✓ Opened %s", filepath.Base(name))
+		}
+	}
+
+	return result
 }
 
 func (s *PythonMCPServer) load(params map[string]interface{}) string {
@@ -827,6 +880,55 @@ func (s *PythonMCPServer) open(params map[string]interface{}) string {
 	}()
 
 	return fmt.Sprintf("Opened workspace folder: %s", s.workspaceDir)
+}
+
+// openFile opens a specific file with the default system application
+func (s *PythonMCPServer) openFile(filePath string) error {
+	var cmd *exec.Cmd
+
+	switch runtime.GOOS {
+	case "windows":
+		// Use 'start' command to open file with default application
+		cmd = exec.Command("cmd", "/c", "start", "", filePath)
+	case "darwin":
+		cmd = exec.Command("open", filePath)
+	case "linux":
+		if _, err := exec.LookPath("xdg-open"); err == nil {
+			cmd = exec.Command("xdg-open", filePath)
+		} else {
+			return fmt.Errorf("no file opener found")
+		}
+	default:
+		return fmt.Errorf("unsupported OS")
+	}
+
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	go func() {
+		cmd.Wait()
+	}()
+
+	return nil
+}
+
+// shouldAutoOpenFile determines if a file should be auto-opened based on extension
+func shouldAutoOpenFile(filename string) bool {
+	ext := strings.ToLower(filepath.Ext(filename))
+	autoOpenExts := []string{
+		".pdf", ".csv", ".xlsx", ".xls",
+		".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg",
+		".html", ".htm",
+		".txt", ".md",
+	}
+
+	for _, e := range autoOpenExts {
+		if ext == e {
+			return true
+		}
+	}
+	return false
 }
 
 // Embedded SearXNG and Web Content functionality
@@ -2330,6 +2432,11 @@ func (s *PythonMCPServer) createPDF(params map[string]interface{}) string {
 		fileURL = "file://" + fullPath
 	}
 
+	// Auto-open the PDF file
+	if err := s.openFile(fullPath); err != nil {
+		log.Printf("Warning: Failed to auto-open PDF: %v", err)
+	}
+
 	// Format result
 	var output strings.Builder
 	output.WriteString("📄 PDF CREATED SUCCESSFULLY\n")
@@ -2341,7 +2448,7 @@ func (s *PythonMCPServer) createPDF(params map[string]interface{}) string {
 	output.WriteString(fmt.Sprintf("📝 Title: %s\n", title))
 	output.WriteString(fmt.Sprintf("👤 Author: %s\n", author))
 	output.WriteString(fmt.Sprintf("📅 Created: %s\n", fileInfo.ModTime().Format("2006-01-02 15:04:05")))
-	output.WriteString("\nThe PDF has been saved to your workspace and can be opened by clicking the file URL above.")
+	output.WriteString("\n✓ PDF opened automatically in your default viewer")
 
 	return output.String()
 }

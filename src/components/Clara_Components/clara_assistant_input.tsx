@@ -4469,14 +4469,112 @@ const ClaraAssistantInput: React.FC<ClaraInputProps> = ({
       }
     };
     
+    // **NEW**: Copy files to MCP workspace using MCP save tool
+    const copyFilesToMCPWorkspace = async (files: File[]): Promise<void> => {
+      try {
+        // Import MCP service
+        const { claraMCPService } = await import('../../services/claraMCPService');
+
+        // Check if MCP service is ready
+        if (!claraMCPService.isReady()) {
+          console.log('📁 MCP service not ready, skipping file copy to workspace');
+          return;
+        }
+
+        // Check if python-mcp server is running
+        const runningServers = claraMCPService.getRunningServers();
+        const pythonMCPRunning = runningServers.some(s => s.name === 'python-mcp');
+
+        if (!pythonMCPRunning) {
+          console.log('📁 python-mcp server not running, skipping file copy to workspace');
+          return;
+        }
+
+        for (const file of files) {
+          try {
+            // Read file as text or base64 depending on type
+            const fileContent = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => {
+                if (reader.result && typeof reader.result === 'string') {
+                  // For text files, use as-is; for binary, use base64
+                  if (file.type.startsWith('text/') ||
+                      file.name.endsWith('.txt') ||
+                      file.name.endsWith('.md') ||
+                      file.name.endsWith('.csv') ||
+                      file.name.endsWith('.json') ||
+                      file.name.endsWith('.py') ||
+                      file.name.endsWith('.js') ||
+                      file.name.endsWith('.ts')) {
+                    resolve(reader.result);
+                  } else {
+                    // For binary files, use base64
+                    const base64 = reader.result.split(',')[1];
+                    resolve(base64);
+                  }
+                } else {
+                  reject(new Error('Failed to read file'));
+                }
+              };
+              reader.onerror = () => reject(reader.error);
+
+              // Read as text for text files, data URL for binary
+              if (file.type.startsWith('text/') ||
+                  file.name.endsWith('.txt') ||
+                  file.name.endsWith('.md') ||
+                  file.name.endsWith('.csv') ||
+                  file.name.endsWith('.json') ||
+                  file.name.endsWith('.py') ||
+                  file.name.endsWith('.js') ||
+                  file.name.endsWith('.ts')) {
+                reader.readAsText(file);
+              } else {
+                reader.readAsDataURL(file);
+              }
+            });
+
+            // Use MCP save tool to copy file to workspace
+            const toolCall = {
+              name: 'save',
+              arguments: {
+                name: file.name,
+                text: fileContent,
+                auto_open: false // Don't auto-open uploaded files
+              },
+              server: 'python-mcp',
+              callId: `upload_file_${Date.now()}_${file.name}`
+            };
+
+            const result = await claraMCPService.executeToolCall(toolCall);
+
+            if (result.success) {
+              console.log(`✅ Copied ${file.name} to MCP workspace via save tool`);
+            } else {
+              console.warn(`⚠️ Failed to copy ${file.name}:`, result.error);
+            }
+          } catch (fileError) {
+            console.warn(`⚠️ Failed to copy ${file.name} to MCP workspace:`, fileError);
+          }
+        }
+      } catch (error) {
+        console.warn('⚠️ Error copying files to MCP workspace (MCP may not be running):', error);
+        // Continue without failing - this is a nice-to-have feature
+      }
+    };
+
+    // Copy files to MCP workspace (async, non-blocking)
+    copyFilesToMCPWorkspace(files).catch(err => {
+      console.warn('Failed to copy files to MCP workspace:', err);
+    });
+
     for (let index = 0; index < files.length; index++) {
       const file = files[index];
       const fileType = getFileType(file);
-      
+
       try {
         let base64: string | undefined;
         let extractedText: string | undefined;
-        
+
         // Handle different file types appropriately
         if (fileType === 'image') {
           // For images, convert to base64 for vision models
