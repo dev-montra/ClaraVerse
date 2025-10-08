@@ -1439,11 +1439,12 @@ const ClaraMessageBubble: React.FC<ClaraMessageBubbleProps> = ({
         </div>
 
         {/* Message Bubble */}
-        <div className={`glassmorphic rounded-2xl px-5 py-4 ${
-          isUser 
-            ? 'bg-gradient-to-br from-sakura-50/80 to-pink-50/80 dark:from-sakura-900/30 dark:to-pink-900/30 border-sakura-200/50 dark:border-sakura-700/50 shadow-sakura-100/50 dark:shadow-sakura-900/20' 
+        <div className={`glassmorphic rounded-2xl px-5 py-4 break-words ${
+          isUser
+            ? 'bg-gradient-to-br from-sakura-50/80 to-pink-50/80 dark:from-sakura-900/30 dark:to-pink-900/30 border-sakura-200/50 dark:border-sakura-700/50 shadow-sakura-100/50 dark:shadow-sakura-900/20'
             : 'bg-white/60 dark:bg-gray-800/60'
-        } backdrop-blur-sm`}>
+        } backdrop-blur-sm`}
+        style={{ overflowWrap: 'break-word', wordBreak: 'break-word' }}>
           
           {/* File Attachments */}
           {isUser && displayAttachments.length > 0 ? (

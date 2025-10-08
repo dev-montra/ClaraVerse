@@ -1434,7 +1434,10 @@ const MessageContentRenderer: React.FC<MessageContentRendererProps> = React.memo
 
   // Render as Markdown with custom image handling
   return (
-    <div className={`prose prose-base dark:prose-invert max-w-none ${className}`}>
+    <div
+      className={`prose prose-base dark:prose-invert max-w-none break-words ${className}`}
+      style={{ overflowWrap: 'break-word', wordBreak: 'break-word' }}
+    >
       {renderContentWithImages(processedContent.content)}
     </div>
   );
