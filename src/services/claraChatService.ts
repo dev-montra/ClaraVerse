@@ -435,11 +435,14 @@ export class ClaraChatService {
     conversationHistory?: ClaraMessage[]
   ): ChatMessage[] {
     const messages: ChatMessage[] = [];
-    
-    // Add system prompt
+
+    // Add system prompt with sanitized content (strip think tags)
+    let sanitizedSystemPrompt = systemPrompt ?? 'You are Clara, a helpful AI assistant.';
+    sanitizedSystemPrompt = sanitizedSystemPrompt.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+
     messages.push({
       role: 'system',
-      content: systemPrompt
+      content: sanitizedSystemPrompt
     });
 
     // Add conversation history if provided with proper role alternation
@@ -447,20 +450,30 @@ export class ClaraChatService {
       // Filter and organize conversation history to ensure proper alternating pattern
       const validMessages: ChatMessage[] = [];
       let lastRole: 'user' | 'assistant' | null = null;
-      
+
       for (const historyMessage of conversationHistory) {
         // Skip system messages and tool messages from history
         if (historyMessage.role === 'system') {
           continue;
         }
-        
+
         // Only include user and assistant messages
         if (historyMessage.role === 'user' || historyMessage.role === 'assistant') {
           // Ensure alternating pattern - skip consecutive messages of same role
           if (lastRole !== historyMessage.role) {
+            // Sanitize content to prevent null/undefined values and strip reasoning tags
+            let sanitizedContent = historyMessage.content ?? '';
+            // Remove <think> tags that may cause template issues
+            sanitizedContent = sanitizedContent.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+
+            // Skip messages that become empty after sanitization
+            if (!sanitizedContent) {
+              continue;
+            }
+
             const chatMessage: ChatMessage = {
               role: historyMessage.role,
-              content: historyMessage.content
+              content: sanitizedContent
             };
 
             if (historyMessage.attachments) {
@@ -487,10 +500,19 @@ export class ClaraChatService {
       console.log(`📚 Added ${validMessages.length} properly formatted history messages to chat context`);
     }
 
-    // Add the current user message
+    // Add the current user message with sanitized content
+    let sanitizedUserMessage = userMessage ?? '';
+    // Remove <think> tags that may cause template issues
+    sanitizedUserMessage = sanitizedUserMessage.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+
+    // If the message becomes empty after sanitization, use a default message
+    if (!sanitizedUserMessage) {
+      sanitizedUserMessage = 'Hello';
+    }
+
     const userChatMessage: ChatMessage = {
       role: 'user',
-      content: userMessage
+      content: sanitizedUserMessage
     };
 
     // Add images if any attachments are images

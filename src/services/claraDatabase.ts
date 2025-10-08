@@ -62,8 +62,14 @@ export class ClaraDatabaseService {
    * Save a message to the database
    */
   async saveMessage(sessionId: string, message: ClaraMessage): Promise<void> {
+    // Sanitize message content to remove <think> tags that cause template errors
+    const sanitizedContent = message.content
+      ? message.content.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
+      : message.content;
+
     const messageRecord: ClaraMessageRecord = {
       ...message,
+      content: sanitizedContent,
       sessionId,
       timestamp: message.timestamp.toISOString()
     };
@@ -190,9 +196,15 @@ export class ClaraDatabaseService {
     const existingRecord = await indexedDBService.get<ClaraMessageRecord>(this.MESSAGES_STORE, messageId);
     if (!existingRecord) throw new Error(`Message ${messageId} not found`);
 
+    // Sanitize content if it's being updated
+    const sanitizedUpdates = { ...updates };
+    if (sanitizedUpdates.content) {
+      sanitizedUpdates.content = sanitizedUpdates.content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+    }
+
     const updatedRecord: ClaraMessageRecord = {
       ...existingRecord,
-      ...updates,
+      ...sanitizedUpdates,
       sessionId, // Ensure session ID is maintained
       timestamp: updates.timestamp ? updates.timestamp.toISOString() : existingRecord.timestamp,
     };
