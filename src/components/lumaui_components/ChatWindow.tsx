@@ -1924,27 +1924,27 @@ Please check your request and try again. Make sure the file exists and your inst
   const fileOptions = useMemo(() => flatFiles.filter(f => f.type === 'file'), [flatFiles]);
 
   return (
-    <div className="h-full flex flex-col bolt-chat-container bg-bolt-bg-primary">
-      {/* Enhanced Header - Bolt Style */}
-      <div className="chat-header bg-bolt-bg-secondary border-b border-bolt-border shrink-0 h-14">
+    <div className="h-full w-full flex flex-col overflow-hidden">
+      {/* Enhanced Header - Clara/LumaUI Style */}
+      <div className="chat-header glassmorphic shrink-0 h-14">
         <div className="flex items-center justify-between px-4 py-3">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-bolt-accent-blue/20 rounded-lg flex items-center justify-center">
-              <Bot className="w-4 h-4 text-bolt-accent-blue" />
+            <div className="w-8 h-8 bg-gradient-to-br from-sakura-100 to-pink-100 dark:from-sakura-900/30 dark:to-pink-900/30 rounded-lg flex items-center justify-center">
+              <Bot className="w-4 h-4 text-sakura-600 dark:text-sakura-400" />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h3 className="font-semibold text-bolt-text-primary text-sm">AI Agent</h3>
+                <h3 className="font-semibold text-gray-800 dark:text-gray-100 text-sm">AI Agent</h3>
                 {isLoading && (
                   <div className="flex items-center gap-1">
-                    <div className="w-2 h-2 bg-bolt-accent-blue rounded-full animate-pulse"></div>
-                    <span className="text-xs px-2 py-0.5 bg-bolt-accent-blue/20 text-bolt-accent-blue rounded-full font-medium">
+                    <div className="w-2 h-2 bg-gradient-to-r from-sakura-500 to-pink-500 rounded-full animate-pulse"></div>
+                    <span className="text-xs px-2 py-0.5 bg-sakura-100 dark:bg-sakura-900/30 text-sakura-700 dark:text-sakura-300 rounded-full font-medium">
                       Working
                     </span>
                   </div>
                 )}
               </div>
-              <p className="text-xs text-bolt-text-secondary">
+              <p className="text-xs text-gray-600 dark:text-gray-400">
                 {currentPlanning && showPlanning
                   ? `🧠 Planning • Step ${currentPlanning.currentStep}/${currentPlanning.totalSteps}`
                   : currentToolExecution && showLiveExecution
@@ -1958,7 +1958,7 @@ Please check your request and try again. Make sure the file exists and your inst
             <div className="relative">
               <button
                 onClick={() => setShowSettingsModal(true)}
-                className="bolt-button-icon"
+                className="p-2 glassmorphic-card rounded-lg text-gray-600 dark:text-gray-400 hover:text-sakura-600 dark:hover:text-sakura-400 transition-colors"
                 title="Settings"
               >
                 <Settings className="w-4 h-4" />
@@ -1968,7 +1968,7 @@ Please check your request and try again. Make sure the file exists and your inst
 
             <button
               onClick={clearChat}
-              className="bolt-button-icon hover:text-bolt-error"
+              className="p-2 glassmorphic-card rounded-lg text-gray-600 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
               title="Clear chat"
             >
               <Trash2 className="w-4 h-4" />
@@ -1977,8 +1977,13 @@ Please check your request and try again. Make sure the file exists and your inst
         </div>
       </div>
 
-      {/* Messages - Bolt Style */}
-      <div className="flex-1 overflow-y-auto bolt-scrollbar p-4 space-y-4 bg-bolt-bg-primary">
+      {/* Messages - Clara Style */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-4 overflow-x-hidden"
+        style={{
+          scrollbarWidth: 'thin',
+          scrollbarColor: 'rgba(252, 165, 165, 0.3) transparent'
+        }}
+      >
         {/* Live Tool Execution Animation */}
         <LiveToolExecution
           currentExecution={currentToolExecution}
@@ -1999,12 +2004,12 @@ Please check your request and try again. Make sure the file exists and your inst
               <div className={`group max-w-[85%] relative overflow-hidden ${
                 message.type === 'user'
                   ? `${hasCheckpoint
-                      ? 'bg-gradient-to-r from-amber-400 to-orange-500 border-2 border-amber-300/50'
-                      : 'bg-bolt-bg-tertiary border border-bolt-border'} text-bolt-text-primary shadow-md`
+                      ? 'bg-gradient-to-r from-amber-400 to-orange-500 shadow-lg'
+                      : 'glassmorphic-card'} text-gray-800 dark:text-gray-100 shadow-md`
                   : message.type === 'tool'
-                  ? 'bg-bolt-bg-elevated border border-bolt-success/30 text-bolt-text-primary'
-                  : 'bg-bolt-bg-secondary border border-bolt-border text-bolt-text-primary'
-              } rounded-xl px-4 py-3 shadow-sm`}>
+                  ? 'glassmorphic-card text-gray-800 dark:text-gray-100'
+                  : 'glassmorphic text-gray-800 dark:text-gray-100'
+              } rounded-xl px-4 py-3`}>
               <div className="text-sm leading-relaxed overflow-x-auto">
                 {message.type === 'user' ? (
                   <div className="whitespace-pre-wrap break-words">
@@ -2175,8 +2180,8 @@ Please check your request and try again. Make sure the file exists and your inst
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Enhanced Input - Bolt Style */}
-      <div className="bg-bolt-bg-secondary border-t border-bolt-border p-4">
+      {/* Enhanced Input - Clara Style */}
+      <div className="glassmorphic p-4 shrink-0">
         <div className="flex gap-3">
           <div className="flex-1 relative">
             <textarea
@@ -2185,11 +2190,11 @@ Please check your request and try again. Make sure the file exists and your inst
               onKeyPress={handleKeyPress}
               placeholder="Ask me to help with your project, create files, debug code, or explain concepts..."
               disabled={isLoading || !apiClient || !selectedModel}
-              className="bolt-textarea text-bolt-text-primary placeholder-bolt-text-muted disabled:opacity-50 transition-all leading-relaxed"
+              className="w-full glassmorphic-card rounded-lg px-4 py-3 text-gray-800 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 disabled:opacity-50 transition-all leading-relaxed resize-none focus:outline-none focus:ring-2 focus:ring-sakura-500 dark:focus:ring-sakura-400"
               rows={4}
             />
             {inputMessage.trim() && (
-              <div className="absolute bottom-3 right-3 text-xs text-bolt-text-muted bg-bolt-bg-tertiary px-2 py-1 rounded-md">
+              <div className="absolute bottom-3 right-3 text-xs text-gray-500 dark:text-gray-400 glassmorphic-card px-2 py-1 rounded-md">
                 Press Ctrl+Enter to send
               </div>
             )}
@@ -2198,7 +2203,7 @@ Please check your request and try again. Make sure the file exists and your inst
             <button
               onClick={handleSendMessage}
               disabled={!inputMessage.trim() || isLoading || !apiClient || !selectedModel}
-              className="bolt-button-primary p-4 rounded-xl disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none flex items-center justify-center"
+              className="p-4 rounded-xl bg-gradient-to-r from-sakura-500 to-pink-500 hover:from-sakura-600 hover:to-pink-600 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg hover:shadow-xl transform hover:scale-105 disabled:transform-none flex items-center justify-center"
             >
               {isLoading ? (
                 <Loader2 className="w-5 h-5 animate-spin" />
@@ -2210,7 +2215,7 @@ Please check your request and try again. Make sure the file exists and your inst
             {/* AI Precision Editor Button */}
             <button
               onClick={() => setShowPrecisionEdit(v => !v)}
-              className="p-3 bg-gradient-to-r from-purple-500 to-indigo-500 text-white rounded-xl hover:from-purple-600 hover:to-indigo-600 transition-all duration-200 shadow-md hover:shadow-lg transform hover:scale-105 flex items-center justify-center"
+              className="p-3 bg-gradient-to-r from-purple-500 to-indigo-500 text-white rounded-xl hover:from-purple-600 hover:to-indigo-600 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:scale-105 flex items-center justify-center"
               title="AI Precision Editor"
             >
               <Scissors className="w-4 h-4" />

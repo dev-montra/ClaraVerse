@@ -40,9 +40,6 @@ interface RightPanelWorkspaceProps {
   project: Project | null;
   isStarting: boolean;
   onStartProject: (project: Project) => void;
-
-  // Width for layout (percentage)
-  width: number;
 }
 
 const RightPanelWorkspace: React.FC<RightPanelWorkspaceProps> = ({
@@ -65,20 +62,20 @@ const RightPanelWorkspace: React.FC<RightPanelWorkspaceProps> = ({
   webContainer,
   project,
   isStarting,
-  onStartProject,
-  width
+  onStartProject
 }) => {
   return (
-    <div
-      className="h-full flex flex-col bg-bolt-bg-primary border-l border-bolt-border"
-      style={{ width: `${width}%` }}
-    >
+    <div className="h-full w-full flex flex-col overflow-hidden">
       {/* Mode Toggle Buttons - Always Visible */}
-      <div className="bolt-top-bar shrink-0">
+      <div className="glassmorphic shrink-0 h-12 flex items-center px-4">
         <div className="flex items-center gap-2">
           <button
             onClick={() => onModeChange('preview')}
-            className={`bolt-mode-button ${mode === 'preview' ? 'bolt-mode-button-active' : ''}`}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+              mode === 'preview'
+                ? 'bg-gradient-to-r from-sakura-500 to-pink-500 text-white shadow-lg'
+                : 'glassmorphic-card text-gray-600 dark:text-gray-400 hover:text-sakura-600 dark:hover:text-sakura-400'
+            }`}
             title="Preview Mode"
           >
             <Eye className="w-4 h-4" />
@@ -87,7 +84,11 @@ const RightPanelWorkspace: React.FC<RightPanelWorkspaceProps> = ({
 
           <button
             onClick={() => onModeChange('editor')}
-            className={`bolt-mode-button ${mode === 'editor' ? 'bolt-mode-button-active' : ''}`}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+              mode === 'editor'
+                ? 'bg-gradient-to-r from-sakura-500 to-pink-500 text-white shadow-lg'
+                : 'glassmorphic-card text-gray-600 dark:text-gray-400 hover:text-sakura-600 dark:hover:text-sakura-400'
+            }`}
             title="Editor Mode"
           >
             <Code className="w-4 h-4" />
@@ -96,7 +97,11 @@ const RightPanelWorkspace: React.FC<RightPanelWorkspaceProps> = ({
 
           <button
             onClick={() => onModeChange('settings')}
-            className={`bolt-mode-button ${mode === 'settings' ? 'bolt-mode-button-active' : ''}`}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+              mode === 'settings'
+                ? 'bg-gradient-to-r from-sakura-500 to-pink-500 text-white shadow-lg'
+                : 'glassmorphic-card text-gray-600 dark:text-gray-400 hover:text-sakura-600 dark:hover:text-sakura-400'
+            }`}
             title="Settings"
           >
             <SettingsIcon className="w-4 h-4" />
@@ -106,13 +111,16 @@ const RightPanelWorkspace: React.FC<RightPanelWorkspaceProps> = ({
       </div>
 
       {/* Content Area - Switches Based on Mode */}
-      <div className="flex-1 min-h-0 relative">
+      <div className="flex-1 min-h-0 w-full overflow-hidden">
         {mode === 'editor' && (
-          <div className="h-full flex flex-col">
+          <div className="h-full w-full flex flex-col overflow-hidden">
             {/* Top: File Explorer + Editor Side-by-Side */}
-            <div className="flex-1 min-h-0 flex">
-              {/* File Explorer - 20% */}
-              <div className="w-1/5 h-full border-r border-bolt-border overflow-hidden">
+            <div className="flex-1 min-h-0 flex overflow-hidden w-full">
+              {/* File Explorer - Fixed 250px width */}
+              <div 
+                className="h-full glassmorphic overflow-hidden flex flex-col shrink-0"
+                style={{ width: '250px' }}
+              >
                 <FileExplorer
                   files={files}
                   selectedFile={selectedFile}
@@ -128,8 +136,8 @@ const RightPanelWorkspace: React.FC<RightPanelWorkspaceProps> = ({
                 />
               </div>
 
-              {/* Monaco Editor - 80% */}
-              <div className="flex-1 h-full overflow-hidden">
+              {/* Monaco Editor - Take remaining space */}
+              <div className="flex-1 h-full overflow-hidden min-w-0">
                 <MonacoEditor
                   content={selectedFileContent}
                   fileName={selectedFile || ''}
@@ -141,18 +149,20 @@ const RightPanelWorkspace: React.FC<RightPanelWorkspaceProps> = ({
               </div>
             </div>
 
-            {/* Bottom: Terminal (Resizable) */}
-            <div className="border-t border-bolt-border">
+            {/* Bottom: Terminal (Always visible in editor mode) */}
+            <div className="glassmorphic shrink-0" style={{ height: '200px' }}>
               <TerminalComponent
                 terminalRef={terminalRef}
                 webContainer={webContainer}
+                isVisible={true}
+                onToggle={() => {}}
               />
             </div>
           </div>
         )}
 
         {mode === 'preview' && project && (
-          <div className="h-full w-full">
+          <div className="h-full w-full overflow-hidden">
             <PreviewPane
               project={project}
               isStarting={isStarting}
@@ -162,15 +172,15 @@ const RightPanelWorkspace: React.FC<RightPanelWorkspaceProps> = ({
         )}
 
         {mode === 'settings' && (
-          <div className="h-full w-full flex items-center justify-center bg-bolt-bg-secondary">
+          <div className="h-full w-full flex items-center justify-center glassmorphic">
             <div className="text-center max-w-md px-6">
-              <div className="w-16 h-16 mx-auto mb-6 bg-bolt-bg-tertiary rounded-2xl flex items-center justify-center border border-bolt-border">
-                <SettingsIcon className="w-8 h-8 text-bolt-accent-blue" />
+              <div className="w-16 h-16 mx-auto mb-6 glassmorphic-card rounded-2xl flex items-center justify-center">
+                <SettingsIcon className="w-8 h-8 text-sakura-600 dark:text-sakura-400" />
               </div>
-              <h3 className="text-xl font-semibold text-bolt-text-primary mb-3">
+              <h3 className="text-xl font-semibold text-gray-800 dark:text-gray-100 mb-3">
                 Settings Panel
               </h3>
-              <p className="text-bolt-text-secondary leading-relaxed">
+              <p className="text-gray-600 dark:text-gray-400 leading-relaxed">
                 Settings panel coming soon. Configure your workspace preferences, editor settings, and more.
               </p>
             </div>
@@ -179,15 +189,15 @@ const RightPanelWorkspace: React.FC<RightPanelWorkspaceProps> = ({
 
         {/* Show fallback if no project selected in preview mode */}
         {mode === 'preview' && !project && (
-          <div className="h-full w-full flex items-center justify-center bg-bolt-bg-secondary">
+          <div className="h-full w-full flex items-center justify-center glassmorphic">
             <div className="text-center max-w-md px-6">
-              <div className="w-16 h-16 mx-auto mb-6 bg-bolt-bg-tertiary rounded-2xl flex items-center justify-center border border-bolt-border">
-                <Eye className="w-8 h-8 text-bolt-text-muted" />
+              <div className="w-16 h-16 mx-auto mb-6 glassmorphic-card rounded-2xl flex items-center justify-center">
+                <Eye className="w-8 h-8 text-gray-500 dark:text-gray-400" />
               </div>
-              <h3 className="text-xl font-semibold text-bolt-text-primary mb-3">
+              <h3 className="text-xl font-semibold text-gray-800 dark:text-gray-100 mb-3">
                 No Project Selected
               </h3>
-              <p className="text-bolt-text-secondary leading-relaxed">
+              <p className="text-gray-600 dark:text-gray-400 leading-relaxed">
                 Select or create a project to see the live preview.
               </p>
             </div>

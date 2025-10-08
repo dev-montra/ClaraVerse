@@ -269,76 +269,50 @@ const MonacoEditor: React.FC<MonacoEditorProps> = ({
   );
 
   return (
-    <div className="h-full flex flex-col bg-gray-50 dark:bg-gray-900">
+    <div className="h-full w-full flex flex-col overflow-hidden glassmorphic">
       {/* Clean, Professional Header */}
-      <div className="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4 flex items-center justify-between">
+      <div className="glassmorphic-card px-3 py-2 flex items-center justify-between shrink-0 overflow-hidden">
         {/* File Info Section */}
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 bg-gray-100 dark:bg-gray-700 rounded-lg flex items-center justify-center">
+        <div className="flex items-center gap-3 min-w-0 flex-1">
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <div className="w-8 h-8 bg-gray-100 dark:bg-gray-700 rounded-lg flex items-center justify-center shrink-0">
               {getFileTypeIcon(fileName)}
             </div>
-            <div>
-              <div className="flex items-center gap-3">
-                <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2 flex-wrap">
+                <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
                   {fileName || 'No file selected'}
                 </h2>
                 {fileName && (
-                  <span className="px-3 py-1 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-full text-sm font-medium">
+                  <span className="px-2 py-0.5 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-full text-xs font-medium shrink-0">
                     {getLanguageFromFileName(fileName)}
                   </span>
                 )}
                 {/* Editor Status */}
-                {fileName && (
-                  <div className="flex items-center gap-2">
-                    {isEditorReady && (
-                      <span className="px-2 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded text-xs font-medium">
-                        Monaco Ready
-                      </span>
-                    )}
-                    {editorError && (
-                      <span className="px-2 py-1 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 rounded text-xs font-medium">
-                        Fallback Mode
-                      </span>
-                    )}
-                    {!isEditorReady && !editorError && !loadingTimeout && (
-                      <span className="px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded text-xs font-medium">
-                        Loading...
-                      </span>
-                    )}
-                  </div>
+                {fileName && isEditorReady && (
+                  <span className="px-2 py-0.5 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded text-xs font-medium shrink-0">
+                    ✓
+                  </span>
                 )}
               </div>
-              <div className="flex items-center gap-4 mt-1">
-                <p className="text-sm text-gray-600 dark:text-gray-400">
-                  {fileName ? (
-                    projectFiles.length > 0 ? 
-                      `IntelliSense enabled • ${projectFiles.filter(f => f.type === 'file').length} files indexed` :
-                      'Ready to edit'
-                  ) : (
-                    'Select a file to start editing'
-                  )}
+              <div className="flex items-center gap-2 mt-0.5">
+                <p className="text-xs text-gray-600 dark:text-gray-400 truncate">
+                  {fileName ? 'Ready to edit' : 'Select a file'}
                 </p>
                 
-                {/* Diagnostics - Clean and Minimal */}
-                {fileName && isEditorReady && (
-                  <div className="flex items-center gap-3">
+                {/* Diagnostics - Compact */}
+                {fileName && isEditorReady && (hasErrors || hasWarnings) && (
+                  <div className="flex items-center gap-2 shrink-0">
                     {hasErrors && (
                       <div className="flex items-center gap-1 text-red-600 dark:text-red-400">
-                        <AlertTriangle className="w-4 h-4" />
-                        <span className="text-sm font-medium">{errorCount}</span>
+                        <AlertTriangle className="w-3 h-3" />
+                        <span className="text-xs">{errorCount}</span>
                       </div>
                     )}
                     {hasWarnings && (
                       <div className="flex items-center gap-1 text-amber-600 dark:text-amber-400">
-                        <AlertTriangle className="w-4 h-4" />
-                        <span className="text-sm font-medium">{warningCount}</span>
-                      </div>
-                    )}
-                    {!hasErrors && !hasWarnings && fileName && (
-                      <div className="flex items-center gap-1 text-green-600 dark:text-green-400">
-                        <CheckCircle className="w-4 h-4" />
-                        <span className="text-sm font-medium">No issues</span>
+                        <AlertTriangle className="w-3 h-3" />
+                        <span className="text-xs">{warningCount}</span>
                       </div>
                     )}
                   </div>

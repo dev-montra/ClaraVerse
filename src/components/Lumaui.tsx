@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Plus, Code, Play, Square, Loader2, ExternalLink, FolderOpen, MessageSquare, Eye } from 'lucide-react';
+import { Plus, Play, Square, Loader2, ExternalLink, FolderOpen } from 'lucide-react';
 import { WebContainer } from '@webcontainer/api';
 import { Terminal } from '@xterm/xterm';
 import { createLumaTools } from '../services/lumaTools';
@@ -7,18 +7,10 @@ import { createLumaTools } from '../services/lumaTools';
 // Components
 import CreateProjectModal from './lumaui_components/CreateProjectModal';
 import ProjectSelectionModal from './lumaui_components/ProjectSelectionModal';
-import FileExplorer from './lumaui_components/FileExplorer';
-import MonacoEditor from './lumaui_components/MonacoEditor';
-import TerminalComponent from './lumaui_components/TerminalComponent';
-
-import PreviewPane from './lumaui_components/PreviewPane';
 import ChatWindow from './lumaui_components/ChatWindow';
-import ResizeHandle from './lumaui_components/ResizeHandle';
 import RightPanelWorkspace from './lumaui_components/RightPanelWorkspace';
 
 // Hooks
-import { useResizable } from '../hooks/useResizable';
-
 // Types and Data
 import { Project, FileNode } from '../types';
 import { useIndexedDB } from '../hooks/useIndexedDB';
@@ -52,31 +44,6 @@ const LumaUICore: React.FC = () => {
   const [wallpaperUrl, setWallpaperUrl] = useState<string | null>(null);
 
 
-  // Resizable panels (using percentages) - NOW ONLY 2 PANELS: Left (Chat) and Right (Workspace)
-  const leftPanel = useResizable({
-    initialPercentage: 30,
-    minPercentage: 20,
-    maxPercentage: 50,
-    direction: 'horizontal'
-  });
-
-  // Calculate right panel percentage
-  const rightPanelPercentage = 100 - leftPanel.percentage;
-
-  // Debug logs for resize functionality
-  useEffect(() => {
-    console.log('🔧 RESIZE DEBUG - Left Panel (Chat):', {
-      percentage: leftPanel.percentage,
-      isResizing: leftPanel.isResizing
-    });
-  }, [leftPanel.percentage, leftPanel.isResizing]);
-
-  useEffect(() => {
-    console.log('🔧 RESIZE DEBUG - Right Panel (Workspace):', {
-      percentage: rightPanelPercentage
-    });
-  }, [rightPanelPercentage]);
-  
   // Refs
   const terminalRef = useRef<Terminal | null>(null);
   const runningProcessesRef = useRef<any[]>([]);
@@ -1099,53 +1066,53 @@ This is a browser security requirement for WebContainer.`;
   }, [webContainer, files, selectedProject?.name, handleFileSelect, writeToTerminal, refreshFileTree]);
 
   return (
-    <div className="h-[calc(100vh-3rem)] bg-gradient-to-br from-bolt-bg-primary to-bolt-bg-secondary overflow-hidden relative">
-      {/* Wallpaper Background */}
+    <div className="h-screen w-screen overflow-hidden bg-gradient-to-br from-white to-sakura-50 dark:from-gray-900 dark:to-gray-800 relative">
+      {/* Wallpaper Background - Absolute positioned, doesn't affect layout */}
       {wallpaperUrl && (
         <div 
-          className="absolute top-0 left-0 right-0 bottom-0 z-0"
+          className="absolute inset-0 z-0"
           style={{
             backgroundImage: `url(${wallpaperUrl})`,
             backgroundSize: 'cover',
             backgroundPosition: 'center',
-            opacity: 0.4,
-            filter: 'blur(1px)',
+            opacity: 0.15,
+            filter: 'blur(2px)',
             pointerEvents: 'none'
           }}
         />
       )}
 
-      {/* Content with relative z-index */}
-      {/* h- minus the top bar height */}
-      <div className="relative z-10 h-[calc(100vh-48px)]"> 
-        {/* Scaffold Progress - Overlay */}
+      {/* Main Content Layer - Takes full height/width but width - 2rem for sidebar */}
+      <div className="relative z-10 h-full w-[calc(100%-5rem)] flex flex-col">
+        {/* Scaffold Progress Overlay - Positioned absolutely over content */}
         {scaffoldProgress && !scaffoldProgress.isComplete && (
-          <div className="absolute top-4 left-4 right-4 z-50 p-4 glassmorphic rounded-xl border border-white/30 dark:border-gray-700/50 shadow-xl backdrop-blur-lg">
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-sm font-semibold text-sakura-800 dark:text-sakura-200">
-                {scaffoldProgress.stepName}
-              </span>
-              <span className="text-xs px-2 py-1 bg-sakura-100 dark:bg-sakura-900/30 text-sakura-700 dark:text-sakura-300 rounded-full font-medium">
-                {scaffoldProgress.currentStep}/{scaffoldProgress.totalSteps}
-              </span>
+          <div className="absolute top-6 left-1/2 transform -translate-x-1/2 z-50 w-full max-w-xl px-4">
+            <div className="glassmorphic rounded-xl shadow-2xl p-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-semibold text-sakura-800 dark:text-sakura-200">
+                  {scaffoldProgress.stepName}
+                </span>
+                <span className="text-xs px-2 py-1 bg-sakura-100 dark:bg-sakura-900/30 text-sakura-700 dark:text-sakura-300 rounded-full font-medium">
+                  {scaffoldProgress.currentStep}/{scaffoldProgress.totalSteps}
+                </span>
+              </div>
+              <div className="w-full bg-sakura-100 dark:bg-sakura-900/20 rounded-full h-2 mb-2 overflow-hidden">
+                <div 
+                  className="bg-gradient-to-r from-sakura-500 to-pink-500 h-full rounded-full transition-all duration-500"
+                  style={{ width: `${(scaffoldProgress.currentStep / scaffoldProgress.totalSteps) * 100}%` }}
+                />
+              </div>
+              <p className="text-xs text-sakura-600 dark:text-sakura-400">
+                {scaffoldProgress.stepDescription}
+              </p>
             </div>
-            <div className="w-full bg-sakura-100 dark:bg-sakura-900/20 rounded-full h-2.5 mb-2 overflow-hidden">
-              <div 
-                className="bg-gradient-to-r from-sakura-500 to-pink-500 h-full rounded-full transition-all duration-500 ease-out shadow-sm"
-                style={{ width: `${(scaffoldProgress.currentStep / scaffoldProgress.totalSteps) * 100}%` }}
-              ></div>
-            </div>
-            <p className="text-xs text-sakura-600 dark:text-sakura-400 leading-relaxed">
-              {scaffoldProgress.stepDescription}
-            </p>
           </div>
         )}
       
-              {/* Main Layout */}
-        <div className="h-[calc(100vh-48px)] flex flex-col">
-          {/* Enhanced Header - Glassmorphic Design */}
-          {selectedProject && (
-            <div className="glassmorphic border-b border-white/20 dark:border-gray-700/50 shrink-0 h-12 flex items-center justify-between px-4">
+        {/* Header - Fixed height, full width */}
+        {selectedProject && (
+          <header className="h-12 shrink-0 glassmorphic border-b border-white/10 dark:border-gray-800/50">
+            <div className="h-full px-4 flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="flex items-center gap-2">
                   <div className="w-2 h-2 bg-gradient-to-r from-sakura-500 to-pink-500 rounded-full animate-pulse"></div>
@@ -1162,7 +1129,7 @@ This is a browser security requirement for WebContainer.`;
                 <div className="flex items-center gap-1">
                   <button
                     onClick={() => setIsProjectSelectionModalOpen(true)}
-                    className="flex items-center gap-1 px-2 py-1 text-xs glassmorphic-card border border-white/30 dark:border-gray-700/50 text-gray-700 dark:text-gray-300 hover:text-sakura-600 dark:hover:text-sakura-400 rounded-lg transition-colors"
+                    className="flex items-center gap-1 px-2 py-1 text-xs glassmorphic-card text-gray-700 dark:text-gray-300 hover:text-sakura-600 dark:hover:text-sakura-400 rounded-lg transition-colors"
                   >
                     <FolderOpen className="w-3 h-3" />
                     Switch
@@ -1170,7 +1137,7 @@ This is a browser security requirement for WebContainer.`;
                   
                   <button
                     onClick={() => setIsCreateModalOpen(true)}
-                    className="flex items-center gap-1 px-2 py-1 text-xs bg-gradient-to-r from-sakura-500 to-pink-500 text-white rounded-lg hover:from-sakura-600 hover:to-pink-600 transition-all shadow-sm"
+                    className="flex items-center gap-1 px-2 py-1 text-xs bg-gradient-to-r from-sakura-500 to-pink-500 text-white rounded-lg hover:from-sakura-600 hover:to-pink-600 transition-all shadow-lg"
                   >
                     <Plus className="w-3 h-3" />
                     New
@@ -1182,7 +1149,7 @@ This is a browser security requirement for WebContainer.`;
                 {selectedProject.status === 'running' && (
                   <button
                     onClick={() => stopProject(selectedProject)}
-                    className="flex items-center gap-1 px-3 py-1.5 text-xs bg-gradient-to-r from-red-500 to-red-600 text-white rounded-lg hover:from-red-600 hover:to-red-700 transition-all shadow-sm"
+                    className="flex items-center gap-1 px-3 py-1.5 text-xs bg-gradient-to-r from-red-500 to-red-600 text-white rounded-lg hover:from-red-600 hover:to-red-700 transition-all shadow-lg"
                   >
                     <Square className="w-3 h-3" />
                     Stop
@@ -1193,7 +1160,7 @@ This is a browser security requirement for WebContainer.`;
                   <button
                     onClick={() => startProject(selectedProject)}
                     disabled={isStarting}
-                    className="flex items-center gap-1 px-3 py-1.5 text-xs bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg hover:from-green-600 hover:to-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm"
+                    className="flex items-center gap-1 px-3 py-1.5 text-xs bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg hover:from-green-600 hover:to-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg"
                   >
                     {isStarting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
                     {isStarting ? 'Starting...' : 'Start'}
@@ -1202,7 +1169,7 @@ This is a browser security requirement for WebContainer.`;
                   <button
                     onClick={() => startProject(selectedProject)}
                     disabled={isStarting}
-                    className="flex items-center gap-1 px-3 py-1.5 text-xs bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg hover:from-green-600 hover:to-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm"
+                    className="flex items-center gap-1 px-3 py-1.5 text-xs bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg hover:from-green-600 hover:to-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg"
                   >
                     {isStarting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
                     {isStarting ? 'Starting...' : 'Start'}
@@ -1212,7 +1179,7 @@ This is a browser security requirement for WebContainer.`;
                 {selectedProject.previewUrl && (
                   <button
                     onClick={() => window.open(selectedProject.previewUrl, '_blank')}
-                    className="p-2 glassmorphic-card border border-white/30 dark:border-gray-700/50 text-gray-600 dark:text-gray-400 hover:text-sakura-500 dark:hover:text-sakura-400 rounded-lg transition-colors"
+                    className="p-2 glassmorphic-card text-gray-600 dark:text-gray-400 hover:text-sakura-500 dark:hover:text-sakura-400 rounded-lg transition-colors"
                     title="Open in new tab"
                   >
                     <ExternalLink className="w-3 h-3" />
@@ -1220,26 +1187,13 @@ This is a browser security requirement for WebContainer.`;
                 )}
               </div>
             </div>
-          )}
+          </header>
+        )}
 
-        {/* Main Content Area - Two Panel Layout (Bolt.new Style) */}
-        <div
-          ref={(el) => {
-            // Store reference for resize calculations
-            if (el) {
-              el.setAttribute('data-resize-container', 'true');
-            }
-          }}
-          className={`flex overflow-hidden ${selectedProject ? 'h-[calc(100vh-6rem)]' : 'h-[calc(100vh-3rem)]'}`}
-        >
-          {/* Left Panel - Chat */}
-          <div
-            className="flex flex-col bg-bolt-bg-primary border-r border-bolt-border h-full"
-            style={{
-              width: `${leftPanel.percentage}%`,
-              backgroundColor: leftPanel.isResizing ? 'rgba(31, 111, 235, 0.1)' : ''
-            }}
-          >
+        {/* Main Content - Flex grow, contains chat and workspace */}
+        <main className="flex-1 flex overflow-hidden min-h-0">
+          {/* Left Panel - Chat (25% width, fixed) */}
+          <aside className="w-1/4 h-full shrink-0 border-r border-white/10 dark:border-gray-800/50">
             <ChatWindow
               selectedFile={selectedFile}
               fileContent={selectedFileContent}
@@ -1252,46 +1206,37 @@ This is a browser security requirement for WebContainer.`;
               projectName={selectedProject?.name || 'No Project'}
               refreshFileTree={refreshFileTree}
             />
-          </div>
+          </aside>
 
-          {/* Resize Handle */}
-          <ResizeHandle
-            direction="horizontal"
-            onMouseDown={(e) => {
-              console.log('🔧 RESIZE DEBUG - Resize handle clicked', e);
-              leftPanel.startResize(e);
-            }}
-            isResizing={leftPanel.isResizing}
-          />
-
-          {/* Right Panel - Workspace with Mode Switching */}
-          <RightPanelWorkspace
-            mode={rightPanelMode}
-            onModeChange={setRightPanelMode}
-            files={files}
-            selectedFile={selectedFile}
-            onFileSelect={handleFileSelect}
-            expandedFolders={expandedFolders}
-            onToggleFolder={handleToggleFolder}
-            onCreateFile={handleCreateFile}
-            onCreateFolder={handleCreateFolder}
-            onDeleteFile={handleDeleteFile}
-            onDeleteFolder={handleDeleteFolder}
-            onRenameFile={handleRenameFile}
-            onDuplicateFile={handleDuplicateFile}
-            selectedFileContent={selectedFileContent}
-            onFileContentChange={handleFileContentChange}
-            terminalRef={terminalRef}
-            webContainer={webContainer}
-            project={selectedProject}
-            isStarting={isStarting}
-            onStartProject={startProject}
-            width={rightPanelPercentage}
-          />
-        </div>
+          {/* Right Panel - Workspace (75% - 2rem width becoz sidebar, flexible) */}
+          <section className="w-3/4  h-full flex-1 min-w-0">
+            <RightPanelWorkspace
+              mode={rightPanelMode}
+              onModeChange={setRightPanelMode}
+              files={files}
+              selectedFile={selectedFile}
+              onFileSelect={handleFileSelect}
+              expandedFolders={expandedFolders}
+              onToggleFolder={handleToggleFolder}
+              onCreateFile={handleCreateFile}
+              onCreateFolder={handleCreateFolder}
+              onDeleteFile={handleDeleteFile}
+              onDeleteFolder={handleDeleteFolder}
+              onRenameFile={handleRenameFile}
+              onDuplicateFile={handleDuplicateFile}
+              selectedFileContent={selectedFileContent}
+              onFileContentChange={handleFileContentChange}
+              terminalRef={terminalRef}
+              webContainer={webContainer}
+              project={selectedProject}
+              isStarting={isStarting}
+              onStartProject={startProject}
+            />
+          </section>
+        </main>
       </div>
 
-      {/* Project Selection Modal */}
+      {/* Modals - Outside main layout, positioned absolutely */}
       <ProjectSelectionModal
         isOpen={isProjectSelectionModalOpen}
         projects={projects}
@@ -1304,14 +1249,10 @@ This is a browser security requirement for WebContainer.`;
         onClose={() => setIsProjectSelectionModalOpen(false)}
       />
 
-      {/* Create Project Modal */}
       <CreateProjectModal
         isOpen={isCreateModalOpen}
         onClose={() => {
           setIsCreateModalOpen(false);
-          // Only reopen selection modal if user explicitly closed create modal 
-          // AND no project is currently selected AND there are existing projects
-          // Don't reopen if a project was just selected
           const shouldReopenSelection = !selectedProject && projects.length > 0 && !isProjectSelectionModalOpen;
           if (shouldReopenSelection) {
             setIsProjectSelectionModalOpen(true);
@@ -1319,7 +1260,6 @@ This is a browser security requirement for WebContainer.`;
         }}
         onCreateProject={handleCreateProject}
       />
-      </div>
     </div>
   );
 };

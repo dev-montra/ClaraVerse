@@ -428,65 +428,68 @@ const FileExplorer: React.FC<FileExplorerProps> = ({
   };
   
   return (
-    <div className="h-full bolt-file-tree bg-bolt-bg-secondary">
-      <div className="p-4 border-b border-bolt-border bg-bolt-bg-tertiary">
+    <div className="h-full w-full flex flex-col overflow-hidden">
+      <div className="p-2 glassmorphic shrink-0">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 bg-bolt-accent-blue/20 rounded-xl flex items-center justify-center">
-              <FolderOpen className="w-5 h-5 text-bolt-accent-blue" />
+          <div className="flex items-center gap-2 min-w-0 flex-1">
+            <div className="w-7 h-7 bg-gradient-to-br from-sakura-100 to-pink-100 dark:from-sakura-900/30 dark:to-pink-900/30 rounded-lg flex items-center justify-center shrink-0">
+              <FolderOpen className="w-4 h-4 text-sakura-600 dark:text-sakura-400" />
             </div>
-            <div>
-              <h3 className="text-sm font-semibold text-bolt-text-primary">Explorer</h3>
-              <p className="text-xs text-bolt-text-secondary">Project files</p>
+            <div className="min-w-0">
+              <h3 className="text-xs font-semibold text-gray-800 dark:text-gray-100 truncate">Explorer</h3>
             </div>
           </div>
 
           {/* Quick action buttons */}
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-1 shrink-0">
             <button
               onClick={() => startEditing('', 'create-file')}
-              className="bolt-button-icon"
+              className="p-1.5 glassmorphic-card rounded-md text-gray-600 dark:text-gray-400 hover:text-sakura-600 dark:hover:text-sakura-400 transition-colors"
               title="New File"
             >
-              <FilePlus className="w-4 h-4" />
+              <FilePlus className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={() => startEditing('', 'create-folder')}
-              className="bolt-button-icon"
+              className="p-1.5 glassmorphic-card rounded-md text-gray-600 dark:text-gray-400 hover:text-sakura-600 dark:hover:text-sakura-400 transition-colors"
               title="New Folder"
             >
-              <FolderPlus className="w-4 h-4" />
+              <FolderPlus className="w-3.5 h-3.5" />
             </button>
           </div>
         </div>
       </div>
 
       <div
-        className="overflow-auto bolt-scrollbar p-2"
+        className="flex-1 overflow-y-auto p-2 min-h-0"
+        style={{
+          scrollbarWidth: 'thin',
+          scrollbarColor: 'rgba(252, 165, 165, 0.3) transparent'
+        }}
         onContextMenu={handleEmptyAreaContextMenu}
       >
         {files.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 px-4">
-            <div className="w-20 h-20 bg-bolt-bg-tertiary rounded-2xl flex items-center justify-center mb-6 border border-bolt-border">
-              <FolderOpen className="w-10 h-10 text-bolt-text-muted" />
+            <div className="w-20 h-20 glassmorphic-card rounded-2xl flex items-center justify-center mb-6">
+              <FolderOpen className="w-10 h-10 text-gray-500 dark:text-gray-400" />
             </div>
-            <h3 className="text-lg font-bold text-bolt-text-primary mb-2">
+            <h3 className="text-lg font-bold text-gray-800 dark:text-gray-100 mb-2">
               No Files Yet
             </h3>
-            <p className="text-sm text-bolt-text-secondary text-center leading-relaxed mb-4">
+            <p className="text-sm text-gray-600 dark:text-gray-400 text-center leading-relaxed mb-4">
               Start your project to explore files and directories
             </p>
             <div className="flex gap-2">
               <button
                 onClick={() => startEditing('', 'create-file')}
-                className="bolt-button-primary flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg"
+                className="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg bg-gradient-to-r from-sakura-500 to-pink-500 text-white hover:from-sakura-600 hover:to-pink-600 transition-all shadow-lg"
               >
                 <FilePlus className="w-4 h-4" />
                 New File
               </button>
               <button
                 onClick={() => startEditing('', 'create-folder')}
-                className="bolt-button-secondary flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg"
+                className="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg glassmorphic-card text-gray-700 dark:text-gray-300 hover:text-sakura-600 dark:hover:text-sakura-400 transition-colors"
               >
                 <FolderPlus className="w-4 h-4" />
                 New Folder
