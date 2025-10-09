@@ -47,7 +47,11 @@ const LumaUICore: React.FC = () => {
   // Refs
   const terminalRef = useRef<Terminal | null>(null);
   const runningProcessesRef = useRef<any[]>([]);
+  const shellProcessRef = useRef<any>(null); // Track shell process for interactive terminal
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Per-project output buffers to persist terminal output across switches
+  const projectOutputBuffers = useRef<Map<string, string[]>>(new Map());
 
   // Database hook
   const { saveProjectToDB, loadProjectsFromDB, loadProjectFilesFromDB, deleteProjectFromDB } = useIndexedDB();
@@ -93,12 +97,59 @@ const LumaUICore: React.FC = () => {
     loadProjects();
   }, [loadProjectsFromDB, selectedProject]);
 
-  // Cleanup timeout on unmount
+  // Cleanup on unmount and page unload
   useEffect(() => {
-    return () => {
+    // Cleanup function for when component unmounts or page is closed
+    const cleanup = async () => {
+      // Clear save timeout
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
       }
+
+      // Set all projects to idle status before closing
+      try {
+        const dbRequest = window.indexedDB.open('lumaui-projects', 1);
+        dbRequest.onsuccess = () => {
+          const transaction = dbRequest.result.transaction(['projects'], 'readwrite');
+          const store = transaction.objectStore('projects');
+
+          // Get all projects
+          const getAllRequest = store.getAll();
+          getAllRequest.onsuccess = () => {
+            const allProjects = getAllRequest.result;
+
+            // Update each project to idle
+            allProjects.forEach((project: Project) => {
+              if (project.status === 'running') {
+                store.put({
+                  ...project,
+                  status: 'idle',
+                  previewUrl: undefined
+                });
+              }
+            });
+          };
+        };
+      } catch (error) {
+        console.error('Error during cleanup:', error);
+      }
+    };
+
+    // Handle page unload/refresh
+    const handleBeforeUnload = () => {
+      // Synchronously update projects to idle in localStorage as backup
+      try {
+        localStorage.setItem('lumaui-cleanup-needed', 'true');
+      } catch (e) {
+        console.error('Failed to set cleanup flag:', e);
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      cleanup();
+      window.removeEventListener('beforeunload', handleBeforeUnload);
     };
   }, []);
     
@@ -106,6 +157,114 @@ const LumaUICore: React.FC = () => {
   const writeToTerminal = (data: string) => {
     if (terminalRef.current) {
       terminalRef.current.write(data);
+
+      // Buffer output for current project to persist across switches
+      if (selectedProject?.id) {
+        const buffer = projectOutputBuffers.current.get(selectedProject.id) || [];
+        buffer.push(data);
+
+        // Limit buffer size to prevent memory issues (keep last 1000 lines)
+        if (buffer.length > 1000) {
+          buffer.shift();
+        }
+
+        projectOutputBuffers.current.set(selectedProject.id, buffer);
+      }
+    }
+  };
+
+  // Spawn and attach interactive shell to terminal
+  const attachShellToTerminal = async (container: WebContainer) => {
+    if (!terminalRef.current) {
+      console.warn('Terminal not ready for shell attachment');
+      return;
+    }
+
+    try {
+      // Kill existing shell if any
+      if (shellProcessRef.current) {
+        try {
+          shellProcessRef.current.kill();
+          await new Promise(resolve => setTimeout(resolve, 100)); // Wait for kill
+        } catch (e) {
+          console.warn('Error killing previous shell:', e);
+        }
+        shellProcessRef.current = null;
+      }
+
+      const terminal = terminalRef.current;
+
+      writeToTerminal('\x1b[90m🐚 Spawning interactive shell (bash)...\x1b[0m\n');
+
+      // Spawn interactive shell (bash for better compatibility, fallback to jsh)
+      let shellCommand = 'bash';
+      let shellProcess;
+
+      try {
+        shellProcess = await container.spawn(shellCommand, [], {
+          terminal: {
+            cols: terminal.cols,
+            rows: terminal.rows,
+          },
+        });
+      } catch (error) {
+        // Fallback to jsh if bash doesn't exist
+        writeToTerminal('\x1b[90m  Bash not available, using jsh...\x1b[0m\n');
+        shellCommand = 'jsh';
+        shellProcess = await container.spawn(shellCommand, [], {
+          terminal: {
+            cols: terminal.cols,
+            rows: terminal.rows,
+          },
+        });
+      }
+
+      shellProcessRef.current = shellProcess;
+
+      // Pipe shell output to terminal
+      shellProcess.output.pipeTo(
+        new WritableStream({
+          write(data) {
+            terminal.write(data);
+          },
+        })
+      ).catch(err => {
+        console.warn('Shell output pipe error:', err);
+      });
+
+      // Create writable stream for shell input
+      const input = shellProcess.input.getWriter();
+
+      // Handle terminal input (send to shell)
+      const handleTerminalData = (data: string) => {
+        try {
+          input.write(data);
+        } catch (err) {
+          console.warn('Error writing to shell input:', err);
+        }
+      };
+
+      // Attach input handler
+      terminal.onData(handleTerminalData);
+
+      // Handle shell exit
+      shellProcess.exit.then((exitCode) => {
+        console.log(`Shell exited with code ${exitCode}`);
+        shellProcessRef.current = null;
+        // Don't write to terminal here as it might be disposed
+      }).catch(err => {
+        console.warn('Shell exit error:', err);
+        shellProcessRef.current = null;
+      });
+
+      writeToTerminal('\x1b[32m✅ Interactive shell ready\x1b[0m\n\n');
+      console.log('✅ Interactive shell attached to terminal');
+    } catch (error) {
+      console.error('Failed to attach shell to terminal:', error);
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      writeToTerminal(`\x1b[33m⚠️ Shell attachment skipped: ${errorMsg}\x1b[0m\n`);
+      writeToTerminal('\x1b[90m💡 Process output will still be shown in terminal\x1b[0m\n\n');
+      // Don't fail the entire boot process if shell fails
     }
   };
 
@@ -193,13 +352,13 @@ This is a browser security requirement for WebContainer.`;
     
     let container: WebContainer | null = null;
     let previousContainer: WebContainer | null = webContainer;
-    
+
     try {
-      // Clear terminal and start fresh
-      if (terminalRef.current) {
-        terminalRef.current.clear();
-      }
-      
+      // Don't clear terminal - add visual separator instead
+      writeToTerminal(`\n\x1b[90m${'═'.repeat(80)}\x1b[0m\n`);
+      writeToTerminal('\x1b[35m✨ Creating New Project\x1b[0m\n');
+      writeToTerminal(`\x1b[90m${'═'.repeat(80)}\x1b[0m\n\n`);
+
       // Stop existing project if running (WebContainer can only have one instance)
       if (previousContainer) {
         writeToTerminal('\x1b[36m💡 Note: WebContainer allows only one instance at a time\x1b[0m\n');
@@ -277,7 +436,9 @@ This is a browser security requirement for WebContainer.`;
       if (!container) {
         throw new Error('Failed to initialize WebContainer. Please refresh the page and try again.');
       }
-      
+
+      // Don't attach shell yet - wait until project is scaffolded
+
       // Create scaffolder and run project setup
       const scaffolder = new ProjectScaffolderV2(container, writeToTerminal);
       
@@ -301,7 +462,11 @@ This is a browser security requirement for WebContainer.`;
       }
       
       writeToTerminal(`\x1b[32m✅ Found ${fileNodes.length} files/directories\x1b[0m\n`);
-      
+
+      // NOW attach shell after project is scaffolded
+      writeToTerminal('\n');
+      await attachShellToTerminal(container);
+
       // Save to database
       writeToTerminal('\x1b[33m💾 Saving project to database...\x1b[0m\n');
       await saveProjectToDB(newProject, fileNodes);
@@ -342,12 +507,10 @@ This is a browser security requirement for WebContainer.`;
   const handleProjectSelect = async (project: Project) => {
     // Immediately close modal to prevent any UI flicker
     setIsProjectSelectionModalOpen(false);
-    
-    // Clear terminal for new project
-    if (terminalRef.current) {
-      terminalRef.current.clear();
-    }
-    
+
+    // Don't clear terminal - keep output history persistent
+    // Add visual separator to distinguish between projects
+    writeToTerminal(`\n\x1b[90m${'─'.repeat(80)}\x1b[0m\n`);
     writeToTerminal(`\x1b[36m🔄 Switching to project: ${project.name}\x1b[0m\n`);
     
     // Force cleanup any existing WebContainer instance before switching
@@ -414,8 +577,17 @@ This is a browser security requirement for WebContainer.`;
     
     setSelectedFile(null);
     setSelectedFileContent('');
-    
+
     writeToTerminal('\x1b[36m💡 Project switched successfully. Use the Start button to run the project.\x1b[0m\n\n');
+
+    // Restore buffered output for this project if it exists
+    const buffer = projectOutputBuffers.current.get(project.id);
+    if (buffer && buffer.length > 0) {
+      writeToTerminal(`\x1b[90m📋 Restoring ${buffer.length} previous output entries...\x1b[0m\n`);
+      writeToTerminal(`\x1b[90m${'─'.repeat(80)}\x1b[0m\n`);
+      // Note: Don't replay the buffer here as it's already in terminal history
+      // The terminal persists, so old output is still visible
+    }
   };
 
   const handleDeleteProject = async (project: Project) => {
@@ -464,10 +636,13 @@ This is a browser security requirement for WebContainer.`;
       // Delete associated chat data
       ChatPersistence.deleteChatData(project.id);
       writeToTerminal(`\x1b[32m✅ Chat data cleared for project\x1b[0m\n`);
-      
+
+      // Clear output buffer for this project
+      projectOutputBuffers.current.delete(project.id);
+
       // Update projects list
       setProjects(prev => prev.filter(p => p.id !== project.id));
-      
+
       writeToTerminal(`\x1b[32m✅ Project "${project.name}" deleted successfully\x1b[0m\n`);
       
       // If no projects left, close the modal
@@ -501,12 +676,43 @@ This is a browser security requirement for WebContainer.`;
       // Force cleanup any existing WebContainer instance
       if (webContainer) {
         writeToTerminal('\x1b[33m🧹 Cleaning up existing WebContainer instance...\x1b[0m\n');
+
+        // Kill shell process first
+        if (shellProcessRef.current) {
+          try {
+            shellProcessRef.current.kill();
+            shellProcessRef.current = null;
+            writeToTerminal('\x1b[90m⚡ Shell terminated\x1b[0m\n');
+          } catch (e) {
+            console.warn('Error killing shell during cleanup:', e);
+          }
+        }
+
+        // Kill running processes
+        if (runningProcessesRef.current.length > 0) {
+          for (const process of runningProcessesRef.current) {
+            try {
+              if (process && process.kill) {
+                process.kill();
+              }
+            } catch (e) {
+              console.warn('Error killing process:', e);
+            }
+          }
+          runningProcessesRef.current = [];
+        }
+
         try {
           await webContainer.teardown();
+          writeToTerminal('\x1b[32m✅ Cleanup complete\x1b[0m\n');
         } catch (cleanupError) {
           writeToTerminal('\x1b[33m⚠️ Warning: Error during cleanup, forcing new instance...\x1b[0m\n');
         }
         setWebContainer(null);
+
+        // Wait for WebContainer to fully release resources
+        writeToTerminal('\x1b[90m⏳ Waiting for resources to be released...\x1b[0m\n');
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
       
       // Try to boot new WebContainer with retry logic
@@ -545,9 +751,11 @@ This is a browser security requirement for WebContainer.`;
       if (!container) {
         throw new Error('Failed to initialize WebContainer. Please hard refresh the page (Ctrl+Shift+R) and try again.');
       }
-      
+
       setWebContainer(container);
-      
+
+      // Don't attach shell yet - wait until files are mounted
+
       // Debug: Check files array before creating structure
       writeToTerminal(`\x1b[90m🔍 Debug: projectFiles array contains ${projectFiles.length} items\x1b[0m\n`);
       if (projectFiles.length === 0) {
@@ -638,7 +846,11 @@ This is a browser security requirement for WebContainer.`;
       };
       
       await verifyFiles();
-      
+
+      // NOW attach shell after files are mounted and verified
+      writeToTerminal('\n');
+      await attachShellToTerminal(container);
+
       // Install dependencies with retry logic
       writeToTerminal('\x1b[33m📦 Installing dependencies...\x1b[0m\n');
       
@@ -686,12 +898,19 @@ This is a browser security requirement for WebContainer.`;
           write(data) { writeToTerminal(data); }
         }));
         
-        container!.on('server-ready', (port, url) => {
+        container!.on('server-ready', async (port, url) => {
           writeToTerminal(`\x1b[32m🌐 Server ready at: ${url}\x1b[0m\n`);
           writeToTerminal(`\x1b[36m💡 Framework: ${project.framework} running on port ${port}\x1b[0m\n`);
           const updatedProject = { ...project, status: 'running' as const, previewUrl: url };
           setProjects(prev => prev.map(p => p.id === project.id ? updatedProject : p));
           setSelectedProject(updatedProject);
+
+          // Save running status to database
+          try {
+            await saveProjectToDB(updatedProject, files);
+          } catch (error) {
+            console.error('Failed to save running status:', error);
+          }
         });
       } else {
         // For non-Vite projects (vanilla HTML, etc.)
@@ -703,14 +922,31 @@ This is a browser security requirement for WebContainer.`;
           write(data) { writeToTerminal(data); }
         }));
         
-        // For static projects, construct URL (serve typically uses port 3000)
-        setTimeout(() => {
-          const url = `${window.location.protocol}//${window.location.hostname}:3000`;
-          writeToTerminal(`\x1b[32m🌐 Static server ready at: ${url}\x1b[0m\n`);
-          const updatedProject = { ...project, status: 'running' as const, previewUrl: url };
-          setProjects(prev => prev.map(p => p.id === project.id ? updatedProject : p));
-          setSelectedProject(updatedProject);
-        }, 3000);
+        // For static projects, wait for server-ready event or timeout
+        const serverReadyPromise = new Promise<{url: string; port: number}>((resolve) => {
+          container!.on('server-ready', (port, url) => {
+            resolve({ url, port });
+          });
+
+          // Fallback timeout for static servers that don't emit server-ready
+          setTimeout(() => {
+            const url = `${window.location.protocol}//${window.location.hostname}:3000`;
+            resolve({ url, port: 3000 });
+          }, 3000);
+        });
+
+        const { url } = await serverReadyPromise;
+        writeToTerminal(`\x1b[32m🌐 Static server ready at: ${url}\x1b[0m\n`);
+        const updatedProject = { ...project, status: 'running' as const, previewUrl: url };
+        setProjects(prev => prev.map(p => p.id === project.id ? updatedProject : p));
+        setSelectedProject(updatedProject);
+
+        // Save running status to database
+        try {
+          await saveProjectToDB(updatedProject, files);
+        } catch (error) {
+          console.error('Failed to save running status:', error);
+        }
       }
       
     } catch (error) {
@@ -743,7 +979,18 @@ This is a browser security requirement for WebContainer.`;
     if (webContainer) {
       try {
         writeToTerminal('\x1b[33m⏹️ Terminating processes...\x1b[0m\n');
-        
+
+        // Kill shell process first
+        if (shellProcessRef.current) {
+          try {
+            shellProcessRef.current.kill();
+            shellProcessRef.current = null;
+            writeToTerminal('\x1b[33m⚡ Shell process terminated\x1b[0m\n');
+          } catch (error) {
+            console.log('Error killing shell:', error);
+          }
+        }
+
         if (runningProcessesRef.current.length > 0) {
           for (const process of runningProcessesRef.current) {
             try {
@@ -757,7 +1004,7 @@ This is a browser security requirement for WebContainer.`;
           }
           runningProcessesRef.current = [];
         }
-        
+
       await webContainer.teardown();
       setWebContainer(null);
         
@@ -773,8 +1020,16 @@ This is a browser security requirement for WebContainer.`;
     }
     
     const updatedProject = { ...project, status: 'idle' as const, previewUrl: undefined };
-      setProjects(prev => prev.map(p => p.id === project.id ? updatedProject : p));
-        setSelectedProject(updatedProject);
+    setProjects(prev => prev.map(p => p.id === project.id ? updatedProject : p));
+    setSelectedProject(updatedProject);
+
+    // Save updated status to database
+    try {
+      await saveProjectToDB(updatedProject, files);
+      writeToTerminal('\x1b[90m💾 Project status saved\x1b[0m\n');
+    } catch (error) {
+      console.error('Failed to save project status:', error);
+    }
   };
 
   // Function to refresh file tree from WebContainer

@@ -1389,7 +1389,7 @@ Follow this plan systematically, but adapt as needed based on actual results.`;
 
       // Use user-defined max tool calls with safety bounds
       const maxToolCalls = Math.min(50, Math.max(1, sessionParameters.maxIterations));
-      const maxConversationTurns = Math.min(20, Math.max(5, Math.ceil(maxToolCalls / 2))); // Reasonable conversation limit
+      const maxConversationTurns = Math.min(25, Math.max(5, Math.ceil(maxToolCalls / 2))); // Reasonable conversation limit - increased to 25
       
       // Initialize planning execution
       currentPlanning = {
@@ -2001,15 +2001,15 @@ Please check your request and try again. Make sure the file exists and your inst
           
           return (
             <div key={message.id} className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`group max-w-[85%] relative overflow-hidden ${
+              <div className={`group max-w-[85%] relative ${
                 message.type === 'user'
                   ? `${hasCheckpoint
-                      ? 'bg-gradient-to-r from-amber-400 to-orange-500 shadow-lg'
-                      : 'glassmorphic-card'} text-gray-800 dark:text-gray-100 shadow-md`
+                      ? 'bg-gradient-to-r from-sakura-400 to-pink-500 shadow-lg'
+                      : 'bg-gradient-to-br from-sakura-50/80 to-pink-50/80 dark:from-sakura-900/30 dark:to-pink-900/30 border border-sakura-200/50 dark:border-sakura-700/50'} text-gray-800 dark:text-gray-100 shadow-md backdrop-blur-sm`
                   : message.type === 'tool'
                   ? 'glassmorphic-card text-gray-800 dark:text-gray-100'
-                  : 'glassmorphic text-gray-800 dark:text-gray-100'
-              } rounded-xl px-4 py-3`}>
+                  : 'bg-white/60 dark:bg-gray-800/60 backdrop-blur-sm text-gray-800 dark:text-gray-100'
+              } rounded-xl px-4 py-3 ${message.type === 'user' && hasCheckpoint ? 'mt-6' : ''}`}>
               <div className="text-sm leading-relaxed overflow-x-auto">
                 {message.type === 'user' ? (
                   <div className="whitespace-pre-wrap break-words">
@@ -2121,14 +2121,14 @@ Please check your request and try again. Make sure the file exists and your inst
               
               {/* Checkpoint indicator and actions for user messages */}
               {message.type === 'user' && hasCheckpoint && (
-                <div className="absolute -top-2 -right-2 flex items-center gap-1">
-                  <div className="bg-amber-500 text-white text-xs px-2 py-0.5 rounded-full font-medium shadow-lg border border-amber-300">
+                <div className="absolute -top-8 right-0 flex items-center gap-2 z-10">
+                  <div className="bg-sakura-500 text-white text-xs px-3 py-1 rounded-full font-medium shadow-lg border-2 border-white/50 backdrop-blur-sm">
                     💾 Checkpoint
                   </div>
                   {!isLatestCheckpoint && (
                     <button
                       onClick={() => handleRevert(checkpoint.id)}
-                      className="bg-amber-600 hover:bg-amber-700 text-white text-xs px-2 py-0.5 rounded-full font-medium transition-colors duration-200 shadow-lg border border-amber-400"
+                      className="bg-sakura-600 hover:bg-sakura-700 text-white text-xs px-3 py-1 rounded-full font-medium transition-all duration-200 shadow-lg border-2 border-white/50 hover:scale-105 active:scale-95"
                       title={`Revert to checkpoint from ${formatTime(checkpoint.timestamp)}`}
                     >
                       ⏪ Revert
@@ -2146,8 +2146,8 @@ Please check your request and try again. Make sure the file exists and your inst
                   {formatTime(message.timestamp)}
                   {message.type === 'user' && hasCheckpoint && (
                     <div className="flex items-center gap-1 text-xs">
-                      <span className="text-amber-200">💾</span>
-                      <span className="text-amber-200 font-medium">
+                      <span className="text-white/90">💾</span>
+                      <span className="text-white/90 font-medium">
                         {isLatestCheckpoint ? 'Latest' : 'Checkpoint'}
                       </span>
                     </div>
@@ -2159,7 +2159,7 @@ Please check your request and try again. Make sure the file exists and your inst
                   <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                     <button
                       onClick={() => handleRevert(checkpoint.id)}
-                      className="text-xs px-2 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 rounded-md transition-colors duration-200 border border-amber-400/30"
+                      className="text-xs px-2 py-1 bg-white/20 hover:bg-white/30 text-white rounded-md transition-colors duration-200 border border-white/30"
                     >
                       Revert to here
                     </button>

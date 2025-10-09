@@ -111,58 +111,58 @@ const RightPanelWorkspace: React.FC<RightPanelWorkspaceProps> = ({
       </div>
 
       {/* Content Area - Switches Based on Mode */}
-      <div className="flex-1 min-h-0 w-full overflow-hidden">
-        {mode === 'editor' && (
-          <div className="h-full w-full flex flex-col overflow-hidden">
-            {/* Top: File Explorer + Editor Side-by-Side */}
-            <div className="flex-1 min-h-0 flex overflow-hidden w-full">
-              {/* File Explorer - Fixed 250px width */}
-              <div 
-                className="h-full glassmorphic overflow-hidden flex flex-col shrink-0"
-                style={{ width: '250px' }}
-              >
-                <FileExplorer
-                  files={files}
-                  selectedFile={selectedFile}
-                  onFileSelect={onFileSelect}
-                  expandedFolders={expandedFolders}
-                  onToggleFolder={onToggleFolder}
-                  onCreateFile={onCreateFile}
-                  onCreateFolder={onCreateFolder}
-                  onDeleteFile={onDeleteFile}
-                  onDeleteFolder={onDeleteFolder}
-                  onRenameFile={onRenameFile}
-                  onDuplicateFile={onDuplicateFile}
-                />
-              </div>
-
-              {/* Monaco Editor - Take remaining space */}
-              <div className="flex-1 h-full overflow-hidden min-w-0">
-                <MonacoEditor
-                  content={selectedFileContent}
-                  fileName={selectedFile || ''}
-                  onChange={onFileContentChange}
-                  projectFiles={files}
-                  webContainer={webContainer}
-                  showPreviewToggle={false}
-                />
-              </div>
+      <div className="flex-1 min-h-0 w-full overflow-hidden relative">
+        {/* Editor Mode */}
+        <div className={`h-full w-full flex flex-col overflow-hidden ${mode === 'editor' ? '' : 'hidden'}`}>
+          {/* Top: File Explorer + Editor Side-by-Side */}
+          <div className="flex-1 min-h-0 flex overflow-hidden w-full">
+            {/* File Explorer - Fixed 250px width */}
+            <div
+              className="h-full glassmorphic overflow-hidden flex flex-col shrink-0"
+              style={{ width: '250px' }}
+            >
+              <FileExplorer
+                files={files}
+                selectedFile={selectedFile}
+                onFileSelect={onFileSelect}
+                expandedFolders={expandedFolders}
+                onToggleFolder={onToggleFolder}
+                onCreateFile={onCreateFile}
+                onCreateFolder={onCreateFolder}
+                onDeleteFile={onDeleteFile}
+                onDeleteFolder={onDeleteFolder}
+                onRenameFile={onRenameFile}
+                onDuplicateFile={onDuplicateFile}
+              />
             </div>
 
-            {/* Bottom: Terminal (Always visible in editor mode) */}
-            <div className="glassmorphic shrink-0" style={{ height: '200px' }}>
-              <TerminalComponent
-                terminalRef={terminalRef}
+            {/* Monaco Editor - Take remaining space */}
+            <div className="flex-1 h-full overflow-hidden min-w-0">
+              <MonacoEditor
+                content={selectedFileContent}
+                fileName={selectedFile || ''}
+                onChange={onFileContentChange}
+                projectFiles={files}
                 webContainer={webContainer}
-                isVisible={true}
-                onToggle={() => {}}
+                showPreviewToggle={false}
               />
             </div>
           </div>
-        )}
 
+          {/* Bottom: Terminal (ALWAYS RENDERED, visible in editor mode) */}
+          <div className="glassmorphic shrink-0" style={{ height: '200px' }}>
+            <TerminalComponent
+              terminalRef={terminalRef}
+              webContainer={webContainer}
+              isVisible={true}
+              onToggle={() => {}}
+            />
+          </div>
+        </div>
+
+        {/* Preview Mode */}
         {mode === 'preview' && project && (
-          <div className="h-full w-full overflow-hidden">
+          <div className="h-full w-full overflow-hidden absolute inset-0">
             <PreviewPane
               project={project}
               isStarting={isStarting}
@@ -171,8 +171,9 @@ const RightPanelWorkspace: React.FC<RightPanelWorkspaceProps> = ({
           </div>
         )}
 
+        {/* Settings Mode */}
         {mode === 'settings' && (
-          <div className="h-full w-full flex items-center justify-center glassmorphic">
+          <div className="h-full w-full flex items-center justify-center glassmorphic absolute inset-0">
             <div className="text-center max-w-md px-6">
               <div className="w-16 h-16 mx-auto mb-6 glassmorphic-card rounded-2xl flex items-center justify-center">
                 <SettingsIcon className="w-8 h-8 text-sakura-600 dark:text-sakura-400" />
@@ -189,7 +190,7 @@ const RightPanelWorkspace: React.FC<RightPanelWorkspaceProps> = ({
 
         {/* Show fallback if no project selected in preview mode */}
         {mode === 'preview' && !project && (
-          <div className="h-full w-full flex items-center justify-center glassmorphic">
+          <div className="h-full w-full flex items-center justify-center glassmorphic absolute inset-0">
             <div className="text-center max-w-md px-6">
               <div className="w-16 h-16 mx-auto mb-6 glassmorphic-card rounded-2xl flex items-center justify-center">
                 <Eye className="w-8 h-8 text-gray-500 dark:text-gray-400" />

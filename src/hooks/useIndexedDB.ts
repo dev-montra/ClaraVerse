@@ -60,13 +60,17 @@ export const useIndexedDB = () => {
       const db = await initDB();
       const transaction = db.transaction(['projects'], 'readonly');
       const store = transaction.objectStore('projects');
-      
+
       return new Promise((resolve, reject) => {
         const request = store.getAll();
         request.onsuccess = () => {
           const projects = request.result.map((project: any) => ({
             ...project,
-            createdAt: new Date(project.createdAt)
+            createdAt: new Date(project.createdAt),
+            // IMPORTANT: Reset all projects to 'idle' on load
+            // WebContainers don't persist across page refreshes/reloads
+            status: 'idle' as const,
+            previewUrl: undefined
           }));
           // Sort by creation date, newest first
           projects.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());

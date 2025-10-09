@@ -25,7 +25,7 @@ const TerminalComponent: React.FC<TerminalComponentProps> = ({
     if (terminalElementRef.current && !terminalRef.current) {
       // Wait for the DOM element to have dimensions before initializing
       const element = terminalElementRef.current;
-      
+
       // Check if element has dimensions
       const hasValidDimensions = () => {
         const rect = element.getBoundingClientRect();
@@ -55,12 +55,12 @@ const TerminalComponent: React.FC<TerminalComponentProps> = ({
 
           const fitAddon = new FitAddon();
           const webLinksAddon = new WebLinksAddon();
-          
+
           terminal.loadAddon(fitAddon);
           terminal.loadAddon(webLinksAddon);
-          
+
           terminal.open(element);
-          
+
           // Wait a frame before fitting to ensure layout is complete
           requestAnimationFrame(() => {
             try {
@@ -77,7 +77,7 @@ const TerminalComponent: React.FC<TerminalComponentProps> = ({
               }, 100);
             }
           });
-          
+
           terminalRef.current = terminal;
           fitAddonRef.current = fitAddon;
 
@@ -90,17 +90,54 @@ const TerminalComponent: React.FC<TerminalComponentProps> = ({
       };
 
       initializeTerminal();
+    } else if (terminalElementRef.current && terminalRef.current) {
+      // Terminal exists but component was remounted (switching modes)
+      // ALWAYS reattach - don't check if already attached
+      try {
+        const element = terminalElementRef.current;
+        const terminal = terminalRef.current;
+
+        console.log('Terminal instance exists, reattaching to DOM...');
+
+        // Recreate fitAddon since we're reattaching
+        const fitAddon = new FitAddon();
+        terminal.loadAddon(fitAddon);
+        fitAddonRef.current = fitAddon;
+
+        // Reattach terminal to DOM element
+        terminal.open(element);
+
+        // Fit after reattachment with multiple attempts
+        const attemptFit = (attempts = 0) => {
+          if (attempts > 3) return;
+
+          setTimeout(() => {
+            try {
+              const rect = element.getBoundingClientRect();
+              if (rect.width > 0 && rect.height > 0) {
+                fitAddon.fit();
+                console.log('✅ Terminal reattached and fitted successfully');
+              } else {
+                console.log('Element not ready, retrying fit...');
+                attemptFit(attempts + 1);
+              }
+            } catch (e) {
+              console.warn('Fit error, retrying...:', e);
+              attemptFit(attempts + 1);
+            }
+          }, 50 * (attempts + 1));
+        };
+
+        attemptFit();
+      } catch (error) {
+        console.error('Error reattaching terminal:', error);
+      }
     }
 
+    // DON'T dispose terminal on unmount to persist output across project switches
+    // Terminal will be cleaned up when component is fully removed from DOM
     return () => {
-      if (terminalRef.current) {
-        try {
-          terminalRef.current.dispose();
-        } catch (error) {
-          console.warn('Error disposing terminal:', error);
-        }
-        terminalRef.current = null;
-      }
+      // Only clear fitAddon reference, keep terminal alive
       if (fitAddonRef.current) {
         fitAddonRef.current = null;
       }
