@@ -1066,7 +1066,8 @@ This is a browser security requirement for WebContainer.`;
   }, [webContainer, files, selectedProject?.name, handleFileSelect, writeToTerminal, refreshFileTree]);
 
   return (
-    <div className="h-screen w-screen overflow-hidden bg-gradient-to-br from-white to-sakura-50 dark:from-gray-900 dark:to-gray-800 relative">
+    // h-screen makes black empty space below since we have topbar - changed to h-[100vh]
+    <div className="h-[calc(100vh-3rem)] w-screen overflow-hidden bg-gradient-to-br from-white to-sakura-50 dark:from-gray-900 dark:to-gray-800 relative">
       {/* Wallpaper Background - Absolute positioned, doesn't affect layout */}
       {wallpaperUrl && (
         <div 
@@ -1083,7 +1084,7 @@ This is a browser security requirement for WebContainer.`;
       )}
 
       {/* Main Content Layer - Takes full height/width but width - 2rem for sidebar */}
-      <div className="relative z-10 h-full w-[calc(100%-5rem)] flex flex-col">
+      <div className="relative z-10 h-[calc(100vh-3rem)] w-[calc(100%-5rem)] flex flex-col">
         {/* Scaffold Progress Overlay - Positioned absolutely over content */}
         {scaffoldProgress && !scaffoldProgress.isComplete && (
           <div className="absolute top-6 left-1/2 transform -translate-x-1/2 z-50 w-full max-w-xl px-4">

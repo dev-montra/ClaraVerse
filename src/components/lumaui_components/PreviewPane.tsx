@@ -233,7 +233,7 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ project, isStarting, onStartP
   };
 
   return (
-    <div className="h-full w-full flex flex-col overflow-hidden glassmorphic">
+    <div className="h-full w-full flex flex-col overflow-hidden glassmorphic py-2">
       {/* Enhanced Header */}
       <div className="glassmorphic-card shrink-0 h-14">
         <div className="flex items-center justify-between px-4 py-3">
