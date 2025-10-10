@@ -265,6 +265,79 @@ export class WebContainerManager {
   }
 
   /**
+   * Get or boot container - REUSE if exists!
+   * This is the preferred method for most operations
+   */
+  async getOrBootContainer(onLog?: (msg: string) => void): Promise<WebContainer> {
+    if (this.currentContainer) {
+      const log = (msg: string) => {
+        if (onLog) onLog(msg);
+        console.log('[WebContainerManager]', msg.replace(/\x1b\[[0-9;]*m/g, ''));
+      };
+
+      log('✅ Reusing existing WebContainer instance\n');
+      return this.currentContainer;
+    }
+
+    // Boot for the first time
+    return this.bootContainer('shared-container', onLog, false);
+  }
+
+  /**
+   * Switch projects by cleaning file system and remounting
+   * DOES NOT destroy the container - much faster!
+   */
+  async switchProject(
+    projectId: string,
+    files: any,
+    onLog?: (msg: string) => void
+  ): Promise<void> {
+    const log = (msg: string) => {
+      if (onLog) onLog(msg);
+      console.log('[WebContainerManager]', msg.replace(/\x1b\[[0-9;]*m/g, ''));
+    };
+
+    // Get or boot container
+    const container = await this.getOrBootContainer(onLog);
+
+    log(`\x1b[36m🔄 Switching to project: ${projectId}\x1b[0m\n`);
+
+    // Kill running processes first
+    await this.killAllProcesses(onLog);
+
+    // Clear file system (keep tmp directory)
+    log('\x1b[33m🧹 Clearing file system...\x1b[0m\n');
+    try {
+      const entries = await container.fs.readdir('/');
+      for (const entry of entries) {
+        // Keep system directories
+        if (entry !== 'tmp' && entry !== 'proc' && entry !== 'dev') {
+          try {
+            await container.fs.rm(`/${entry}`, { recursive: true, force: true });
+          } catch (error) {
+            console.warn(`Failed to remove /${entry}:`, error);
+          }
+        }
+      }
+    } catch (error) {
+      console.warn('Error clearing file system:', error);
+    }
+
+    // Mount new files
+    log('\x1b[33m📁 Mounting new project files...\x1b[0m\n');
+    await container.mount(files);
+
+    this.currentProjectId = projectId;
+
+    if (this.containerInfo) {
+      this.containerInfo.projectId = projectId;
+      this.containerInfo.status = 'ready';
+    }
+
+    log('\x1b[32m✅ Project switched successfully\x1b[0m\n');
+  }
+
+  /**
    * Start a project (install dependencies and run dev server)
    */
   async startProject(
@@ -489,9 +562,15 @@ export class WebContainerManager {
 
   /**
    * Force cleanup - use when things are stuck
+   * This will attempt to boot and immediately teardown to clear zombie instances
    */
   async forceCleanup(onLog?: (msg: string) => void): Promise<void> {
-    onLog?.('\x1b[31m🔨 Force cleanup initiated...\x1b[0m\n');
+    const log = (msg: string) => {
+      if (onLog) onLog(msg);
+      console.log('[WebContainerManager]', msg.replace(/\x1b\[[0-9;]*m/g, ''));
+    };
+
+    log('\x1b[31m🔨 Force cleanup initiated...\x1b[0m\n');
 
     // Reset all internal state
     this.shellProcess = null;
@@ -501,7 +580,9 @@ export class WebContainerManager {
     this.containerInfo = null;
     this.currentProjectId = null;
 
+    // If we have a container reference, tear it down
     if (this.currentContainer) {
+      log('\x1b[33m📦 Tearing down tracked container...\x1b[0m\n');
       try {
         await this.currentContainer.teardown();
       } catch (error) {
@@ -510,9 +591,29 @@ export class WebContainerManager {
       this.currentContainer = null;
     }
 
+    // NUCLEAR OPTION: Try to boot and immediately teardown
+    // This will fail if a zombie exists, but might succeed in cleaning it up
+    log('\x1b[33m💣 Attempting nuclear cleanup (boot+teardown)...\x1b[0m\n');
+    try {
+      const zombieContainer = await WebContainer.boot();
+      log('\x1b[33m⚠️ Found zombie instance, destroying it...\x1b[0m\n');
+      await zombieContainer.teardown();
+      log('\x1b[32m✅ Zombie destroyed\x1b[0m\n');
+    } catch (error) {
+      // If boot fails with "instance already exists", that means there's a zombie
+      // If it fails with another error, we couldn't clean it up
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      if (errorMsg.includes('single WebContainer instance')) {
+        log('\x1b[31m⚠️ Zombie instance exists and cannot be cleaned up!\x1b[0m\n');
+        log('\x1b[33m💡 You MUST restart the Electron app completely!\x1b[0m\n');
+      } else {
+        log(`\x1b[90mNo zombie found or already clean: ${errorMsg}\x1b[0m\n`);
+      }
+    }
+
     // Wait longer for forced cleanup
     await new Promise(resolve => setTimeout(resolve, 3000));
-    onLog?.('\x1b[32m✅ Force cleanup complete\x1b[0m\n');
+    log('\x1b[32m✅ Force cleanup complete\x1b[0m\n');
   }
 
   /**

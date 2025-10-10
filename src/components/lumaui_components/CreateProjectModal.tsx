@@ -1,17 +1,19 @@
 import React, { useState } from 'react';
-import { X, Plus } from 'lucide-react';
-import { PROJECT_TEMPLATES } from '../../services/projectScaffolderV2';
+import { X, Plus, Loader2, CheckCircle2 } from 'lucide-react';
+import { PROJECT_TEMPLATES, ScaffoldProgress } from '../../services/projectScaffolderV2';
 
 interface CreateProjectModalProps {
   isOpen: boolean;
   onClose: () => void;
   onCreateProject: (name: string, configId: string) => Promise<void>;
+  scaffoldProgress?: ScaffoldProgress | null;
 }
 
-const CreateProjectModal: React.FC<CreateProjectModalProps> = ({ 
-  isOpen, 
-  onClose, 
-  onCreateProject 
+const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
+  isOpen,
+  onClose,
+  onCreateProject,
+  scaffoldProgress
 }) => {
   const [projectName, setProjectName] = useState('');
   const [selectedConfig, setSelectedConfig] = useState('react-vite-tailwind');
@@ -52,7 +54,92 @@ const CreateProjectModal: React.FC<CreateProjectModalProps> = ({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 backdrop-blur-sm flex items-center justify-center z-50">
-      <div className="glassmorphic border border-white/20 dark:border-gray-700/50 rounded-xl p-6 w-full max-w-lg mx-4 shadow-2xl">
+      <div className="glassmorphic border border-white/20 dark:border-gray-700/50 rounded-xl p-6 w-full max-w-lg mx-4 shadow-2xl relative">
+        {/* Progress Overlay */}
+        {scaffoldProgress && !scaffoldProgress.isComplete && (
+          <div className="absolute inset-0 bg-white/95 dark:bg-gray-900/95 backdrop-blur-sm rounded-xl z-10 flex flex-col items-center justify-center p-8">
+            <div className="w-full max-w-md">
+              {/* Progress Header */}
+              <div className="text-center mb-6">
+                <div className="inline-flex items-center justify-center w-16 h-16 bg-gradient-to-br from-sakura-500 to-pink-500 rounded-full mb-4 shadow-lg">
+                  <Loader2 className="w-8 h-8 text-white animate-spin" />
+                </div>
+                <h3 className="text-xl font-bold text-gray-900 dark:text-gray-100 mb-2">
+                  Creating Your Project
+                </h3>
+                <p className="text-sm text-gray-600 dark:text-gray-400">
+                  Please wait while we set everything up...
+                </p>
+              </div>
+
+              {/* Current Step */}
+              <div className="bg-gradient-to-r from-sakura-50 to-pink-50 dark:from-sakura-900/20 dark:to-pink-900/20 rounded-xl p-4 mb-4 border border-sakura-200 dark:border-sakura-800">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-semibold text-sakura-800 dark:text-sakura-200">
+                    {scaffoldProgress.stepName}
+                  </span>
+                  <span className="text-xs px-3 py-1 bg-white dark:bg-gray-800 text-sakura-700 dark:text-sakura-300 rounded-full font-medium shadow-sm">
+                    {scaffoldProgress.currentStep}/{scaffoldProgress.totalSteps}
+                  </span>
+                </div>
+                <p className="text-xs text-sakura-600 dark:text-sakura-400 mb-3">
+                  {scaffoldProgress.stepDescription}
+                </p>
+
+                {/* Progress Bar */}
+                <div className="w-full bg-sakura-100 dark:bg-sakura-900/20 rounded-full h-2 overflow-hidden">
+                  <div
+                    className="bg-gradient-to-r from-sakura-500 to-pink-500 h-full rounded-full transition-all duration-500 ease-out"
+                    style={{ width: `${(scaffoldProgress.currentStep / scaffoldProgress.totalSteps) * 100}%` }}
+                  />
+                </div>
+              </div>
+
+              {/* Step List */}
+              <div className="space-y-2 max-h-48 overflow-y-auto">
+                {Array.from({ length: scaffoldProgress.totalSteps }, (_, i) => i + 1).map((stepNum) => {
+                  const isComplete = stepNum < scaffoldProgress.currentStep;
+                  const isCurrent = stepNum === scaffoldProgress.currentStep;
+                  const isPending = stepNum > scaffoldProgress.currentStep;
+
+                  return (
+                    <div
+                      key={stepNum}
+                      className={`flex items-center gap-3 p-2 rounded-lg transition-all ${
+                        isCurrent
+                          ? 'bg-sakura-50 dark:bg-sakura-900/20 border border-sakura-200 dark:border-sakura-800'
+                          : 'opacity-50'
+                      }`}
+                    >
+                      {isComplete ? (
+                        <CheckCircle2 className="w-5 h-5 text-green-500 flex-shrink-0" />
+                      ) : isCurrent ? (
+                        <Loader2 className="w-5 h-5 text-sakura-500 animate-spin flex-shrink-0" />
+                      ) : (
+                        <div className="w-5 h-5 rounded-full border-2 border-gray-300 dark:border-gray-600 flex-shrink-0" />
+                      )}
+                      <span className={`text-sm ${
+                        isCurrent
+                          ? 'font-medium text-gray-900 dark:text-gray-100'
+                          : 'text-gray-600 dark:text-gray-400'
+                      }`}>
+                        Step {stepNum}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Cancel Warning */}
+              <div className="mt-6 text-center">
+                <p className="text-xs text-gray-500 dark:text-gray-400">
+                  ⚠️ Please don't close this window while creating
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="flex items-center justify-between mb-6">
           <div>
             <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-1">

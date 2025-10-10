@@ -3,6 +3,7 @@ import { Plus, Play, Square, Loader2, ExternalLink, FolderOpen } from 'lucide-re
 import { WebContainer } from '@webcontainer/api';
 import { Terminal } from '@xterm/xterm';
 import { createLumaTools } from '../services/lumaTools';
+import { webContainerManager } from '../services/webContainerManager';
 
 // Components
 import CreateProjectModal from './lumaui_components/CreateProjectModal';
@@ -57,6 +58,56 @@ const LumaUICore: React.FC = () => {
 
   // Database hook
   const { saveProjectToDB, loadProjectsFromDB, loadProjectFilesFromDB, deleteProjectFromDB } = useIndexedDB();
+
+  // Initialize WebContainerManager and force cleanup on mount
+  useEffect(() => {
+    const init = async () => {
+      try {
+        console.log('[LumaUI] Initializing WebContainerManager...');
+
+        // Initialize manager
+        await webContainerManager.initialize();
+
+        // FORCE cleanup any stale containers - CRITICAL FOR ELECTRON!
+        console.log('[LumaUI] Force cleaning up any zombie WebContainer instances...');
+        await webContainerManager.forceCleanup();
+
+        console.log('[LumaUI] ✅ WebContainerManager ready');
+
+        // Write to terminal if available
+        setTimeout(() => {
+          if (terminalRef.current) {
+            writeToTerminal('\x1b[32m✅ WebContainerManager initialized and ready\x1b[0m\n\n');
+          }
+        }, 100);
+      } catch (error) {
+        console.error('Failed to initialize WebContainerManager:', error);
+      }
+    };
+    init();
+
+    // Cleanup on component unmount
+    return () => {
+      console.log('[LumaUI] Component unmounting, cleaning up WebContainer...');
+      webContainerManager.forceCleanup().catch(console.error);
+    };
+  }, []);
+
+  // CRITICAL FOR ELECTRON: Cleanup before window reload
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      console.log('[LumaUI] Window reloading/closing, cleaning up WebContainer...');
+
+      // Try to cleanup (Electron-specific behavior)
+      webContainerManager.forceCleanup().catch(console.error);
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, []);
 
   // Load wallpaper from database
   useEffect(() => {
@@ -150,6 +201,8 @@ const LumaUICore: React.FC = () => {
 
     return () => {
       cleanup();
+      // Cleanup WebContainerManager
+      webContainerManager.cleanup(writeToTerminal);
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
   }, []);
@@ -322,13 +375,13 @@ const LumaUICore: React.FC = () => {
     // Check WebContainer compatibility
     if (!window.crossOriginIsolated) {
       const errorMsg = `WebContainer requires cross-origin isolation to run properly.
-      
+
 For development, you can serve your app with:
 - npm run dev (if using Vite with proper headers)
 - Or serve with headers: Cross-Origin-Embedder-Policy: require-corp and Cross-Origin-Opener-Policy: same-origin
 
 This is a browser security requirement for WebContainer.`;
-      
+
       writeToTerminal('\x1b[31m❌ Cross-Origin Isolation Required\x1b[0m\n');
       writeToTerminal('\x1b[33m' + errorMsg + '\x1b[0m\n');
       alert(errorMsg);
@@ -350,9 +403,8 @@ This is a browser security requirement for WebContainer.`;
       status: 'idle',
       createdAt: new Date()
     };
-    
+
     let container: WebContainer | null = null;
-    let previousContainer: WebContainer | null = webContainer;
 
     try {
       // Don't clear terminal - add visual separator instead
@@ -360,83 +412,21 @@ This is a browser security requirement for WebContainer.`;
       writeToTerminal('\x1b[35m✨ Creating New Project\x1b[0m\n');
       writeToTerminal(`\x1b[90m${'═'.repeat(80)}\x1b[0m\n\n`);
 
-      // Stop existing project if running (WebContainer can only have one instance)
-      if (previousContainer) {
-        writeToTerminal('\x1b[36m💡 Note: WebContainer allows only one instance at a time\x1b[0m\n');
-        writeToTerminal('\x1b[33m🛑 Cleaning up existing WebContainer to create new project...\x1b[0m\n');
-        
-        if (selectedProject) {
-          // Update the current project status
-          const updatedProject = { ...selectedProject, status: 'idle' as const, previewUrl: undefined };
-          setProjects(prev => prev.map(p => p.id === selectedProject.id ? updatedProject : p));
-          setSelectedProject(updatedProject);
-        }
-        
-        // Clean up running processes
-        if (runningProcessesRef.current.length > 0) {
-          writeToTerminal('\x1b[33m⏹️ Terminating existing processes...\x1b[0m\n');
-          for (const process of runningProcessesRef.current) {
-            try {
-              if (process && process.kill) {
-                process.kill();
-              }
-            } catch (error) {
-              console.log('Error killing process during project creation:', error);
-            }
-          }
-          runningProcessesRef.current = [];
-        }
-        
-        // Teardown existing container with proper error handling
-        try {
-          writeToTerminal('\x1b[33m🧹 Tearing down existing WebContainer...\x1b[0m\n');
-          await previousContainer.teardown();
-          writeToTerminal('\x1b[32m✅ Previous WebContainer cleaned up\x1b[0m\n');
-        } catch (cleanupError) {
-          writeToTerminal('\x1b[33m⚠️ Warning: Error during teardown, forcing cleanup...\x1b[0m\n');
-          console.error('WebContainer teardown error:', cleanupError);
-        }
-        
-        setWebContainer(null);
-        
-        // Wait longer for cleanup to complete and browser to release resources
-        writeToTerminal('\x1b[90m⏳ Waiting for cleanup to complete...\x1b[0m\n');
-        await new Promise(resolve => setTimeout(resolve, 2000));
+      // Update current project status if any
+      if (selectedProject) {
+        const updatedProject = { ...selectedProject, status: 'idle' as const, previewUrl: undefined };
+        setProjects(prev => prev.map(p => p.id === selectedProject.id ? updatedProject : p));
+        setSelectedProject(updatedProject);
       }
-      
-      // Initialize WebContainer for scaffolding with retry logic
-      writeToTerminal('\x1b[36m🚀 Initializing project scaffolder...\x1b[0m\n');
+
+      // Initialize WebContainer for scaffolding
+      writeToTerminal('\x1b[36m🚀 Preparing WebContainer...\x1b[0m\n');
       writeToTerminal('\x1b[33m📋 Project: ' + name + '\x1b[0m\n');
       writeToTerminal('\x1b[33m📋 Template: ' + template.name + '\x1b[0m\n');
       writeToTerminal('\x1b[90m📋 Cross-Origin Isolation: ✅ Available\x1b[0m\n\n');
-      
-      // Try to boot with retry logic
-      let bootAttempts = 0;
-      const maxBootAttempts = 3;
-      
-      while (bootAttempts < maxBootAttempts && !container) {
-        try {
-          writeToTerminal(`\x1b[33m🔧 Booting WebContainer (attempt ${bootAttempts + 1}/${maxBootAttempts})...\x1b[0m\n`);
-          container = await WebContainer.boot();
-          writeToTerminal('\x1b[32m✅ WebContainer booted successfully\x1b[0m\n');
-          break;
-        } catch (bootError) {
-          bootAttempts++;
-          const errorMessage = bootError instanceof Error ? bootError.message : String(bootError);
-          writeToTerminal(`\x1b[31m❌ Boot attempt ${bootAttempts} failed: ${errorMessage}\x1b[0m\n`);
-          
-          if (bootAttempts < maxBootAttempts) {
-            writeToTerminal('\x1b[33m⏳ Waiting 3 seconds before retry...\x1b[0m\n');
-            await new Promise(resolve => setTimeout(resolve, 3000));
-          } else {
-            throw new Error(`Failed to boot WebContainer after ${maxBootAttempts} attempts. Please refresh the page and try again.`);
-          }
-        }
-      }
-      
-      if (!container) {
-        throw new Error('Failed to initialize WebContainer. Please refresh the page and try again.');
-      }
+
+      // REUSE WebContainer if it exists! Much faster!
+      container = await webContainerManager.getOrBootContainer(writeToTerminal);
 
       // Don't attach shell yet - wait until project is scaffolded
 
@@ -483,24 +473,19 @@ This is a browser security requirement for WebContainer.`;
       
       writeToTerminal('\x1b[32m🎉 Project created and ready!\x1b[0m\n');
       writeToTerminal('\x1b[36m💡 You can now start the project using the Start button\x1b[0m\n\n');
-      
+
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       console.error('Failed to create project:', error);
       writeToTerminal(`\x1b[31m❌ Project creation failed: ${errorMessage}\x1b[0m\n`);
       writeToTerminal('\x1b[31m🔍 Check the error details above for more information\x1b[0m\n\n');
+
+      // Show error in modal too
+      alert(`Project creation failed: ${errorMessage}\n\nCheck the terminal for details.`);
       throw error;
     } finally {
-      // Clean up scaffolding container
-      if (container) {
-        try {
-          await container.teardown();
-          writeToTerminal('\x1b[33m🧹 Scaffolding container cleaned up\x1b[0m\n');
-        } catch (cleanupError) {
-          console.warn('Error cleaning up scaffolding container:', cleanupError);
-          writeToTerminal('\x1b[33m⚠️ Warning: Could not clean up scaffolding container\x1b[0m\n');
-        }
-      }
+      // NOTE: WebContainerManager handles cleanup automatically
+      // Container stays active for the project - will be cleaned up when switching projects
       setScaffoldProgress(null);
     }
   };
@@ -1338,6 +1323,7 @@ This is a browser security requirement for WebContainer.`;
           isOpen={isCreateModalOpen}
           onClose={() => setIsCreateModalOpen(false)}
           onCreateProject={handleCreateProject}
+          scaffoldProgress={scaffoldProgress}
         />
       </div>
     );
@@ -1538,6 +1524,7 @@ This is a browser security requirement for WebContainer.`;
           }
         }}
         onCreateProject={handleCreateProject}
+        scaffoldProgress={scaffoldProgress}
       />
     </div>
   );
