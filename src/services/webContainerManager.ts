@@ -39,7 +39,13 @@ export interface ContainerInfo {
 
 export class WebContainerManager {
   private static instance: WebContainerManager;
-  private containers: Map<string, ContainerInfo> = new Map();
+  private currentContainer: WebContainer | null = null;
+  private currentProjectId: string | null = null;
+  private isBooting: boolean = false;
+  private bootPromise: Promise<WebContainer> | null = null;
+  private runningProcesses: any[] = [];
+  private shellProcess: any = null;
+  private containerInfo: ContainerInfo | null = null;
   private isInitialized = false;
 
   static getInstance(): WebContainerManager {
@@ -54,61 +60,208 @@ export class WebContainerManager {
    */
   async initialize(): Promise<void> {
     if (this.isInitialized) return;
-    
+
     // Check cross-origin isolation
     if (!window.crossOriginIsolated) {
       throw new Error('WebContainers require cross-origin isolation. Please ensure proper headers are set.');
     }
-    
+
     this.isInitialized = true;
-    console.log('✅ WebContainerManager initialized');
+    console.log('✅ WebContainerManager initialized - ONE INSTANCE MODE');
   }
 
   /**
-   * Get or create a WebContainer for a project
+   * Check if a container is currently active
    */
-  async getContainer(projectId: string, files?: FileSystemTree): Promise<WebContainer> {
-    let containerInfo = this.containers.get(projectId);
-    
-    if (containerInfo) {
-      // Return existing container if it's ready
-      if (containerInfo.status === 'ready' || containerInfo.status === 'running') {
-        return containerInfo.container;
-      }
-      
-      // If container is in error state, remove it and create new one
-      if (containerInfo.status === 'error') {
-        await this.destroyContainer(projectId);
-        containerInfo = undefined;
+  hasActiveContainer(): boolean {
+    return this.currentContainer !== null;
+  }
+
+  /**
+   * Get the current project ID
+   */
+  getCurrentProjectId(): string | null {
+    return this.currentProjectId;
+  }
+
+  /**
+   * Register a running process for tracking
+   */
+  registerProcess(process: any): void {
+    this.runningProcesses.push(process);
+  }
+
+  /**
+   * Register the shell process
+   */
+  registerShell(shell: any): void {
+    this.shellProcess = shell;
+  }
+
+  /**
+   * Kill all running processes
+   */
+  private async killAllProcesses(onLog?: (msg: string) => void): Promise<void> {
+    // Kill shell process first
+    if (this.shellProcess) {
+      try {
+        this.shellProcess.kill();
+        this.shellProcess = null;
+        onLog?.('\x1b[33m⚡ Shell process terminated\x1b[0m\n');
+      } catch (error) {
+        console.warn('[WebContainerManager] Error killing shell:', error);
       }
     }
-    
-    if (!containerInfo) {
-      // Create new container
-      console.log(`🚀 Creating WebContainer for project ${projectId}`);
-      
-      const container = await WebContainer.boot();
-      
-      containerInfo = {
+
+    // Kill all registered processes
+    if (this.runningProcesses.length > 0) {
+      onLog?.(`\x1b[33m⏹️ Terminating ${this.runningProcesses.length} processes...\x1b[0m\n`);
+
+      for (const process of this.runningProcesses) {
+        try {
+          if (process && process.kill) {
+            process.kill();
+          }
+        } catch (error) {
+          console.warn('[WebContainerManager] Error killing process:', error);
+        }
+      }
+
+      this.runningProcesses = [];
+      onLog?.('\x1b[32m✅ All processes terminated\x1b[0m\n');
+    }
+  }
+
+  /**
+   * Cleanup the current container
+   */
+  private async cleanupContainer(onLog?: (msg: string) => void): Promise<void> {
+    if (!this.currentContainer) return;
+
+    onLog?.('\x1b[33m🧹 Cleaning up WebContainer...\x1b[0m\n');
+
+    // Kill all processes first
+    await this.killAllProcesses(onLog);
+
+    // Teardown container
+    try {
+      await this.currentContainer.teardown();
+      onLog?.('\x1b[32m✅ WebContainer cleaned up successfully\x1b[0m\n');
+    } catch (error) {
+      onLog?.('\x1b[33m⚠️ Warning: Error during teardown, forcing cleanup...\x1b[0m\n');
+      console.error('[WebContainerManager] Teardown error:', error);
+    }
+
+    this.currentContainer = null;
+    this.currentProjectId = null;
+    this.containerInfo = null;
+
+    // Wait for resources to be fully released
+    onLog?.('\x1b[90m⏳ Waiting for resources to be released...\x1b[0m\n');
+    await new Promise(resolve => setTimeout(resolve, 1500));
+  }
+
+  /**
+   * Boot a new WebContainer with automatic cleanup
+   * Only ONE container can exist at a time globally
+   */
+  async bootContainer(
+    projectId: string,
+    onLog?: (msg: string) => void,
+    forceNew: boolean = false
+  ): Promise<WebContainer> {
+    const log = (msg: string) => {
+      if (onLog) onLog(msg);
+      console.log('[WebContainerManager]', msg.replace(/\x1b\[[0-9;]*m/g, ''));
+    };
+
+    // If already booting, wait for it
+    if (this.isBooting && this.bootPromise && !forceNew) {
+      log('⏳ Boot already in progress, waiting...\n');
+      return this.bootPromise;
+    }
+
+    // If container exists for same project and not forcing new, return it
+    if (this.currentContainer && this.currentProjectId === projectId && !forceNew) {
+      log(`✅ Reusing existing WebContainer for ${projectId}\n`);
+      return this.currentContainer;
+    }
+
+    // AUTOMATIC CLEANUP - If container exists for different project or forcing new
+    if (this.currentContainer) {
+      log(`🔄 WebContainer exists for "${this.currentProjectId}", switching to "${projectId}"\n`);
+      log('💡 Note: WebContainer allows only ONE instance at a time\n');
+      await this.cleanupContainer(onLog);
+    }
+
+    // Start boot process
+    this.isBooting = true;
+    this.currentProjectId = projectId;
+    this.bootPromise = this._bootWithRetry(log);
+
+    try {
+      this.currentContainer = await this.bootPromise;
+      this.containerInfo = {
         projectId,
-        container,
-        status: 'booting',
+        container: this.currentContainer,
+        status: 'ready',
         createdAt: new Date()
       };
-      
-      this.containers.set(projectId, containerInfo);
-      
-      // Mount files if provided
-      if (files) {
-        await container.mount(files as any);
-        console.log(`📁 Files mounted for project ${projectId}`);
-      }
-      
-      containerInfo.status = 'ready';
-      console.log(`✅ WebContainer ready for project ${projectId}`);
+
+      log('\x1b[32m✅ WebContainer booted successfully\x1b[0m\n');
+      return this.currentContainer;
+    } catch (error) {
+      this.currentContainer = null;
+      this.currentProjectId = null;
+      this.containerInfo = null;
+      throw error;
+    } finally {
+      this.isBooting = false;
+      this.bootPromise = null;
     }
-    
-    return containerInfo.container;
+  }
+
+  /**
+   * Boot with retry logic
+   */
+  private async _bootWithRetry(
+    log: (msg: string) => void,
+    maxAttempts: number = 3
+  ): Promise<WebContainer> {
+    let lastError: Error | null = null;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        log(`\x1b[33m🔧 Booting WebContainer (attempt ${attempt}/${maxAttempts})...\x1b[0m\n`);
+
+        const container = await WebContainer.boot();
+
+        // Wait a bit to ensure boot is stable
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        return container;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        log(`\x1b[31m❌ Boot attempt ${attempt} failed: ${lastError.message}\x1b[0m\n`);
+
+        if (attempt < maxAttempts) {
+          const delay = 2000 * attempt; // Exponential backoff
+          log(`\x1b[33m⏳ Waiting ${delay}ms before retry...\x1b[0m\n`);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
+    }
+
+    throw new Error(
+      `Failed to boot WebContainer after ${maxAttempts} attempts. Last error: ${lastError?.message || 'Unknown'}. Please refresh the page and try again.`
+    );
+  }
+
+  /**
+   * Get the current active container
+   */
+  getContainer(): WebContainer | null {
+    return this.currentContainer;
   }
 
   /**
@@ -272,49 +425,47 @@ export class WebContainerManager {
   }
 
   /**
-   * Stop a project
+   * Stop the current project
    */
-  async stopProject(projectId: string): Promise<void> {
-    const containerInfo = this.containers.get(projectId);
-    if (!containerInfo) return;
-    
+  async stopProject(onLog?: (msg: string) => void): Promise<void> {
+    if (!this.containerInfo) return;
+
     try {
-      // Kill the process if it exists
-      if (containerInfo.process) {
-        containerInfo.process.kill();
-        containerInfo.process = undefined;
+      await this.killAllProcesses(onLog);
+
+      if (this.containerInfo) {
+        this.containerInfo.status = 'ready';
+        this.containerInfo.port = undefined;
+        this.containerInfo.previewUrl = undefined;
+
+        // Update persistent storage
+        if (this.currentProjectId) {
+          await LumauiProjectStorage.updateProjectStatus(this.currentProjectId, 'idle');
+        }
       }
-      
-      containerInfo.status = 'ready';
-      containerInfo.port = undefined;
-      containerInfo.previewUrl = undefined;
-      
-      // Update persistent storage
-      await LumauiProjectStorage.updateProjectStatus(projectId, 'idle');
-      
-      console.log(`⏹️ Stopped project ${projectId}`);
+
+      onLog?.(`\x1b[32m⏹️ Stopped project ${this.currentProjectId}\x1b[0m\n`);
+      console.log(`⏹️ Stopped project ${this.currentProjectId}`);
     } catch (error) {
       console.error('Error stopping project:', error);
     }
   }
 
   /**
-   * Destroy a container completely
+   * Destroy the current container completely
    */
-  async destroyContainer(projectId: string): Promise<void> {
-    const containerInfo = this.containers.get(projectId);
-    if (!containerInfo) return;
-    
+  async destroyContainer(onLog?: (msg: string) => void): Promise<void> {
+    const projectId = this.currentProjectId;
+
     try {
-      // Stop any running processes
-      await this.stopProject(projectId);
-      
-      // Remove from tracking
-      this.containers.delete(projectId);
-      
+      await this.cleanupContainer(onLog);
+
       // Update persistent storage
-      await LumauiProjectStorage.updateProjectStatus(projectId, 'idle');
-      
+      if (projectId) {
+        await LumauiProjectStorage.updateProjectStatus(projectId, 'idle');
+      }
+
+      onLog?.(`\x1b[32m🗑️ Destroyed container for project ${projectId}\x1b[0m\n`);
       console.log(`🗑️ Destroyed container for project ${projectId}`);
     } catch (error) {
       console.error('Error destroying container:', error);
@@ -324,27 +475,65 @@ export class WebContainerManager {
   /**
    * Get container status
    */
-  getContainerStatus(projectId: string): ContainerInfo | undefined {
-    return this.containers.get(projectId);
+  getContainerStatus(): ContainerInfo | null {
+    return this.containerInfo;
   }
 
   /**
-   * Cleanup all containers (for app shutdown)
+   * Cleanup for app shutdown
    */
-  async cleanup(): Promise<void> {
-    const projectIds = Array.from(this.containers.keys());
-    
-    await Promise.all(
-      projectIds.map(id => this.destroyContainer(id))
-    );
-    
+  async cleanup(onLog?: (msg: string) => void): Promise<void> {
+    await this.destroyContainer(onLog);
     console.log('🧹 WebContainerManager cleanup complete');
   }
 
   /**
-   * Get all active containers
+   * Force cleanup - use when things are stuck
    */
-  getActiveContainers(): ContainerInfo[] {
-    return Array.from(this.containers.values());
+  async forceCleanup(onLog?: (msg: string) => void): Promise<void> {
+    onLog?.('\x1b[31m🔨 Force cleanup initiated...\x1b[0m\n');
+
+    // Reset all internal state
+    this.shellProcess = null;
+    this.runningProcesses = [];
+    this.isBooting = false;
+    this.bootPromise = null;
+    this.containerInfo = null;
+    this.currentProjectId = null;
+
+    if (this.currentContainer) {
+      try {
+        await this.currentContainer.teardown();
+      } catch (error) {
+        console.error('[WebContainerManager] Force cleanup error:', error);
+      }
+      this.currentContainer = null;
+    }
+
+    // Wait longer for forced cleanup
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    onLog?.('\x1b[32m✅ Force cleanup complete\x1b[0m\n');
   }
-} 
+
+  /**
+   * Get stats about current state
+   */
+  getStats(): {
+    hasContainer: boolean;
+    isBooting: boolean;
+    processCount: number;
+    hasShell: boolean;
+    currentProjectId: string | null;
+  } {
+    return {
+      hasContainer: this.currentContainer !== null,
+      isBooting: this.isBooting,
+      processCount: this.runningProcesses.length,
+      hasShell: this.shellProcess !== null,
+      currentProjectId: this.currentProjectId,
+    };
+  }
+}
+
+// Export singleton instance
+export const webContainerManager = WebContainerManager.getInstance(); 

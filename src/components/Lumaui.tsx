@@ -7,6 +7,7 @@ import { createLumaTools } from '../services/lumaTools';
 // Components
 import CreateProjectModal from './lumaui_components/CreateProjectModal';
 import ProjectSelectionModal from './lumaui_components/ProjectSelectionModal';
+import ProjectManager from './lumaui_components/ProjectManager';
 import ChatWindow from './lumaui_components/ChatWindow';
 import RightPanelWorkspace from './lumaui_components/RightPanelWorkspace';
 
@@ -33,6 +34,7 @@ const LumaUICore: React.FC = () => {
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isProjectSelectionModalOpen, setIsProjectSelectionModalOpen] = useState(false);
+  const [showManagerPage, setShowManagerPage] = useState(true); // Show manager by default
   const [webContainer, setWebContainer] = useState<WebContainer | null>(null);
   const [isStarting, setIsStarting] = useState(false);
   const [files, setFiles] = useState<FileNode[]>([]);
@@ -87,11 +89,10 @@ const LumaUICore: React.FC = () => {
     const loadProjects = async () => {
       const savedProjects = await loadProjectsFromDB();
       setProjects(savedProjects);
-      
-      // Only show the project selection modal if no project is currently selected
-      // This prevents the modal from opening when a project is already loaded
+
+      // Show manager page if no project selected
       if (!selectedProject) {
-        setIsProjectSelectionModalOpen(true);
+        setShowManagerPage(true);
       }
     };
     loadProjects();
@@ -505,7 +506,8 @@ This is a browser security requirement for WebContainer.`;
   };
 
   const handleProjectSelect = async (project: Project) => {
-    // Immediately close modal to prevent any UI flicker
+    // Hide manager page and close modal
+    setShowManagerPage(false);
     setIsProjectSelectionModalOpen(false);
 
     // Don't clear terminal - keep output history persistent
@@ -644,10 +646,10 @@ This is a browser security requirement for WebContainer.`;
       setProjects(prev => prev.filter(p => p.id !== project.id));
 
       writeToTerminal(`\x1b[32m✅ Project "${project.name}" deleted successfully\x1b[0m\n`);
-      
-      // If no projects left, close the modal
-      if (projects.length === 1) {
-        setIsProjectSelectionModalOpen(false);
+
+      // If the deleted project was selected and it was the current one, show manager
+      if (selectedProject?.id === project.id) {
+        setShowManagerPage(true);
       }
       
     } catch (error) {
@@ -1320,12 +1322,33 @@ This is a browser security requirement for WebContainer.`;
     return tools;
   }, [webContainer, files, selectedProject?.name, handleFileSelect, writeToTerminal, refreshFileTree]);
 
+  // Show manager page if no project selected or user clicked "Projects" button
+  if (showManagerPage || !selectedProject) {
+    return (
+      <div className="h-[calc(100vh-3rem)]  overflow-hidden">
+        <ProjectManager
+          projects={projects}
+          onSelectProject={handleProjectSelect}
+          onDeleteProject={handleDeleteProject}
+          onCreateNew={() => setIsCreateModalOpen(true)}
+        />
+
+        {/* Create Project Modal */}
+        <CreateProjectModal
+          isOpen={isCreateModalOpen}
+          onClose={() => setIsCreateModalOpen(false)}
+          onCreateProject={handleCreateProject}
+        />
+      </div>
+    );
+  }
+
   return (
     // h-screen makes black empty space below since we have topbar - changed to h-[100vh]
     <div className="h-[calc(100vh-3rem)] w-screen overflow-hidden bg-gradient-to-br from-white to-sakura-50 dark:from-gray-900 dark:to-gray-800 relative">
       {/* Wallpaper Background - Absolute positioned, doesn't affect layout */}
       {wallpaperUrl && (
-        <div 
+        <div
           className="absolute inset-0 z-0"
           style={{
             backgroundImage: `url(${wallpaperUrl})`,
@@ -1384,11 +1407,11 @@ This is a browser security requirement for WebContainer.`;
                 
                 <div className="flex items-center gap-1">
                   <button
-                    onClick={() => setIsProjectSelectionModalOpen(true)}
+                    onClick={() => setShowManagerPage(true)}
                     className="flex items-center gap-1 px-2 py-1 text-xs glassmorphic-card text-gray-700 dark:text-gray-300 hover:text-sakura-600 dark:hover:text-sakura-400 rounded-lg transition-colors"
                   >
                     <FolderOpen className="w-3 h-3" />
-                    Switch
+                    Projects
                   </button>
                   
                   <button
