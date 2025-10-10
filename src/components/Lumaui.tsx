@@ -464,14 +464,18 @@ This is a browser security requirement for WebContainer.`;
       await saveProjectToDB(newProject, fileNodes);
       
       // Update state
-    setProjects(prev => [newProject, ...prev]);
+      setProjects(prev => [newProject, ...prev]);
       setSelectedProject(newProject);
       setFiles(fileNodes);
       setSelectedFile(null);
       setSelectedFileContent('');
       setIsCreateModalOpen(false);
       setIsProjectSelectionModalOpen(false);
-      
+
+      // Hide manager page and open project in edit mode
+      setShowManagerPage(false);
+      setProjectViewMode('edit');
+
       writeToTerminal('\x1b[32m🎉 Project created and ready!\x1b[0m\n');
       writeToTerminal('\x1b[36m💡 You can now start the project using the Start button\x1b[0m\n\n');
 
@@ -1334,8 +1338,8 @@ This is a browser security requirement for WebContainer.`;
   }
 
   return (
-    // h-screen makes black empty space below since we have topbar - changed to h-[100vh]
-    <div className="h-[calc(100vh-3rem)] w-screen overflow-hidden bg-gradient-to-br from-white to-sakura-50 dark:from-gray-900 dark:to-gray-800 relative">
+    // h-screen makes black empty space below since we have topbar - changed to h-[100vh] - w-screen - the side bar is 5rem wide
+    <div className="h-[calc(100vh-3rem)] w-[calc(100vh-5rem) overflow-hidden bg-gradient-to-br from-white to-sakura-50 dark:from-gray-900 dark:to-gray-800 relative">
       {/* Wallpaper Background - Absolute positioned, doesn't affect layout */}
       {wallpaperUrl && (
         <div
