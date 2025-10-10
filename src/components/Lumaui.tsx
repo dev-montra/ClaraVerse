@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Plus, Play, Square, Loader2, ExternalLink, FolderOpen, Code } from 'lucide-react';
+import { Plus, Play, Square, Loader2, FolderOpen, Code } from 'lucide-react';
 import { WebContainer } from '@webcontainer/api';
 import { Terminal } from '@xterm/xterm';
 import { createLumaTools } from '../services/lumaTools';
@@ -1454,16 +1454,6 @@ This is a browser security requirement for WebContainer.`;
                   >
                     {isStarting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
                     {isStarting ? 'Starting...' : 'Start'}
-                  </button>
-                )}
-                
-                {selectedProject.previewUrl && (
-                  <button
-                    onClick={() => window.open(selectedProject.previewUrl, '_blank')}
-                    className="p-2 glassmorphic-card text-gray-600 dark:text-gray-400 hover:text-sakura-500 dark:hover:text-sakura-400 rounded-lg transition-colors"
-                    title="Open in new tab"
-                  >
-                    <ExternalLink className="w-3 h-3" />
                   </button>
                 )}
               </div>

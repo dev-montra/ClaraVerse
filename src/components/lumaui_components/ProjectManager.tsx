@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, FolderOpen, Trash2, Play, Search, Grid3X3, List, Edit, ExternalLink } from 'lucide-react';
+import { Plus, FolderOpen, Trash2, Play, Search, Grid3X3, List, Edit } from 'lucide-react';
 import { Project } from '../../types';
 import { db } from '../../db';
 import { getDefaultWallpaper } from '../../utils/uiPreferences';
@@ -342,20 +342,6 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({
                                     <Edit className="w-5 h-5 transition-transform group-hover:scale-110" />
                                     <div className="absolute inset-0 bg-white/20 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
                                   </button>
-
-                                  {project.previewUrl && (
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        window.open(project.previewUrl, '_blank');
-                                      }}
-                                      className="group relative w-12 h-12 bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white rounded-xl transition-all duration-300 flex items-center justify-center shadow-lg hover:shadow-xl hover:scale-110 active:scale-95"
-                                      title="Open in New Tab"
-                                    >
-                                      <ExternalLink className="w-5 h-5 transition-transform group-hover:scale-110" />
-                                      <div className="absolute inset-0 bg-white/20 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
-                                    </button>
-                                  )}
 
                                   <button
                                     onClick={(e) => {
