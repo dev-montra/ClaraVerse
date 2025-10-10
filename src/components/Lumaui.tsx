@@ -709,9 +709,9 @@ This is a browser security requirement for WebContainer.`;
       
       while (retryCount < maxRetries && !container) {
         try {
-          writeToTerminal(`\x1b[33m🔧 Attempting to boot WebContainer (attempt ${retryCount + 1}/${maxRetries})...\x1b[0m\n`);
-          container = await WebContainer.boot();
-          writeToTerminal('\x1b[32m✅ WebContainer initialized successfully\x1b[0m\n');
+          writeToTerminal(`\x1b[33m🔧 Getting WebContainer instance...\x1b[0m\n`);
+          container = await webContainerManager.getOrBootContainer(writeToTerminal);
+          writeToTerminal('\x1b[32m✅ WebContainer instance ready\x1b[0m\n');
           break;
         } catch (bootError) {
           retryCount++;

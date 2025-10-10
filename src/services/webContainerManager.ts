@@ -2,6 +2,15 @@ import { WebContainer } from '@webcontainer/api';
 import type { FileSystemTree } from '../components/lumaui_components/types';
 import { LumauiProjectStorage } from './lumauiProjectStorage';
 
+// CRITICAL: Global window storage for WebContainer instance
+// This survives component remounts, hot reloads, and helps us find zombie instances!
+declare global {
+  interface Window {
+    __webcontainerInstance?: WebContainer;
+    __webcontainerProjectId?: string;
+  }
+}
+
 // Utility to process WebContainer output streams
 const processOutputData = (data: string): string[] => {
   // Clean ANSI codes and control characters
@@ -208,12 +217,19 @@ export class WebContainerManager {
         createdAt: new Date()
       };
 
+      // CRITICAL: Store in GLOBAL window storage!
+      window.__webcontainerInstance = this.currentContainer;
+      window.__webcontainerProjectId = projectId;
+
       log('\x1b[32m✅ WebContainer booted successfully\x1b[0m\n');
+      log('\x1b[90m🌍 Stored in global window storage\x1b[0m\n');
       return this.currentContainer;
     } catch (error) {
       this.currentContainer = null;
       this.currentProjectId = null;
       this.containerInfo = null;
+      window.__webcontainerInstance = undefined;
+      window.__webcontainerProjectId = undefined;
       throw error;
     } finally {
       this.isBooting = false;
@@ -266,21 +282,67 @@ export class WebContainerManager {
 
   /**
    * Get or boot container - REUSE if exists!
-   * This is the preferred method for most operations
+   * Checks GLOBAL window storage first (bulletproof singleton!)
    */
   async getOrBootContainer(onLog?: (msg: string) => void): Promise<WebContainer> {
-    if (this.currentContainer) {
-      const log = (msg: string) => {
-        if (onLog) onLog(msg);
-        console.log('[WebContainerManager]', msg.replace(/\x1b\[[0-9;]*m/g, ''));
-      };
+    const log = (msg: string) => {
+      if (onLog) onLog(msg);
+      console.log('[WebContainerManager]', msg.replace(/\x1b\[[0-9;]*m/g, ''));
+    };
 
-      log('✅ Reusing existing WebContainer instance\n');
-      return this.currentContainer;
+    // CRITICAL: Check GLOBAL window storage first!
+    if (window.__webcontainerInstance) {
+      // Check if the container is still alive by trying to access it
+      try {
+        // Simple check - if this doesn't throw, container is alive
+        await window.__webcontainerInstance.fs.readdir('/');
+        log('✅ Reusing WebContainer instance from global storage\n');
+        this.currentContainer = window.__webcontainerInstance;
+        return window.__webcontainerInstance;
+      } catch (error) {
+        // Container is dead! Clear it and boot new one
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        if (errorMsg.includes('Proxy has been released') || errorMsg.includes('not useable')) {
+          log('⚠️ Global container is dead (proxy released), clearing and booting new one...\n');
+          window.__webcontainerInstance = undefined;
+          window.__webcontainerProjectId = undefined;
+          this.currentContainer = null;
+        } else {
+          // Some other error, maybe it's still usable
+          throw error;
+        }
+      }
+    }
+
+    // Check manager storage second
+    if (this.currentContainer) {
+      try {
+        // Verify it's alive
+        await this.currentContainer.fs.readdir('/');
+        log('✅ Reusing WebContainer instance from manager\n');
+        window.__webcontainerInstance = this.currentContainer; // Sync to global
+        return this.currentContainer;
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        if (errorMsg.includes('Proxy has been released') || errorMsg.includes('not useable')) {
+          log('⚠️ Manager container is dead (proxy released), clearing...\n');
+          this.currentContainer = null;
+        } else {
+          throw error;
+        }
+      }
     }
 
     // Boot for the first time
-    return this.bootContainer('shared-container', onLog, false);
+    log('🚀 Booting WebContainer for the first time...\n');
+    const container = await this.bootContainer('shared-container', onLog, false);
+
+    // CRITICAL: Store in GLOBAL window storage!
+    window.__webcontainerInstance = container;
+    window.__webcontainerProjectId = 'shared-container';
+    log('🌍 Stored instance in global window storage\n');
+
+    return container;
   }
 
   /**
@@ -557,12 +619,17 @@ export class WebContainerManager {
    */
   async cleanup(onLog?: (msg: string) => void): Promise<void> {
     await this.destroyContainer(onLog);
+
+    // Clear global window storage
+    window.__webcontainerInstance = undefined;
+    window.__webcontainerProjectId = undefined;
+
     console.log('🧹 WebContainerManager cleanup complete');
   }
 
   /**
    * Force cleanup - use when things are stuck
-   * This will attempt to boot and immediately teardown to clear zombie instances
+   * Checks GLOBAL window storage first (survives component remounts!)
    */
   async forceCleanup(onLog?: (msg: string) => void): Promise<void> {
     const log = (msg: string) => {
@@ -580,9 +647,25 @@ export class WebContainerManager {
     this.containerInfo = null;
     this.currentProjectId = null;
 
-    // If we have a container reference, tear it down
+    // CRITICAL: Check GLOBAL window storage first!
+    if (window.__webcontainerInstance) {
+      log('\x1b[33m🌍 Found instance in global window storage, tearing down...\x1b[0m\n');
+      try {
+        await window.__webcontainerInstance.teardown();
+        window.__webcontainerInstance = undefined;
+        window.__webcontainerProjectId = undefined;
+        log('\x1b[32m✅ Global instance destroyed\x1b[0m\n');
+      } catch (error) {
+        console.error('[WebContainerManager] Error tearing down global instance:', error);
+        log('\x1b[33m⚠️ Error during global teardown, clearing reference...\x1b[0m\n');
+        window.__webcontainerInstance = undefined;
+        window.__webcontainerProjectId = undefined;
+      }
+    }
+
+    // If we have a container reference in manager, tear it down
     if (this.currentContainer) {
-      log('\x1b[33m📦 Tearing down tracked container...\x1b[0m\n');
+      log('\x1b[33m📦 Tearing down manager-tracked container...\x1b[0m\n');
       try {
         await this.currentContainer.teardown();
       } catch (error) {
@@ -591,28 +674,27 @@ export class WebContainerManager {
       this.currentContainer = null;
     }
 
-    // NUCLEAR OPTION: Try to boot and immediately teardown
-    // This will fail if a zombie exists, but might succeed in cleaning it up
-    log('\x1b[33m💣 Attempting nuclear cleanup (boot+teardown)...\x1b[0m\n');
+    // Wait for teardown to complete
+    log('\x1b[90m⏳ Waiting for cleanup to complete...\x1b[0m\n');
+    await new Promise(resolve => setTimeout(resolve, 2000));
+
+    // NUCLEAR: Try to detect if zombie still exists by attempting boot
+    log('\x1b[33m🔍 Checking for remaining zombie instances...\x1b[0m\n');
     try {
-      const zombieContainer = await WebContainer.boot();
-      log('\x1b[33m⚠️ Found zombie instance, destroying it...\x1b[0m\n');
-      await zombieContainer.teardown();
-      log('\x1b[32m✅ Zombie destroyed\x1b[0m\n');
+      const testContainer = await WebContainer.boot();
+      log('\x1b[32m✅ No zombie detected - boot successful\x1b[0m\n');
+      // Immediately teardown the test container
+      await testContainer.teardown();
+      await new Promise(resolve => setTimeout(resolve, 1000));
     } catch (error) {
-      // If boot fails with "instance already exists", that means there's a zombie
-      // If it fails with another error, we couldn't clean it up
       const errorMsg = error instanceof Error ? error.message : String(error);
       if (errorMsg.includes('single WebContainer instance')) {
-        log('\x1b[31m⚠️ Zombie instance exists and cannot be cleaned up!\x1b[0m\n');
-        log('\x1b[33m💡 You MUST restart the Electron app completely!\x1b[0m\n');
-      } else {
-        log(`\x1b[90mNo zombie found or already clean: ${errorMsg}\x1b[0m\n`);
+        log('\x1b[31m💀 ZOMBIE STILL EXISTS! Cannot be cleaned up!\x1b[0m\n');
+        log('\x1b[33m⚠️ You MUST close and reopen the Electron app!\x1b[0m\n');
+        log('\x1b[90m   The zombie instance was created before global storage was implemented.\x1b[0m\n');
       }
     }
 
-    // Wait longer for forced cleanup
-    await new Promise(resolve => setTimeout(resolve, 3000));
     log('\x1b[32m✅ Force cleanup complete\x1b[0m\n');
   }
 
