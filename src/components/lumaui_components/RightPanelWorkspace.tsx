@@ -40,6 +40,9 @@ interface RightPanelWorkspaceProps {
   project: Project | null;
   isStarting: boolean;
   onStartProject: (project: Project) => void;
+
+  // View mode (play = preview only, edit = full IDE)
+  viewMode?: 'play' | 'edit';
 }
 
 const RightPanelWorkspace: React.FC<RightPanelWorkspaceProps> = ({
@@ -62,12 +65,14 @@ const RightPanelWorkspace: React.FC<RightPanelWorkspaceProps> = ({
   webContainer,
   project,
   isStarting,
-  onStartProject
+  onStartProject,
+  viewMode = 'edit'
 }) => {
   return (
     <div className="h-full w-full flex flex-col overflow-hidden">
-      {/* Mode Toggle Buttons - Always Visible */}
-      <div className="glassmorphic shrink-0 h-12 flex items-center px-4">
+      {/* Mode Toggle Buttons - Hidden in play mode */}
+      {viewMode === 'edit' && (
+        <div className="glassmorphic shrink-0 h-12 flex items-center px-4">
         <div className="flex items-center gap-2">
           <button
             onClick={() => onModeChange('preview')}
@@ -109,6 +114,7 @@ const RightPanelWorkspace: React.FC<RightPanelWorkspaceProps> = ({
           </button>
         </div>
       </div>
+      )}
 
       {/* Content Area - Switches Based on Mode */}
       <div className="flex-1 min-h-0 w-full overflow-hidden relative">

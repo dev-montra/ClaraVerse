@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Plus, Play, Square, Loader2, ExternalLink, FolderOpen } from 'lucide-react';
+import { Plus, Play, Square, Loader2, ExternalLink, FolderOpen, Code } from 'lucide-react';
 import { WebContainer } from '@webcontainer/api';
 import { Terminal } from '@xterm/xterm';
 import { createLumaTools } from '../services/lumaTools';
@@ -45,6 +45,7 @@ const LumaUICore: React.FC = () => {
   const [rightPanelMode, setRightPanelMode] = useState<'editor' | 'preview' | 'settings'>('editor');
   const [scaffoldProgress, setScaffoldProgress] = useState<ScaffoldProgress | null>(null);
   const [wallpaperUrl, setWallpaperUrl] = useState<string | null>(null);
+  const [projectViewMode, setProjectViewMode] = useState<'play' | 'edit'>('edit'); // Track if user wants play-only or full IDE
 
 
   // Refs
@@ -490,10 +491,13 @@ This is a browser security requirement for WebContainer.`;
     }
   };
 
-  const handleProjectSelect = async (project: Project) => {
+  const handleProjectSelect = async (project: Project, viewMode: 'play' | 'edit' = 'edit') => {
     // Hide manager page and close modal
     setShowManagerPage(false);
     setIsProjectSelectionModalOpen(false);
+
+    // Set the view mode for this project
+    setProjectViewMode(viewMode);
 
     // Don't clear terminal - keep output history persistent
     // Add visual separator to distinguish between projects
@@ -1390,23 +1394,35 @@ This is a browser security requirement for WebContainer.`;
                     </span>
                   )}
                 </div>
-                
+
                 <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => setShowManagerPage(true)}
-                    className="flex items-center gap-1 px-2 py-1 text-xs glassmorphic-card text-gray-700 dark:text-gray-300 hover:text-sakura-600 dark:hover:text-sakura-400 rounded-lg transition-colors"
-                  >
-                    <FolderOpen className="w-3 h-3" />
-                    Projects
-                  </button>
-                  
-                  <button
-                    onClick={() => setIsCreateModalOpen(true)}
-                    className="flex items-center gap-1 px-2 py-1 text-xs bg-gradient-to-r from-sakura-500 to-pink-500 text-white rounded-lg hover:from-sakura-600 hover:to-pink-600 transition-all shadow-lg"
-                  >
-                    <Plus className="w-3 h-3" />
-                    New
-                  </button>
+                  {projectViewMode === 'play' ? (
+                    <button
+                      onClick={() => setProjectViewMode('edit')}
+                      className="flex items-center gap-1 px-3 py-1.5 text-xs bg-gradient-to-r from-blue-500 to-blue-600 dark:from-sakura-500 dark:to-sakura-600 text-white rounded-lg hover:from-blue-600 hover:to-blue-700 dark:hover:from-sakura-600 dark:hover:to-sakura-700 transition-all shadow-lg"
+                    >
+                      <Code className="w-3 h-3" />
+                      Back to Editor
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => setShowManagerPage(true)}
+                        className="flex items-center gap-1 px-2 py-1 text-xs glassmorphic-card text-gray-700 dark:text-gray-300 hover:text-sakura-600 dark:hover:text-sakura-400 rounded-lg transition-colors"
+                      >
+                        <FolderOpen className="w-3 h-3" />
+                        Projects
+                      </button>
+
+                      <button
+                        onClick={() => setIsCreateModalOpen(true)}
+                        className="flex items-center gap-1 px-2 py-1 text-xs bg-gradient-to-r from-sakura-500 to-pink-500 text-white rounded-lg hover:from-sakura-600 hover:to-pink-600 transition-all shadow-lg"
+                      >
+                        <Plus className="w-3 h-3" />
+                        New
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
               
@@ -1457,26 +1473,28 @@ This is a browser security requirement for WebContainer.`;
 
         {/* Main Content - Flex grow, contains chat and workspace */}
         <main className="flex-1 flex overflow-hidden min-h-0">
-          {/* Left Panel - Chat (25% width, fixed) */}
-          <aside className="w-1/4 h-full shrink-0 border-r border-white/10 dark:border-gray-800/50">
-            <ChatWindow
-              selectedFile={selectedFile}
-              fileContent={selectedFileContent}
-              files={files}
-              onFileContentChange={handleFileContentChange}
-              onFileSelect={handleFileSelect}
-              workingDirectory={selectedProject?.name || '.'}
-              lumaTools={lumaTools}
-              projectId={selectedProject?.id || 'no-project'}
-              projectName={selectedProject?.name || 'No Project'}
-              refreshFileTree={refreshFileTree}
-            />
-          </aside>
+          {/* Left Panel - Chat (25% width, fixed) - Hidden in play mode */}
+          {projectViewMode === 'edit' && (
+            <aside className="w-1/4 h-full shrink-0 border-r border-white/10 dark:border-gray-800/50">
+              <ChatWindow
+                selectedFile={selectedFile}
+                fileContent={selectedFileContent}
+                files={files}
+                onFileContentChange={handleFileContentChange}
+                onFileSelect={handleFileSelect}
+                workingDirectory={selectedProject?.name || '.'}
+                lumaTools={lumaTools}
+                projectId={selectedProject?.id || 'no-project'}
+                projectName={selectedProject?.name || 'No Project'}
+                refreshFileTree={refreshFileTree}
+              />
+            </aside>
+          )}
 
-          {/* Right Panel - Workspace (75% - 2rem width becoz sidebar, flexible) */}
-          <section className="w-3/4  h-full flex-1 min-w-0">
+          {/* Right Panel - Workspace (75% width in edit mode, 100% in play mode) */}
+          <section className={projectViewMode === 'play' ? 'w-full h-full flex-1 min-w-0' : 'w-3/4 h-full flex-1 min-w-0'}>
             <RightPanelWorkspace
-              mode={rightPanelMode}
+              mode={projectViewMode === 'play' ? 'preview' : rightPanelMode}
               onModeChange={setRightPanelMode}
               files={files}
               selectedFile={selectedFile}
@@ -1496,6 +1514,7 @@ This is a browser security requirement for WebContainer.`;
               project={selectedProject}
               isStarting={isStarting}
               onStartProject={startProject}
+              viewMode={projectViewMode}
             />
           </section>
         </main>

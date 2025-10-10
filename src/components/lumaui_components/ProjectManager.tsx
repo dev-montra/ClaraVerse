@@ -6,7 +6,7 @@ import { getDefaultWallpaper } from '../../utils/uiPreferences';
 
 interface ProjectManagerProps {
   projects: Project[];
-  onSelectProject: (project: Project) => void;
+  onSelectProject: (project: Project, viewMode: 'play' | 'edit') => void;
   onDeleteProject: (project: Project) => Promise<void>;
   onCreateNew: () => void;
 }
@@ -254,18 +254,18 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({
                             <div className="p-4">
                               <div className="flex items-center justify-center gap-4">
                                 <button
-                                  onClick={() => onSelectProject(project)}
+                                  onClick={() => onSelectProject(project, 'play')}
                                   className="group relative w-12 h-12 bg-gradient-to-r from-blue-500 to-blue-600 dark:from-sakura-500 dark:to-sakura-600 hover:from-blue-600 hover:to-blue-700 dark:hover:from-sakura-600 dark:hover:to-sakura-700 text-white rounded-xl transition-all duration-300 flex items-center justify-center shadow-lg hover:shadow-xl hover:scale-110 active:scale-95"
-                                  title="Open Project"
+                                  title="Play - Preview Only"
                                 >
                                   <Play className="w-5 h-5 transition-transform group-hover:scale-110" />
                                   <div className="absolute inset-0 bg-white/20 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
                                 </button>
 
                                 <button
-                                  onClick={() => onSelectProject(project)}
+                                  onClick={() => onSelectProject(project, 'edit')}
                                   className="group relative w-12 h-12 bg-gradient-to-r from-gray-600 to-gray-700 hover:from-gray-700 hover:to-gray-800 text-white rounded-xl transition-all duration-300 flex items-center justify-center shadow-lg hover:shadow-xl hover:scale-110 active:scale-95"
-                                  title="Edit Project"
+                                  title="Edit - Full IDE"
                                 >
                                   <Edit className="w-5 h-5 transition-transform group-hover:scale-110" />
                                   <div className="absolute inset-0 bg-white/20 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
@@ -326,18 +326,18 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({
                                 </div>
                                 <div className="flex items-center gap-3 ml-4">
                                   <button
-                                    onClick={() => onSelectProject(project)}
+                                    onClick={() => onSelectProject(project, 'play')}
                                     className="group relative w-12 h-12 bg-gradient-to-r from-blue-500 to-blue-600 dark:from-sakura-500 dark:to-sakura-600 hover:from-blue-600 hover:to-blue-700 dark:hover:from-sakura-600 dark:hover:to-sakura-700 text-white rounded-xl transition-all duration-300 flex items-center justify-center shadow-lg hover:shadow-xl hover:scale-110 active:scale-95"
-                                    title="Open Project"
+                                    title="Play - Preview Only"
                                   >
                                     <Play className="w-5 h-5 transition-transform group-hover:scale-110" />
                                     <div className="absolute inset-0 bg-white/20 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
                                   </button>
 
                                   <button
-                                    onClick={() => onSelectProject(project)}
+                                    onClick={() => onSelectProject(project, 'edit')}
                                     className="group relative w-12 h-12 bg-gradient-to-r from-gray-600 to-gray-700 hover:from-gray-700 hover:to-gray-800 text-white rounded-xl transition-all duration-300 flex items-center justify-center shadow-lg hover:shadow-xl hover:scale-110 active:scale-95"
-                                    title="Edit Project"
+                                    title="Edit - Full IDE"
                                   >
                                     <Edit className="w-5 h-5 transition-transform group-hover:scale-110" />
                                     <div className="absolute inset-0 bg-white/20 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
