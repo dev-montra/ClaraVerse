@@ -1339,7 +1339,7 @@ This is a browser security requirement for WebContainer.`;
 
   return (
     // h-screen makes black empty space below since we have topbar - changed to h-[100vh] - w-screen - the side bar is 5rem wide
-    <div className="h-[calc(100vh-3rem)] w-[calc(100vh-5rem) overflow-hidden bg-gradient-to-br from-white to-sakura-50 dark:from-gray-900 dark:to-gray-800 relative">
+    <div className="h-[calc(100vh-3rem)] w-screen overflow-hidden bg-gradient-to-br from-white to-sakura-50 dark:from-gray-900 dark:to-gray-800 relative">
       {/* Wallpaper Background - Absolute positioned, doesn't affect layout */}
       {wallpaperUrl && (
         <div
