@@ -586,6 +586,17 @@ This is a browser security requirement for WebContainer.`;
       // Note: Don't replay the buffer here as it's already in terminal history
       // The terminal persists, so old output is still visible
     }
+
+    // Attach interactive shell if WebContainer exists (when reusing containers)
+    if (webContainer && terminalRef.current) {
+      writeToTerminal('\x1b[90m🔄 Re-attaching interactive shell...\x1b[0m\n');
+      try {
+        await attachShellToTerminal(webContainer);
+      } catch (error) {
+        console.error('Failed to attach shell after project switch:', error);
+        writeToTerminal('\x1b[33m⚠️ Could not attach interactive shell. It will be attached when you start the project.\x1b[0m\n');
+      }
+    }
   };
 
   const handleDeleteProject = async (project: Project) => {

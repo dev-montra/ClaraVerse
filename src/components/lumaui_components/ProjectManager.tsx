@@ -102,7 +102,7 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({
                   <i className="fas fa-rocket w-8 h-8 text-sakura-500 text-2xl"></i>
                   <h1 className="text-3xl font-bold text-gray-800 dark:text-gray-100">LumaUI</h1>
                 </div>
-                <p className="text-gray-600 dark:text-gray-400">Build full-stack applications with WebContainers</p>
+                <p className="text-gray-600 dark:text-gray-400">Build full-stack applications with Local AI models and your own APIs (For Local Model editor's Choice is <strong>Qwen30b-A3B-instruct, Qwen3</strong>)</p>
               </div>
               <div className="flex items-center gap-3">
                 <button

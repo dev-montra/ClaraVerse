@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Home, Bot, Settings, HelpCircle, ImageIcon, Network, BrainCircuit, Download, X, Zap, Code2, BookOpen, Calendar, Users } from 'lucide-react';
+import { Home, Bot, Settings, HelpCircle, ImageIcon, Network, BrainCircuit, Download, X, Zap, BookOpen, Calendar, Users } from 'lucide-react';
 import logo from '../assets/logo.png';
 
 // interface HuggingFaceModel {
@@ -373,7 +373,7 @@ const Sidebar = ({ activePage = 'dashboard', onPageChange }: SidebarProps) => {
     { icon: BookOpen, label: 'RAG', id: 'notebooks' },
     // Unhide LumaUI (Alpha) unconditionally
     { icon: Zap, label: 'Lumaui (Alpha)', id: 'lumaui' },
-    { icon: Code2, label: 'LumaUI (Beta)', id: 'lumaui-lite' },
+    // { icon: Code2, label: 'LumaUI (Beta)', id: 'lumaui-lite' }, // Hidden - using full Lumaui now
     // Show Image Gen if ComfyUI feature is enabled OR if ComfyUI service is running
     ...(featureConfig.comfyUI || isServiceResponding('comfyui') ? [{
       icon: ImageIcon, 
