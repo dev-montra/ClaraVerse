@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Globe, Play, Loader2, RefreshCw, ExternalLink, Monitor, Zap, Eye, Terminal, ChevronUp, ChevronDown, Trash2 } from 'lucide-react';
+import { Globe, Play, Loader2, RefreshCw, ExternalLink, Monitor, Zap, Eye, Terminal, ChevronDown, Trash2 } from 'lucide-react';
 import { Project } from '../../types';
 
 interface PreviewPaneProps {
@@ -24,11 +24,26 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ project, isStarting, onStartP
   const [commandInput, setCommandInput] = useState('');
   const [commandHistory, setCommandHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
-  
+  const [hasAutoStarted, setHasAutoStarted] = useState(false);
+
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const consoleEndRef = useRef<HTMLDivElement>(null);
   const resizeRef = useRef<HTMLDivElement>(null);
   const isResizing = useRef(false);
+  const startButtonRef = useRef<HTMLButtonElement>(null);
+
+  // Auto-start project when preview opens (if idle)
+  useEffect(() => {
+    if (project.status === 'idle' && !isStarting && !hasAutoStarted && startButtonRef.current) {
+      // Small delay to ensure UI is ready
+      const timer = setTimeout(() => {
+        startButtonRef.current?.click();
+        setHasAutoStarted(true);
+      }, 100);
+
+      return () => clearTimeout(timer);
+    }
+  }, [project.status, isStarting, hasAutoStarted]);
 
   // Auto-scroll console to bottom
   useEffect(() => {
@@ -444,6 +459,7 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ project, isStarting, onStartP
                 Start your project to see a live preview of your application. Your changes will be reflected in real-time.
               </p>
               <button
+                ref={startButtonRef}
                 onClick={() => onStartProject(project)}
                 disabled={isStarting}
                 className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-sakura-500 to-pink-500 text-white rounded-xl font-semibold shadow-lg hover:shadow-xl shadow-sakura-500/25 transition-all duration-200 hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"

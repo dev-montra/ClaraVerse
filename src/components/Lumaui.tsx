@@ -503,6 +503,9 @@ This is a browser security requirement for WebContainer.`;
     // Set the view mode for this project
     setProjectViewMode(viewMode);
 
+    // Auto-switch to preview mode when opening a project
+    setRightPanelMode('preview');
+
     // Don't clear terminal - keep output history persistent
     // Add visual separator to distinguish between projects
     writeToTerminal(`\n\x1b[90m${'─'.repeat(80)}\x1b[0m\n`);
