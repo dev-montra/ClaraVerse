@@ -1408,14 +1408,54 @@ Follow this plan systematically, but adapt as needed based on actual results.`;
         userSetting: sessionParameters.maxIterations
       });
       
+      // Sanitizer function to remove consecutive assistant messages
+      const sanitizeConversationHistory = (history: Array<{ role: string; content: string; tool_calls?: any[]; tool_call_id?: string; name?: string }>) => {
+        const sanitized: typeof history = [];
+
+        for (let i = 0; i < history.length; i++) {
+          const current = history[i];
+          const previous = sanitized[sanitized.length - 1];
+
+          // If current is assistant and previous is also assistant
+          if (current.role === 'assistant' && previous?.role === 'assistant') {
+            // Keep the message with tool_calls, remove the empty one
+            if (current.tool_calls && current.tool_calls.length > 0) {
+              // Current has tool_calls, replace previous with current
+              console.warn('⚠️ Replacing previous assistant message (keeping one with tool_calls)');
+              sanitized[sanitized.length - 1] = current;
+            } else if (previous.tool_calls && previous.tool_calls.length > 0) {
+              // Previous has tool_calls, skip current
+              console.warn('⚠️ Skipping duplicate assistant message (keeping one with tool_calls)');
+              continue;
+            } else {
+              // Neither has tool_calls, merge content and skip current
+              if (current.content && current.content.trim()) {
+                previous.content = (previous.content || '') + '\n\n' + current.content;
+                console.warn('⚠️ Merged duplicate assistant messages');
+              } else {
+                console.warn('⚠️ Skipping empty duplicate assistant message');
+              }
+              continue;
+            }
+          } else {
+            sanitized.push(current);
+          }
+        }
+
+        return sanitized;
+      };
+
       while (conversationIteration < maxConversationTurns && totalToolCalls < maxToolCalls) {
         conversationIteration++;
         currentPlanning.currentStep = totalToolCalls;
         currentPlanning.status = 'executing';
         setCurrentPlanning({...currentPlanning});
-        
+
+        // Sanitize conversation history before sending
+        const sanitizedHistory = sanitizeConversationHistory(conversationHistory);
+
         // Get AI response
-        const currentResponse = await provider.sendMessage(conversationHistory);
+        const currentResponse = await provider.sendMessage(sanitizedHistory);
         
         // Check if AI wants to use tools
         if (currentResponse.message?.tool_calls && currentResponse.message.tool_calls.length > 0) {
@@ -1546,14 +1586,16 @@ Follow this plan systematically, but adapt as needed based on actual results.`;
         setCurrentPlanning({...currentPlanning});
       }
 
-      // Show completion summary
-      const completionSummary: Message = {
-        id: (Date.now() + 999998).toString(),
-        type: 'assistant',
-        content: `📊 **Session Summary**\n\n• **Tool calls executed:** ${totalToolCalls}/${maxToolCalls}\n• **Conversation turns:** ${conversationIteration}/${maxConversationTurns}\n• **Status:** ${totalToolCalls >= maxToolCalls ? 'Tool limit reached' : conversationIteration >= maxConversationTurns ? 'Conversation limit reached' : 'Completed naturally'}`,
-        timestamp: new Date()
-      };
-      setMessages(prev => [...prev, completionSummary]);
+      // Show completion summary only if we used tool calls
+      if (totalToolCalls > 0) {
+        const completionSummary: Message = {
+          id: (Date.now() + 999998).toString(),
+          type: 'assistant',
+          content: `📊 **Session Summary**\n\n• **Tool calls executed:** ${totalToolCalls}/${maxToolCalls}\n• **Conversation turns:** ${conversationIteration}/${maxConversationTurns}\n• **Status:** ${totalToolCalls >= maxToolCalls ? 'Tool limit reached' : conversationIteration >= maxConversationTurns ? 'Conversation limit reached' : 'Completed naturally'}`,
+          timestamp: new Date()
+        };
+        setMessages(prev => [...prev, completionSummary]);
+      }
 
       setCurrentTask('Task completed!');
 

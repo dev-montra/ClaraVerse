@@ -35,6 +35,7 @@ interface RightPanelWorkspaceProps {
   // Terminal props
   terminalRef: React.RefObject<Terminal | null>;
   webContainer: WebContainer | null;
+  onReconnectShell?: () => Promise<void>;
 
   // Preview props
   project: Project | null;
@@ -63,6 +64,7 @@ const RightPanelWorkspace: React.FC<RightPanelWorkspaceProps> = ({
   onFileContentChange,
   terminalRef,
   webContainer,
+  onReconnectShell,
   project,
   isStarting,
   onStartProject,
@@ -162,6 +164,7 @@ const RightPanelWorkspace: React.FC<RightPanelWorkspaceProps> = ({
               webContainer={webContainer}
               isVisible={true}
               onToggle={() => {}}
+              onReconnectShell={onReconnectShell}
             />
           </div>
         </div>

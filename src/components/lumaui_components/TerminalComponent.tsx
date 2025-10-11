@@ -1,5 +1,5 @@
-import React, { useRef, useEffect } from 'react';
-import { Terminal as TerminalIcon, Maximize2, Minimize2 } from 'lucide-react';
+import React, { useRef, useEffect, useState } from 'react';
+import { Terminal as TerminalIcon, Maximize2, Minimize2, RefreshCw } from 'lucide-react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
@@ -11,15 +11,18 @@ interface TerminalComponentProps {
   isVisible: boolean;
   onToggle: () => void;
   terminalRef: React.MutableRefObject<Terminal | null>;
+  onReconnectShell?: () => Promise<void>;
 }
 
-const TerminalComponent: React.FC<TerminalComponentProps> = ({ 
-  isVisible, 
-  onToggle, 
-  terminalRef 
+const TerminalComponent: React.FC<TerminalComponentProps> = ({
+  isVisible,
+  onToggle,
+  terminalRef,
+  onReconnectShell
 }) => {
   const terminalElementRef = useRef<HTMLDivElement>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const [isReconnecting, setIsReconnecting] = useState(false);
 
   useEffect(() => {
     if (terminalElementRef.current && !terminalRef.current) {
@@ -202,6 +205,19 @@ const TerminalComponent: React.FC<TerminalComponentProps> = ({
     );
   }
 
+  const handleReconnect = async () => {
+    if (onReconnectShell && !isReconnecting) {
+      setIsReconnecting(true);
+      try {
+        await onReconnectShell();
+      } catch (error) {
+        console.error('Reconnect failed:', error);
+      } finally {
+        setIsReconnecting(false);
+      }
+    }
+  };
+
   return (
     <div className="h-full border-t border-gray-200 dark:border-gray-700 bg-black flex flex-col">
       <div className="flex items-center justify-between px-3 py-1 bg-gray-800 border-b border-gray-600 shrink-0">
@@ -209,15 +225,28 @@ const TerminalComponent: React.FC<TerminalComponentProps> = ({
           <TerminalIcon className="w-4 h-4 text-green-400" />
           <span className="text-sm text-gray-300">Terminal</span>
         </div>
-        <button
-          onClick={onToggle}
-          className="p-1 hover:bg-gray-700 rounded transition-colors"
-        >
-          <Minimize2 className="w-4 h-4 text-gray-400" />
-        </button>
+        <div className="flex items-center gap-2">
+          {onReconnectShell && (
+            <button
+              onClick={handleReconnect}
+              disabled={isReconnecting}
+              className="flex items-center gap-1 px-2 py-1 text-xs bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:cursor-not-allowed text-white rounded transition-colors"
+              title="Reconnect interactive shell"
+            >
+              <RefreshCw className={`w-3 h-3 ${isReconnecting ? 'animate-spin' : ''}`} />
+              <span>{isReconnecting ? 'Connecting...' : 'Reconnect Shell'}</span>
+            </button>
+          )}
+          <button
+            onClick={onToggle}
+            className="p-1 hover:bg-gray-700 rounded transition-colors"
+          >
+            <Minimize2 className="w-4 h-4 text-gray-400" />
+          </button>
+        </div>
       </div>
-      <div 
-        ref={terminalElementRef} 
+      <div
+        ref={terminalElementRef}
         className="flex-1 p-2"
       />
     </div>

@@ -52,6 +52,7 @@ const LumaUICore: React.FC = () => {
   const terminalRef = useRef<Terminal | null>(null);
   const runningProcessesRef = useRef<any[]>([]);
   const shellProcessRef = useRef<any>(null); // Track shell process for interactive terminal
+  const terminalDataDisposableRef = useRef<{ dispose: () => void } | null>(null); // Track terminal event disposable
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Per-project output buffers to persist terminal output across switches
@@ -236,6 +237,16 @@ const LumaUICore: React.FC = () => {
     }
 
     try {
+      // Dispose existing terminal data handler if any
+      if (terminalDataDisposableRef.current) {
+        try {
+          terminalDataDisposableRef.current.dispose();
+        } catch (e) {
+          console.warn('Error disposing previous terminal handler:', e);
+        }
+        terminalDataDisposableRef.current = null;
+      }
+
       // Kill existing shell if any
       if (shellProcessRef.current) {
         try {
@@ -299,17 +310,38 @@ const LumaUICore: React.FC = () => {
         }
       };
 
-      // Attach input handler
-      terminal.onData(handleTerminalData);
+      // Attach input handler and store disposable for cleanup
+      const disposable = terminal.onData(handleTerminalData);
+      terminalDataDisposableRef.current = disposable;
 
       // Handle shell exit
       shellProcess.exit.then((exitCode) => {
         console.log(`Shell exited with code ${exitCode}`);
         shellProcessRef.current = null;
+
+        // Clean up terminal data handler when shell exits
+        if (terminalDataDisposableRef.current) {
+          try {
+            terminalDataDisposableRef.current.dispose();
+          } catch (e) {
+            console.warn('Error disposing terminal handler on shell exit:', e);
+          }
+          terminalDataDisposableRef.current = null;
+        }
         // Don't write to terminal here as it might be disposed
       }).catch(err => {
         console.warn('Shell exit error:', err);
         shellProcessRef.current = null;
+
+        // Clean up terminal data handler on error too
+        if (terminalDataDisposableRef.current) {
+          try {
+            terminalDataDisposableRef.current.dispose();
+          } catch (e) {
+            console.warn('Error disposing terminal handler on shell error:', e);
+          }
+          terminalDataDisposableRef.current = null;
+        }
       });
 
       writeToTerminal('\x1b[32m✅ Interactive shell ready\x1b[0m\n\n');
@@ -503,8 +535,9 @@ This is a browser security requirement for WebContainer.`;
     // Set the view mode for this project
     setProjectViewMode(viewMode);
 
-    // Auto-switch to preview mode when opening a project
-    setRightPanelMode('preview');
+    // Start in editor mode to ensure terminal initializes properly
+    // We'll switch to preview mode after shell is attached
+    setRightPanelMode('editor');
 
     // Don't clear terminal - keep output history persistent
     // Add visual separator to distinguish between projects
@@ -576,8 +609,6 @@ This is a browser security requirement for WebContainer.`;
     setSelectedFile(null);
     setSelectedFileContent('');
 
-    writeToTerminal('\x1b[36m💡 Project switched successfully. Use the Start button to run the project.\x1b[0m\n\n');
-
     // Restore buffered output for this project if it exists
     const buffer = projectOutputBuffers.current.get(project.id);
     if (buffer && buffer.length > 0) {
@@ -587,16 +618,13 @@ This is a browser security requirement for WebContainer.`;
       // The terminal persists, so old output is still visible
     }
 
-    // Attach interactive shell if WebContainer exists (when reusing containers)
-    if (webContainer && terminalRef.current) {
-      writeToTerminal('\x1b[90m🔄 Re-attaching interactive shell...\x1b[0m\n');
-      try {
-        await attachShellToTerminal(webContainer);
-      } catch (error) {
-        console.error('Failed to attach shell after project switch:', error);
-        writeToTerminal('\x1b[33m⚠️ Could not attach interactive shell. It will be attached when you start the project.\x1b[0m\n');
-      }
-    }
+    writeToTerminal('\x1b[36m💡 Project loaded. Click Start to run the project (terminal will activate when started).\x1b[0m\n\n');
+
+    // Wait a moment for terminal to initialize (it's in editor mode now)
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    // Now switch to preview mode for auto-start
+    setRightPanelMode('preview');
   };
 
   const handleDeleteProject = async (project: Project) => {
@@ -1314,6 +1342,28 @@ This is a browser security requirement for WebContainer.`;
     }
   };
 
+  // Reconnect shell handler for manual reconnection
+  const handleReconnectShell = async () => {
+    try {
+      writeToTerminal('\n\x1b[36m🔄 Manual shell reconnection triggered...\x1b[0m\n');
+
+      // Get or boot a fresh container
+      const activeContainer = await webContainerManager.getOrBootContainer(writeToTerminal);
+
+      // Attach shell
+      await attachShellToTerminal(activeContainer);
+
+      // Update webContainer state
+      setWebContainer(activeContainer);
+
+      writeToTerminal('\x1b[32m✅ Shell reconnected successfully!\x1b[0m\n\n');
+    } catch (error) {
+      console.error('Manual shell reconnection failed:', error);
+      writeToTerminal('\x1b[31m❌ Shell reconnection failed. Please try starting the project.\x1b[0m\n');
+      throw error;
+    }
+  };
+
   // Create LumaTools instance for AI operations (after all handlers are defined)
   const lumaTools = useMemo(() => {
     const tools = createLumaTools({
@@ -1325,7 +1375,7 @@ This is a browser security requirement for WebContainer.`;
       workingDirectory: selectedProject?.name || '.',
       onRefreshFileTree: refreshFileTree
     });
-    
+
     return tools;
   }, [webContainer, files, selectedProject?.name, handleFileSelect, writeToTerminal, refreshFileTree]);
 
@@ -1519,6 +1569,7 @@ This is a browser security requirement for WebContainer.`;
               onFileContentChange={handleFileContentChange}
               terminalRef={terminalRef}
               webContainer={webContainer}
+              onReconnectShell={handleReconnectShell}
               project={selectedProject}
               isStarting={isStarting}
               onStartProject={startProject}
