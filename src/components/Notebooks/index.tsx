@@ -174,7 +174,7 @@ const NotebooksContent: React.FC<{ onPageChange: (page: string) => void; userNam
     }
   };
 
-  const handleCreateNotebook = async (name: string, description: string, llmProvider: ProviderConfig, embeddingProvider: ProviderConfig) => {
+  const handleCreateNotebook = async (name: string, description: string, llmProvider: ProviderConfig, embeddingProvider: ProviderConfig, entityTypes?: string[], language?: string, manualEmbeddingDimensions?: number, manualEmbeddingMaxTokens?: number) => {
     if (!isBackendHealthy) {
       throw new Error('Notebook backend is not available');
     }
@@ -184,7 +184,11 @@ const NotebooksContent: React.FC<{ onPageChange: (page: string) => void; userNam
         name,
         description: description || undefined,
         llm_provider: llmProvider,
-        embedding_provider: embeddingProvider
+        embedding_provider: embeddingProvider,
+        entity_types: entityTypes,
+        language: language,
+        manual_embedding_dimensions: manualEmbeddingDimensions,
+        manual_embedding_max_tokens: manualEmbeddingMaxTokens
       });
       
       // Add the new notebook to the list

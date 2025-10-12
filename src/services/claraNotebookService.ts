@@ -19,6 +19,12 @@ export interface NotebookCreate {
   description?: string;
   llm_provider: ProviderConfig;
   embedding_provider: ProviderConfig;
+  // Schema consistency parameters (optional)
+  entity_types?: string[];
+  language?: string;
+  // Manual embedding dimension override (for low-confidence model detection)
+  manual_embedding_dimensions?: number;
+  manual_embedding_max_tokens?: number;
 }
 
 export interface NotebookResponse {
@@ -30,6 +36,9 @@ export interface NotebookResponse {
   // Add provider information to response (optional for backward compatibility)
   llm_provider?: ProviderConfig;
   embedding_provider?: ProviderConfig;
+  // Schema consistency information
+  entity_types?: string[];
+  language?: string;
 }
 
 /**
@@ -115,6 +124,7 @@ export interface QueryTemplate {
 
 /**
  * Enhanced query request with chat history support
+ * Uses enhanced citation mode by default for academic-style citations
  */
 export interface EnhancedNotebookQueryRequest extends NotebookQueryRequest {
   use_chat_history?: boolean;
@@ -135,6 +145,83 @@ export interface DocumentRetryResponse {
   message: string;
   document_id: string;
   status: string;
+}
+
+/**
+ * Notebook schema update request
+ */
+export interface NotebookSchemaUpdate {
+  entity_types?: string[];
+  language?: string;
+}
+
+/**
+ * Notebook configuration update response
+ */
+export interface NotebookConfigurationUpdateResponse {
+  message: string;
+  notebook: NotebookResponse;
+  reprocessing_info: {
+    total_documents: number;
+    completed_documents: number;
+    failed_documents: number;
+    needs_reprocessing: number;
+  };
+  recommendation: string;
+}
+
+/**
+ * Document reprocessing response
+ */
+export interface DocumentReprocessResponse {
+  message: string;
+  total_documents: number;
+  queued_for_reprocessing: number;
+  failed_no_content?: number;
+  note: string;
+}
+
+/**
+ * Supported file formats response
+ */
+export interface SupportedFormatsResponse {
+  supported_formats: Array<{
+    extension: string;
+    description: string;
+    category: string;
+  }>;
+  categories: {
+    [key: string]: string[];
+  };
+}
+
+/**
+ * Entity types response
+ */
+export interface EntityTypesResponse {
+  default_entity_types: string[];
+  categories: {
+    [key: string]: string[];
+  };
+  description: string;
+  usage: string;
+  specialized_sets: {
+    [key: string]: string[];
+  };
+}
+
+/**
+ * Debug information response
+ */
+export interface DebugInfoResponse {
+  notebook_id: string;
+  total_documents: number;
+  document_statuses: {
+    [key: string]: number;
+  };
+  lightrag_status: string;
+  storage_info: any;
+  recent_errors: string[];
 }
 
 export interface GraphData {
@@ -274,6 +361,88 @@ export class ClaraNotebookService {
   }
 
   /**
+   * Get supported file formats
+   */
+  public async getSupportedFormats(): Promise<SupportedFormatsResponse> {
+    if (!this.isHealthy) {
+      throw new Error('Notebook backend is not available');
+    }
+
+    try {
+      const response = await fetch(`${this.baseUrl}/notebooks/supported-formats`, {
+        method: 'GET',
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to get supported formats: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Get supported formats error:', error);
+      throw error;
+    }
+  }
+
+/**
+ * Get default entity types
+ */
+public async getEntityTypes(): Promise<EntityTypesResponse> {
+  if (!this.isHealthy) {
+    throw new Error('Notebook backend is not available');
+  }
+
+  try {
+    const response = await fetch(`${this.baseUrl}/notebooks/entity-types`, {
+      method: 'GET',
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to get entity types: ${response.statusText}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('Get entity types error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Validate notebook models before creation
+ */
+public async validateModels(config: NotebookCreate): Promise<{
+  llm_accessible: boolean;
+  llm_error: string | null;
+  embedding_accessible: boolean;
+  embedding_error: string | null;
+  overall_status: 'success' | 'partial' | 'failed' | 'error';
+}> {
+  if (!this.isHealthy) {
+    throw new Error('Notebook backend is not available');
+  }
+
+  try {
+    const response = await fetch(`${this.baseUrl}/notebooks/validate-models`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(config),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to validate models: ${response.statusText}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('Validate models error:', error);
+    throw error;
+  }
+}
+
+  /**
    * Create a new notebook
    */
   public async createNotebook(notebook: NotebookCreate): Promise<NotebookResponse> {
@@ -374,6 +543,161 @@ export class ClaraNotebookService {
       }
     } catch (error) {
       console.error('Delete notebook error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update notebook configuration (LLM and embedding providers)
+   */
+  public async updateNotebookConfiguration(notebookId: string, config: NotebookCreate): Promise<NotebookConfigurationUpdateResponse> {
+    if (!this.isHealthy) {
+      throw new Error('Notebook backend is not available');
+    }
+
+    try {
+      const response = await fetch(`${this.baseUrl}/notebooks/${notebookId}/configuration`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(config),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new Error(errorData.detail || `Failed to update notebook configuration: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Update notebook configuration error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update notebook schema (entity types and language)
+   */
+  public async updateNotebookSchema(notebookId: string, schema: NotebookSchemaUpdate): Promise<NotebookResponse> {
+    if (!this.isHealthy) {
+      throw new Error('Notebook backend is not available');
+    }
+
+    try {
+      const response = await fetch(`${this.baseUrl}/notebooks/${notebookId}/schema`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(schema),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new Error(errorData.detail || `Failed to update notebook schema: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Update notebook schema error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Rebuild notebook (safe operation that preserves documents)
+   */
+  public async rebuildNotebook(notebookId: string): Promise<DocumentReprocessResponse> {
+    if (!this.isHealthy) {
+      throw new Error('Notebook backend is not available');
+    }
+
+    try {
+      const response = await fetch(`${this.baseUrl}/notebooks/${notebookId}/rebuild`, {
+        method: 'POST',
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new Error(errorData.detail || `Failed to rebuild notebook: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Rebuild notebook error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Clear notebook storage (DANGER: deletes all documents from database)
+   */
+  public async clearNotebookStorage(notebookId: string): Promise<void> {
+    if (!this.isHealthy) {
+      throw new Error('Notebook backend is not available');
+    }
+
+    try {
+      const response = await fetch(`${this.baseUrl}/notebooks/${notebookId}/clear-storage`, {
+        method: 'POST',
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new Error(errorData.detail || `Failed to clear storage: ${response.statusText}`);
+      }
+    } catch (error) {
+      console.error('Clear storage error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Reprocess all documents in a notebook
+   */
+  public async reprocessDocuments(notebookId: string, force: boolean = false): Promise<DocumentReprocessResponse> {
+    if (!this.isHealthy) {
+      throw new Error('Notebook backend is not available');
+    }
+
+    try {
+      const response = await fetch(`${this.baseUrl}/notebooks/${notebookId}/reprocess-documents?force=${force}`, {
+        method: 'POST',
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new Error(errorData.detail || `Failed to reprocess documents: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Reprocess documents error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get debug information for a notebook
+   */
+  public async getDebugInfo(notebookId: string): Promise<DebugInfoResponse> {
+    if (!this.isHealthy) {
+      throw new Error('Notebook backend is not available');
+    }
+
+    try {
+      const response = await fetch(`${this.baseUrl}/notebooks/${notebookId}/debug`, {
+        method: 'GET',
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to get debug info: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Get debug info error:', error);
       throw error;
     }
   }

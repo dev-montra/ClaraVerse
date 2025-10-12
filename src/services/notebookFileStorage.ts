@@ -302,6 +302,21 @@ class NotebookFileStorage {
     );
     return URL.createObjectURL(blob);
   }
+
+  // Get file content as File object for re-uploading
+  async getFileAsBlob(documentId: string): Promise<{ file: File; filename: string } | null> {
+    const storedFile = await this.getFile(documentId);
+    if (!storedFile) return null;
+
+    const content = storedFile.content;
+    const blob = new Blob(
+      [content instanceof ArrayBuffer ? content : new TextEncoder().encode(content)],
+      { type: storedFile.fileType }
+    );
+
+    const file = new File([blob], storedFile.filename, { type: storedFile.fileType });
+    return { file, filename: storedFile.filename };
+  }
 }
 
 // Export singleton instance

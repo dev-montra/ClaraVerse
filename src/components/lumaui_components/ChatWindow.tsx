@@ -1408,10 +1408,11 @@ Follow this plan systematically, but adapt as needed based on actual results.`;
         userSetting: sessionParameters.maxIterations
       });
       
-      // Sanitizer function to remove consecutive assistant messages
+      // Sanitizer function to remove consecutive assistant messages and validate tool calls
       const sanitizeConversationHistory = (history: Array<{ role: string; content: string; tool_calls?: any[]; tool_call_id?: string; name?: string }>) => {
         const sanitized: typeof history = [];
 
+        // Step 1: Remove consecutive assistant messages
         for (let i = 0; i < history.length; i++) {
           const current = history[i];
           const previous = sanitized[sanitized.length - 1];
@@ -1442,7 +1443,45 @@ Follow this plan systematically, but adapt as needed based on actual results.`;
           }
         }
 
-        return sanitized;
+        // Step 2: Validate that all tool_call_ids have responses
+        const validated: typeof history = [];
+        for (let i = 0; i < sanitized.length; i++) {
+          const current = sanitized[i];
+
+          // If this is an assistant message with tool_calls
+          if (current.role === 'assistant' && current.tool_calls && current.tool_calls.length > 0) {
+            // Collect the tool_call_ids
+            const toolCallIds = current.tool_calls.map((tc: any) => tc.id);
+
+            // Look ahead to find matching tool responses
+            const toolResponses: typeof history = [];
+            let j = i + 1;
+            while (j < sanitized.length && sanitized[j].role === 'tool') {
+              toolResponses.push(sanitized[j]);
+              j++;
+            }
+
+            // Check if all tool_call_ids have responses
+            const respondedIds = toolResponses.map(tr => tr.tool_call_id);
+            const missingIds = toolCallIds.filter(id => !respondedIds.includes(id));
+
+            if (missingIds.length > 0) {
+              console.warn(`⚠️ Assistant message has tool_calls without responses. Missing: ${missingIds.join(', ')}`);
+              console.warn('⚠️ Removing tool_calls from assistant message to fix format');
+
+              // Remove tool_calls to make it a valid message
+              const fixedMessage = { ...current };
+              delete fixedMessage.tool_calls;
+              validated.push(fixedMessage);
+            } else {
+              validated.push(current);
+            }
+          } else {
+            validated.push(current);
+          }
+        }
+
+        return validated;
       };
 
       while (conversationIteration < maxConversationTurns && totalToolCalls < maxToolCalls) {

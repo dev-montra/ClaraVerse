@@ -4,6 +4,7 @@ import FileExplorer from './FileExplorer';
 import MonacoEditor from './MonacoEditor';
 import TerminalComponent from './TerminalComponent';
 import PreviewPane from './PreviewPane';
+import SettingsPanel from './SettingsPanel';
 import { FileNode, Project } from '../../types';
 import { Terminal } from '@xterm/xterm';
 import { WebContainer } from '@webcontainer/api';
@@ -42,6 +43,10 @@ interface RightPanelWorkspaceProps {
   isStarting: boolean;
   onStartProject: (project: Project) => void;
 
+  // Settings props
+  onClearChat?: () => void;
+  onResetProject?: () => void;
+
   // View mode (play = preview only, edit = full IDE)
   viewMode?: 'play' | 'edit';
 }
@@ -68,6 +73,8 @@ const RightPanelWorkspace: React.FC<RightPanelWorkspaceProps> = ({
   project,
   isStarting,
   onStartProject,
+  onClearChat,
+  onResetProject,
   viewMode = 'edit'
 }) => {
   return (
@@ -157,8 +164,8 @@ const RightPanelWorkspace: React.FC<RightPanelWorkspaceProps> = ({
             </div>
           </div>
 
-          {/* Bottom: Terminal (ALWAYS RENDERED, visible in editor mode) */}
-          <div className="glassmorphic shrink-0" style={{ height: '200px' }}>
+          {/* Bottom: Terminal (HIDDEN - will be fixed later) */}
+          {/* <div className="glassmorphic shrink-0" style={{ height: '200px' }}>
             <TerminalComponent
               terminalRef={terminalRef}
               webContainer={webContainer}
@@ -166,7 +173,7 @@ const RightPanelWorkspace: React.FC<RightPanelWorkspaceProps> = ({
               onToggle={() => {}}
               onReconnectShell={onReconnectShell}
             />
-          </div>
+          </div> */}
         </div>
 
         {/* Preview Mode */}
@@ -182,18 +189,13 @@ const RightPanelWorkspace: React.FC<RightPanelWorkspaceProps> = ({
 
         {/* Settings Mode */}
         {mode === 'settings' && (
-          <div className="h-full w-full flex items-center justify-center glassmorphic absolute inset-0">
-            <div className="text-center max-w-md px-6">
-              <div className="w-16 h-16 mx-auto mb-6 glassmorphic-card rounded-2xl flex items-center justify-center">
-                <SettingsIcon className="w-8 h-8 text-sakura-600 dark:text-sakura-400" />
-              </div>
-              <h3 className="text-xl font-semibold text-gray-800 dark:text-gray-100 mb-3">
-                Settings Panel
-              </h3>
-              <p className="text-gray-600 dark:text-gray-400 leading-relaxed">
-                Settings panel coming soon. Configure your workspace preferences, editor settings, and more.
-              </p>
-            </div>
+          <div className="h-full w-full overflow-hidden absolute inset-0">
+            <SettingsPanel
+              project={project}
+              files={files}
+              onClearChat={onClearChat}
+              onResetProject={onResetProject}
+            />
           </div>
         )}
 

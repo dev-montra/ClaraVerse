@@ -29,7 +29,11 @@ import {
   FileSpreadsheet,
   Presentation,
   Globe,
-  FileImage
+  FileImage,
+  Tags,
+  Plus,
+  Minus,
+  Save
 } from 'lucide-react';
 import DocumentUpload from './DocumentUpload';
 import CreateDocumentModal from './CreateDocumentModal';
@@ -40,13 +44,13 @@ import GraphViewerModal from './GraphViewerModal';
 import { 
   claraNotebookService, 
   NotebookResponse, 
-  NotebookDocumentResponse 
+  NotebookDocumentResponse,
+  EntityTypesResponse,
+  DocumentReprocessResponse
 } from '../../services/claraNotebookService';
 import { useProviders } from '../../contexts/ProvidersContext';
 import { claraApiService } from '../../services/claraApiService';
 import { ClaraModel } from '../../types/clara_assistant_types';
-import { useClaraCoreAutostart } from '../../hooks/useClaraCoreAutostart';
-import ClaraCoreStatusBanner from './ClaraCoreStatusBanner';
 import { notebookFileStorage } from '../../services/notebookFileStorage';
 
 interface ChatMessage {
@@ -55,10 +59,15 @@ interface ChatMessage {
   content: string;
   timestamp: Date;
   role?: 'user' | 'assistant';
+  mode?: 'citation'; // Always uses enhanced citation mode
   citations?: Array<{
     file_path: string;
     title: string;
     content?: string;
+    document_id?: string;
+    filename?: string;
+    uploaded_at?: string;
+    content_size?: number;
   }>;
 }
 
@@ -90,6 +99,8 @@ const NotebookDetails_new: React.FC<NotebookDetailsNewProps> = ({
   const [isEditingLLM, setIsEditingLLM] = useState(false);
   const [selectedLLMProvider, setSelectedLLMProvider] = useState('');
   const [selectedLLMModel, setSelectedLLMModel] = useState('');
+  const [selectedEmbeddingProvider, setSelectedEmbeddingProvider] = useState('');
+  const [selectedEmbeddingModel, setSelectedEmbeddingModel] = useState('');
   const [models, setModels] = useState<ClaraModel[]>([]);
   const [studioActiveTab, setStudioActiveTab] = useState<'sources' | 'graph' | 'analytics'>('sources');
   const [selectedDocument, setSelectedDocument] = useState<NotebookDocumentResponse | null>(null);
@@ -100,9 +111,27 @@ const NotebookDetails_new: React.FC<NotebookDetailsNewProps> = ({
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [isBackendHealthy, setIsBackendHealthy] = useState(true);
   
-  // Clara Core auto-start functionality
-  const claraCoreStatus = useClaraCoreAutostart(notebook);
-  const [showClaraCoreStatus, setShowClaraCoreStatus] = useState(true);
+  // Notebook-specific model connectivity status
+  const [modelStatus, setModelStatus] = useState<{
+    llm_accessible: boolean;
+    llm_error: string | null;
+    embedding_accessible: boolean;
+    embedding_error: string | null;
+    overall_status: 'success' | 'partial' | 'failed' | 'error';
+    lastChecked: Date | null;
+  }>({ llm_accessible: false, llm_error: null, embedding_accessible: false, embedding_error: null, overall_status: 'error', lastChecked: null });
+  const [showModelStatus, setShowModelStatus] = useState(true);
+  const [modelStatusDismissed, setModelStatusDismissed] = useState(false);
+  
+  // Entity types and configuration management
+  const [entityTypesData, setEntityTypesData] = useState<EntityTypesResponse | null>(null);
+  const [selectedEntityTypes, setSelectedEntityTypes] = useState<string[]>([]);
+  const [customEntityType, setCustomEntityType] = useState('');
+  const [selectedLanguage, setSelectedLanguage] = useState('en');
+  const [isEditingEntityTypes, setIsEditingEntityTypes] = useState(false);
+  const [isUpdatingConfiguration, setIsUpdatingConfiguration] = useState(false);
+  const [isReprocessingDocuments, setIsReprocessingDocuments] = useState(false);
+  const [reprocessingProgress, setReprocessingProgress] = useState<DocumentReprocessResponse | null>(null);
   
   // Get providers from context
   const { providers } = useProviders();
@@ -124,13 +153,118 @@ const NotebookDetails_new: React.FC<NotebookDetailsNewProps> = ({
     }
   }, [providers]);
 
-  // Initialize LLM selection with current notebook values
+  // Validate current notebook's models (LLM and Embedding) periodically
+  // Once connected successfully, stop checking to reduce pressure on models
+  useEffect(() => {
+    let interval: NodeJS.Timeout | null = null;
+    
+    const checkNotebookModelStatus = async () => {
+      try {
+        if (!claraNotebookService.isBackendHealthy()) return false;
+        if (!notebook.llm_provider || !notebook.embedding_provider) return false;
+        
+        const validation = await claraNotebookService.validateModels({
+          name: notebook.name,
+          description: notebook.description,
+          llm_provider: notebook.llm_provider,
+          embedding_provider: notebook.embedding_provider,
+          entity_types: notebook.entity_types,
+          language: notebook.language
+        });
+        
+        setModelStatus({
+          llm_accessible: validation.llm_accessible,
+          llm_error: validation.llm_error,
+          embedding_accessible: validation.embedding_accessible,
+          embedding_error: validation.embedding_error,
+          overall_status: validation.overall_status,
+          lastChecked: new Date()
+        });
+        
+        // Auto-hide when fully connected, unless user dismissed earlier
+        if (validation.overall_status === 'success') {
+          if (!modelStatusDismissed) {
+            setShowModelStatus(false);
+          }
+          // Stop checking once successfully connected
+          if (interval) {
+            clearInterval(interval);
+            interval = null;
+          }
+          return true; // Success - stop checking
+        } else {
+          // Always show on any degraded status
+          setShowModelStatus(true);
+          return false; // Keep checking
+        }
+      } catch (e: any) {
+        setModelStatus(prev => ({
+          ...prev,
+          llm_accessible: false,
+          embedding_accessible: false,
+          overall_status: 'error',
+          llm_error: e?.message ?? 'Validation failed',
+          embedding_error: e?.message ?? 'Validation failed',
+          lastChecked: new Date()
+        }));
+        setShowModelStatus(true);
+        return false; // Keep checking
+      }
+    };
+
+    // Initial check
+    checkNotebookModelStatus().then(success => {
+      // Only set up interval if initial check failed
+      if (!success) {
+        interval = setInterval(async () => {
+          await checkNotebookModelStatus();
+          // Interval will be cleared inside the function if connection succeeds
+        }, 30000);
+      }
+    });
+
+    return () => {
+      if (interval) clearInterval(interval);
+    };
+  }, [notebook.id, notebook.llm_provider, notebook.embedding_provider, modelStatusDismissed]);
+
+  // Initialize LLM and embedding selection with current notebook values
   useEffect(() => {
     if (notebook.llm_provider) {
       setSelectedLLMProvider(notebook.llm_provider.name);
       setSelectedLLMModel(notebook.llm_provider.model);
     }
+    if (notebook.embedding_provider) {
+      setSelectedEmbeddingProvider(notebook.embedding_provider.name);
+      setSelectedEmbeddingModel(notebook.embedding_provider.model);
+    }
   }, [notebook]);
+
+  // Load entity types and initialize state
+  useEffect(() => {
+    const loadEntityTypes = async () => {
+      try {
+        if (claraNotebookService.isBackendHealthy()) {
+          const entityData = await claraNotebookService.getEntityTypes();
+          setEntityTypesData(entityData);
+        }
+      } catch (error) {
+        console.error('Failed to load entity types:', error);
+      }
+    };
+
+    loadEntityTypes();
+  }, []);
+
+  // Initialize entity types and language from notebook
+  useEffect(() => {
+    if (notebook.entity_types) {
+      setSelectedEntityTypes(notebook.entity_types);
+    }
+    if (notebook.language) {
+      setSelectedLanguage(notebook.language);
+    }
+  }, [notebook.entity_types, notebook.language]);
 
   // Auto-refresh documents every 5 seconds if there are processing documents
   useEffect(() => {
@@ -341,6 +475,70 @@ const NotebookDetails_new: React.FC<NotebookDetailsNewProps> = ({
     }
 
     try {
+      // Check if notebook has required provider configuration
+      if (!notebook.llm_provider || !notebook.embedding_provider) {
+        throw new Error('Notebook configuration is incomplete. Please update settings with valid LLM and embedding providers.');
+      }
+
+      // CRITICAL: Validate models before uploading documents
+      console.log('🔍 Validating models before document upload...');
+      const validation = await claraNotebookService.validateModels({
+        name: notebook.name,
+        description: notebook.description,
+        llm_provider: notebook.llm_provider,
+        embedding_provider: notebook.embedding_provider,
+        entity_types: notebook.entity_types,
+        language: notebook.language
+      });
+
+      console.log('✓ Validation results:', validation);
+
+      // Check validation results
+      if (validation.overall_status === 'failed' || validation.overall_status === 'error') {
+        const errorMessages = [];
+        if (!validation.llm_accessible && validation.llm_error) {
+          errorMessages.push(`❌ LLM Error: ${validation.llm_error}`);
+        }
+        if (!validation.embedding_accessible && validation.embedding_error) {
+          errorMessages.push(`❌ Embedding Error: ${validation.embedding_error}`);
+        }
+        
+        throw new Error(
+          `⚠️ Cannot Process Documents - Models Not Accessible\n\n${errorMessages.join('\n\n')}\n\n` +
+          `Your documents will upload but will fail to process!\n\n` +
+          `Please check:\n` +
+          `• Model services are running (Clara Core / Ollama / OpenAI)\n` +
+          `• API keys are valid\n` +
+          `• Network connectivity\n` +
+          `• Model names in Settings are correct\n\n` +
+          `Fix these issues before uploading documents.`
+        );
+      }
+
+      if (validation.overall_status === 'partial') {
+        const partialMessage = [];
+        if (!validation.llm_accessible) {
+          partialMessage.push(`⚠️ LLM not accessible: ${validation.llm_error}`);
+        }
+        if (!validation.embedding_accessible) {
+          partialMessage.push(`⚠️ Embedding not accessible: ${validation.embedding_error}`);
+        }
+        
+        // Show warning but allow upload
+        console.warn('Partial validation:', partialMessage.join(', '));
+        const continueUpload = window.confirm(
+          `${partialMessage.join('\n\n')}\n\n` +
+          `Document processing will likely fail!\n\n` +
+          `Continue anyway?`
+        );
+        
+        if (!continueUpload) {
+          throw new Error('Upload cancelled by user');
+        }
+      }
+
+      console.log('✓ Models validated successfully, uploading documents...');
+
       const uploadedDocs = await claraNotebookService.uploadDocuments(notebook.id, files);
       
       // Store files locally in IndexedDB (in parallel with upload)
@@ -462,17 +660,344 @@ const NotebookDetails_new: React.FC<NotebookDetailsNewProps> = ({
   }, [notification]);
 
   const handleUpdateLLM = async () => {
-    // TODO: Implement LLM update functionality
-    // This would require a backend API to update the notebook's LLM provider
-    console.log('Update LLM not yet implemented');
-    setIsEditingLLM(false);
+    if (!selectedLLMProvider || !selectedLLMModel) {
+      setNotification({ message: 'Please select LLM provider and model', type: 'error' });
+      return;
+    }
+
+    if (!selectedEmbeddingProvider || !selectedEmbeddingModel) {
+      setNotification({ message: 'Please select embedding provider and model', type: 'error' });
+      return;
+    }
+
+    setIsUpdatingConfiguration(true);
+    try {
+      const llmProvider = providers.find(p => p.name === selectedLLMProvider);
+      const llmModel = models.find(m => m.name === selectedLLMModel);
+      const embeddingProvider = providers.find(p => p.name === selectedEmbeddingProvider);
+      const embeddingModel = models.find(m => m.name === selectedEmbeddingModel);
+
+      if (!llmProvider || !llmModel || !embeddingProvider || !embeddingModel) {
+        throw new Error('Provider or model not found');
+      }
+
+      const newConfig = {
+        name: notebook.name,
+        description: notebook.description,
+        llm_provider: {
+          name: llmProvider.name,
+          type: llmProvider.type as 'openai' | 'openai_compatible' | 'ollama',
+          baseUrl: llmProvider.baseUrl,
+          apiKey: llmProvider.apiKey,
+          model: llmModel.name
+        },
+        embedding_provider: {
+          name: embeddingProvider.name,
+          type: embeddingProvider.type as 'openai' | 'openai_compatible' | 'ollama',
+          baseUrl: embeddingProvider.baseUrl,
+          apiKey: embeddingProvider.apiKey,
+          model: embeddingModel.name
+        },
+        entity_types: selectedEntityTypes,
+        language: selectedLanguage
+      };
+
+      // CRITICAL: Validate new configuration before applying
+      console.log('🔍 Validating new configuration before update...');
+      const validation = await claraNotebookService.validateModels(newConfig);
+      console.log('✓ Validation results:', validation);
+
+      // Check validation results
+      if (validation.overall_status === 'failed' || validation.overall_status === 'error') {
+        const errorMessages = [];
+        if (!validation.llm_accessible && validation.llm_error) {
+          errorMessages.push(`❌ LLM Error: ${validation.llm_error}`);
+        }
+        if (!validation.embedding_accessible && validation.embedding_error) {
+          errorMessages.push(`❌ Embedding Error: ${validation.embedding_error}`);
+        }
+        
+        throw new Error(
+          `⚠️ Configuration Validation Failed\n\n${errorMessages.join('\n\n')}\n\n` +
+          `Cannot update configuration - models are not accessible.\n\n` +
+          `Please check:\n` +
+          `• Model services are running\n` +
+          `• API keys are correct\n` +
+          `• Model names are valid\n` +
+          `• Network connectivity`
+        );
+      }
+
+      if (validation.overall_status === 'partial') {
+        const partialMessage = [];
+        if (!validation.llm_accessible) {
+          partialMessage.push(`⚠️ LLM not accessible: ${validation.llm_error}`);
+        }
+        if (!validation.embedding_accessible) {
+          partialMessage.push(`⚠️ Embedding not accessible: ${validation.embedding_error}`);
+        }
+        
+        // Show warning but allow update
+        console.warn('Partial validation:', partialMessage.join(', '));
+        const continueUpdate = window.confirm(
+          `${partialMessage.join('\n\n')}\n\n` +
+          `Future document processing will fail!\n\n` +
+          `Continue anyway?`
+        );
+        
+        if (!continueUpdate) {
+          setIsUpdatingConfiguration(false);
+          return;
+        }
+      }
+
+      console.log('✓ Configuration validated successfully, updating notebook...');
+
+      // Detect if embedding model changed (requires rebuild)
+      const embeddingModelChanged = 
+        notebook.embedding_provider?.model !== embeddingModel.name ||
+        notebook.embedding_provider?.name !== embeddingProvider.name;
+
+      const response = await claraNotebookService.updateNotebookConfiguration(notebook.id, newConfig);
+
+      // Update the notebook with the new configuration
+      onNotebookUpdated(response.notebook);
+      setIsEditingLLM(false);
+      
+      // If embedding model changed, automatically trigger rebuild
+      if (embeddingModelChanged && notebook.document_count > 0) {
+        const shouldRebuild = window.confirm(
+          '🔄 Embedding Model Changed!\n\n' +
+          'The embedding model has changed. To ensure consistency, all documents should be rebuilt with the new embeddings.\n\n' +
+          `This will:\n` +
+          `• Clear the current knowledge graph\n` +
+          `• Reprocess all ${notebook.document_count} documents\n` +
+          `• Generate new embeddings with the updated model\n\n` +
+          'Rebuild now? (Recommended)'
+        );
+
+        if (shouldRebuild) {
+          try {
+            setIsReprocessingDocuments(true);
+            console.log('🔄 Triggering automatic rebuild due to embedding model change...');
+            
+            const rebuildResponse = await claraNotebookService.rebuildNotebook(notebook.id);
+            
+            setNotification({ 
+              message: `Notebook rebuild initiated! ${rebuildResponse.queued_for_reprocessing} documents queued with new embedding model.`, 
+              type: 'success' 
+            });
+            
+            // Refresh documents to show new status
+            await loadDocuments();
+          } catch (rebuildError) {
+            console.error('Failed to rebuild after embedding change:', rebuildError);
+            setNotification({ 
+              message: 'Configuration updated but rebuild failed. Use the Rebuild button in Danger Zone to retry.', 
+              type: 'error' 
+            });
+          } finally {
+            setIsReprocessingDocuments(false);
+          }
+        } else {
+          // User declined rebuild - show manual option
+          setNotification({ 
+            message: 'Configuration updated. Use "Rebuild Notebook" in Danger Zone when ready to reprocess documents.', 
+            type: 'success' 
+          });
+        }
+      } else {
+        // No embedding change or no documents - just show success
+        setNotification({ 
+          message: `Configuration updated successfully. ${response.recommendation}`, 
+          type: 'success' 
+        });
+
+        // Show reprocessing progress if documents need reprocessing (for other changes)
+        if (response.reprocessing_info.needs_reprocessing > 0 && !embeddingModelChanged) {
+          setReprocessingProgress({
+            message: `${response.reprocessing_info.needs_reprocessing} documents may need reprocessing for consistency`,
+            total_documents: response.reprocessing_info.total_documents,
+            queued_for_reprocessing: 0,
+            note: 'Click "Reprocess Documents" to update existing documents with new configuration'
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Failed to update configuration:', error);
+      setNotification({ 
+        message: error instanceof Error ? error.message : 'Failed to update configuration', 
+        type: 'error' 
+      });
+    } finally {
+      setIsUpdatingConfiguration(false);
+    }
   };
 
-  const getLLMModels = (providerId: string) => {
+  // Entity type management functions
+  const addEntityType = (entityType: string) => {
+    if (entityType && !selectedEntityTypes.includes(entityType)) {
+      setSelectedEntityTypes(prev => [...prev, entityType]);
+    }
+  };
+
+  const removeEntityType = (entityType: string) => {
+    setSelectedEntityTypes(prev => prev.filter(type => type !== entityType));
+  };
+
+  const addCustomEntityType = () => {
+    if (customEntityType.trim()) {
+      addEntityType(customEntityType.trim().toUpperCase());
+      setCustomEntityType('');
+    }
+  };
+
+  const handleUpdateEntityTypes = async () => {
+    setIsUpdatingConfiguration(true);
+    try {
+      const updatedNotebook = await claraNotebookService.updateNotebookSchema(notebook.id, {
+        entity_types: selectedEntityTypes,
+        language: selectedLanguage
+      });
+
+      onNotebookUpdated(updatedNotebook);
+      setIsEditingEntityTypes(false);
+      setNotification({ 
+        message: 'Entity types and language updated successfully', 
+        type: 'success' 
+      });
+    } catch (error) {
+      console.error('Failed to update entity types:', error);
+      setNotification({ 
+        message: error instanceof Error ? error.message : 'Failed to update entity types', 
+        type: 'error' 
+      });
+    } finally {
+      setIsUpdatingConfiguration(false);
+    }
+  };
+
+  const handleReprocessDocuments = async (force: boolean = false) => {
+    setIsReprocessingDocuments(true);
+    try {
+      const response = await claraNotebookService.reprocessDocuments(notebook.id, force);
+      setReprocessingProgress(response);
+      setNotification({ 
+        message: response.message, 
+        type: 'success' 
+      });
+    } catch (error) {
+      console.error('Failed to reprocess documents:', error);
+      setNotification({ 
+        message: error instanceof Error ? error.message : 'Failed to reprocess documents', 
+        type: 'error' 
+      });
+    } finally {
+      setIsReprocessingDocuments(false);
+    }
+  };
+
+  const getLLMModels = (providerName: string) => {
+    // Find the provider by name to get its ID
+    const provider = providers.find(p => p.name === providerName);
+    if (!provider) return [];
+    
     return models.filter(m => 
-      m.provider === providerId && 
+      m.provider === provider.id && 
       (m.type === 'text' || m.type === 'multimodal')
     );
+  };
+
+  const getEmbeddingModels = (providerName: string) => {
+    // Find the provider by name to get its ID
+    const provider = providers.find(p => p.name === providerName);
+    if (!provider) return [];
+    
+    // Comprehensive list of supported embedding models (verified against backend)
+    const supportedEmbeddingModels = [
+      // OpenAI Models
+      'text-embedding-ada-002',
+      'text-embedding-3-small', 
+      'text-embedding-3-large',
+      // MixedBread AI
+      'mxbai-embed-large',
+      // Nomic AI
+      'nomic-embed',
+      // Microsoft E5 Models
+      'e5-large-v2',
+      'e5-base-v2',
+      'e5-small-v2',
+      // Sentence Transformers - All-MiniLM
+      'all-minilm-l6-v2',
+      'all-minilm-l12-v2',
+      'all-minilm',
+      'all-mpnet-base-v2',
+      // BAAI BGE Models (Beijing Academy AI)
+      'bge-large',
+      'bge-base',
+      'bge-small',
+      'bge-m3',
+      // Qwen Models (Alibaba)
+      'qwen',
+      'qwen2',
+      'qwen2.5-coder',
+      'qwen3-embedding',
+      // Jina AI Models
+      'jina-embeddings-v2',
+      'jina-embeddings',
+      // Cohere Models
+      'embed-english',
+      'embed-multilingual',
+      // Voyage AI
+      'voyage-large-2',
+      'voyage-code-2',
+      'voyage-2',
+      'voyage',
+      // Snowflake Arctic Embed
+      'snowflake-arctic-embed2',
+      'snowflake-arctic-embed',
+      // Google EmbeddingGemma
+      'embeddinggemma',
+      'embedding-gemma',
+      // IBM Granite Embedding
+      'granite-embedding',
+      // Sentence-Transformers Paraphrase
+      'paraphrase-multilingual',
+      'paraphrase-mpnet',
+      'paraphrase-albert',
+      'paraphrase-minilm',
+      // Sentence-T5
+      'sentence-t5',
+      // Alibaba GTE Models
+      'gte-large',
+      'gte-base',
+      'gte-small',
+      'gte-qwen',
+      // UAE (Universal AnglE Embedding)
+      'uae-large-v1',
+      // Instructor Models
+      'instructor-xl',
+      'instructor-large',
+      'instructor-base',
+      // NVIDIA NV-Embed
+      'nv-embed-v2',
+      'nv-embed',
+      // Stella Models
+      'stella'
+    ];
+    
+    return models.filter(m => {
+      if (m.provider !== provider.id) return false;
+      
+      // Check if it's explicitly marked as embedding type
+      if (m.type === 'embedding') return true;
+      
+      // Check if the model name matches supported embedding models
+      const modelNameLower = m.name.toLowerCase();
+      return supportedEmbeddingModels.some(supported => 
+        modelNameLower.includes(supported.toLowerCase())
+      );
+    });
   };
 
   const getDocumentStats = () => {
@@ -491,7 +1016,7 @@ const NotebookDetails_new: React.FC<NotebookDetailsNewProps> = ({
     return healthy;
   };
 
-  const handleSendMessage = async (message: string) => {
+  const handleSendMessage = async (message: string, mode?: 'local' | 'global' | 'hybrid' | 'naive' | 'mix') => {
     if (!message.trim()) return;
 
     const userMessage: ChatMessage = {
@@ -499,7 +1024,8 @@ const NotebookDetails_new: React.FC<NotebookDetailsNewProps> = ({
       type: 'user',
       content: message.trim(),
       timestamp: new Date(),
-      role: 'user'
+      role: 'user',
+      mode: 'citation' // Always use enhanced citation mode
     };
 
     setChatMessages(prev => [...prev, userMessage]);
@@ -508,7 +1034,8 @@ const NotebookDetails_new: React.FC<NotebookDetailsNewProps> = ({
     try {
       const response = await claraNotebookService.sendChatMessage(notebook.id, {
         question: message.trim(),
-        use_chat_history: true
+        use_chat_history: true,
+        mode: mode || 'hybrid' // Pass the selected query mode
       });
       
       const assistantMessage: ChatMessage = {
@@ -1112,7 +1639,6 @@ const NotebookDetails_new: React.FC<NotebookDetailsNewProps> = ({
           onClose={() => setShowCreateDocModal(false)}
           onUpload={handleDocumentUpload}
           onTextFileCreated={(filename, content, documentId) => {
-            // Store text file locally after it's uploaded
             storeTextFileLocally(filename, content, documentId);
           }}
         />
@@ -1144,71 +1670,70 @@ const NotebookDetails_new: React.FC<NotebookDetailsNewProps> = ({
         />
       )}
 
-      {/* Settings Modal */}
       {showSettingsModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-50 p-4">
-          <div className="glassmorphic bg-white/80 dark:bg-gray-900/80 backdrop-blur-2xl rounded-3xl shadow-2xl w-full max-w-3xl max-h-[90vh] overflow-hidden border border-white/30 dark:border-gray-700/30">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="glassmorphic w-full max-w-2xl max-h-[85vh] overflow-hidden rounded-xl bg-white/80 dark:bg-gray-900/80 backdrop-blur-xl shadow-2xl">
             {/* Header */}
-            <div className="flex items-center justify-between p-8 border-b border-white/20 dark:border-gray-800/30">
-              <div className="flex items-center gap-4">
-                <div className="p-3 bg-gradient-to-br from-gray-500 to-gray-600 rounded-2xl text-white shadow-lg">
-                  <Settings className="w-6 h-6" />
+            <div className="flex items-center justify-between px-4 py-3">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 rounded-lg glassmorphic bg-white/60 dark:bg-gray-800/60 text-gray-700 dark:text-gray-200">
+                  <Settings className="w-4 h-4" />
                 </div>
-                <h2 className="text-2xl font-bold bg-gradient-to-r from-gray-900 to-gray-600 dark:from-white dark:to-gray-300 bg-clip-text text-transparent">
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
                   Notebook Settings
                 </h2>
               </div>
               <button
                 onClick={() => setShowSettingsModal(false)}
-                className="p-3 glassmorphic bg-white/60 dark:bg-gray-800/60 hover:bg-white/80 dark:hover:bg-gray-800/80 rounded-2xl transition-all duration-200 border border-white/30 dark:border-gray-700/30 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 shadow-lg"
+                className="p-1.5 rounded-lg glassmorphic bg-white/60 dark:bg-gray-800/60 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-white/80 dark:hover:bg-gray-800/80 transition-colors"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
 
             {/* Content */}
-            <div className="p-8 space-y-8 overflow-y-auto custom-scrollbar max-h-[calc(90vh-120px)]">
+            <div className="px-4 py-3 space-y-3 overflow-y-auto custom-scrollbar max-h-[calc(85vh-80px)]">
               {/* AI Configuration */}
-              <div className="glassmorphic bg-white/60 dark:bg-gray-800/60 backdrop-blur-xl p-6 rounded-2xl border border-white/30 dark:border-gray-700/30 shadow-xl">
-                <div className="flex items-center justify-between mb-6">
-                  <h3 className="text-xl font-bold bg-gradient-to-r from-blue-600 to-cyan-600 dark:from-blue-400 dark:to-cyan-400 bg-clip-text text-transparent flex items-center gap-3">
-                    <div className="p-2 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-xl shadow-lg">
-                      <Bot className="w-5 h-5 text-white" />
+              <div className="glassmorphic rounded-lg bg-white/60 dark:bg-gray-800/60 backdrop-blur-xl p-3">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+                    <div className="p-1.5 rounded-md glassmorphic bg-white/60 dark:bg-gray-800/60 text-gray-700 dark:text-gray-200">
+                      <Bot className="w-4 h-4" />
                     </div>
                     AI Configuration
                   </h3>
                   {!isEditingLLM && notebook.llm_provider && (
                     <button
                       onClick={() => setIsEditingLLM(true)}
-                      className="p-2 glassmorphic bg-white/60 dark:bg-gray-700/60 hover:bg-white/80 dark:hover:bg-gray-700/80 rounded-xl transition-all duration-200 border border-white/30 dark:border-gray-600/30 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 shadow-lg"
+                      className="p-1.5 rounded-md glassmorphic bg-white/60 dark:bg-gray-800/60 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-white/80 dark:hover:bg-gray-800/80 transition-colors"
                       title="Edit LLM Configuration"
                     >
-                      <Edit className="w-4 h-4" />
+                      <Edit className="w-3 h-3" />
                     </button>
                   )}
                 </div>
-                
+
                 {notebook.llm_provider && notebook.embedding_provider ? (
-                  <div className="space-y-6">
+                  <div className="space-y-3">
                     {/* LLM Configuration */}
-                    <div className="glassmorphic bg-white/50 dark:bg-gray-700/50 backdrop-blur-sm p-5 rounded-xl border border-white/20 dark:border-gray-600/20 shadow-lg">
-                      <div className="flex items-center gap-3 mb-4">
-                        <div className="p-2 bg-gradient-to-br from-blue-500 to-purple-500 rounded-xl shadow-lg">
-                          <Bot className="w-4 h-4 text-white" />
+                    <div className="glassmorphic rounded-md bg-white/50 dark:bg-gray-700/50 backdrop-blur-sm p-3">
+                      <div className="flex items-center gap-2 mb-3">
+                        <div className="p-1 rounded-md glassmorphic bg-white/60 dark:bg-gray-800/60 text-gray-700 dark:text-gray-200">
+                          <Bot className="w-3 h-3" />
                         </div>
-                        <span className="font-bold text-gray-700 dark:text-gray-300">Language Model</span>
+                        <span className="text-sm font-medium text-gray-800 dark:text-gray-200">Language Model</span>
                       </div>
                       {isEditingLLM ? (
-                        <div className="space-y-4">
+                        <div className="space-y-2">
                           <div>
-                            <label className="block text-sm font-semibold text-gray-600 dark:text-gray-400 mb-2">Provider</label>
+                            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Provider</label>
                             <select
                               value={selectedLLMProvider}
                               onChange={(e) => {
                                 setSelectedLLMProvider(e.target.value);
                                 setSelectedLLMModel('');
                               }}
-                              className="w-full px-4 py-3 glassmorphic bg-white/60 dark:bg-gray-800/60 text-gray-900 dark:text-white rounded-xl border border-white/30 dark:border-gray-700/30 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all backdrop-blur-sm shadow-lg"
+                              className="w-full px-2 py-1.5 text-sm rounded-md glassmorphic bg-white/60 dark:bg-gray-800/60 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500/50"
                             >
                               <option value="">Select Provider</option>
                               {providers.filter(p => p.isEnabled).map(provider => (
@@ -1219,12 +1744,12 @@ const NotebookDetails_new: React.FC<NotebookDetailsNewProps> = ({
                             </select>
                           </div>
                           <div>
-                            <label className="block text-sm font-semibold text-gray-600 dark:text-gray-400 mb-2">Model</label>
+                            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Model</label>
                             <select
                               value={selectedLLMModel}
                               onChange={(e) => setSelectedLLMModel(e.target.value)}
                               disabled={!selectedLLMProvider}
-                              className="w-full px-4 py-3 glassmorphic bg-white/60 dark:bg-gray-800/60 text-gray-900 dark:text-white rounded-xl border border-white/30 dark:border-gray-700/30 focus:outline-none focus:ring-2 focus:ring-blue-500/50 transition-all backdrop-blur-sm shadow-lg disabled:opacity-50"
+                              className="w-full px-2 py-1.5 text-sm rounded-md glassmorphic bg-white/60 dark:bg-gray-800/60 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500/50 disabled:opacity-60"
                             >
                               <option value="">Select Model</option>
                               {selectedLLMProvider && getLLMModels(selectedLLMProvider).map(model => (
@@ -1234,101 +1759,520 @@ const NotebookDetails_new: React.FC<NotebookDetailsNewProps> = ({
                               ))}
                             </select>
                           </div>
-                          <div className="flex gap-3 pt-2">
-                            <button
-                              onClick={handleUpdateLLM}
-                              className="px-6 py-3 glassmorphic bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl transition-all duration-200 border border-emerald-500/30 shadow-lg hover:shadow-xl font-semibold"
-                            >
-                              Save Changes
-                            </button>
-                            <button
-                              onClick={() => setIsEditingLLM(false)}
-                              className="px-6 py-3 glassmorphic bg-gray-600 hover:bg-gray-700 text-white rounded-xl transition-all duration-200 border border-gray-500/30 shadow-lg hover:shadow-xl font-semibold"
-                            >
-                              Cancel
-                            </button>
+                          <div className="space-y-2">
+                            <div className="text-[10px] text-blue-700 dark:text-blue-300 flex items-center gap-1.5 rounded-md glassmorphic bg-blue-50/80 dark:bg-blue-900/30 p-2">
+                              <AlertCircle className="w-3 h-3 flex-shrink-0" />
+                              <span>Save updates all model settings at once.</span>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                onClick={handleUpdateLLM}
+                                disabled={isUpdatingConfiguration}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white font-medium transition-colors"
+                              >
+                                {isUpdatingConfiguration ? (
+                                  <>
+                                    <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                                    Updating...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Save className="w-3 h-3" />
+                                    Save Changes
+                                  </>
+                                )}
+                              </button>
+                              <button
+                                onClick={() => setIsEditingLLM(false)}
+                                disabled={isUpdatingConfiguration}
+                                className="inline-flex items-center justify-center px-3 py-1.5 text-xs rounded-md glassmorphic bg-white/60 dark:bg-gray-800/60 text-gray-600 dark:text-gray-300 hover:bg-white/80 dark:hover:bg-gray-800/80 transition-colors"
+                              >
+                                Cancel
+                              </button>
+                            </div>
                           </div>
                         </div>
                       ) : (
-                        <div className="glassmorphic bg-white/40 dark:bg-gray-800/40 p-4 rounded-xl border border-white/20 dark:border-gray-600/20">
-                          <div className="font-bold text-gray-900 dark:text-white">{notebook.llm_provider.name}</div>
-                          <div className="text-sm text-gray-600 dark:text-gray-400 font-medium">{notebook.llm_provider.model}</div>
+                        <div className="rounded-md glassmorphic bg-white/60 dark:bg-gray-800/60 p-2">
+                          <div className="text-sm font-semibold text-gray-900 dark:text-gray-100">{notebook.llm_provider.name}</div>
+                          <div className="text-xs text-gray-600 dark:text-gray-400">{notebook.llm_provider.model}</div>
                         </div>
                       )}
                     </div>
-                    
+
                     {/* Embedding Configuration */}
-                    <div className="glassmorphic bg-white/50 dark:bg-gray-700/50 backdrop-blur-sm p-5 rounded-xl border border-white/20 dark:border-gray-600/20 shadow-lg">
-                      <div className="flex items-center gap-3 mb-4">
-                        <div className="p-2 bg-gradient-to-br from-green-500 to-emerald-500 rounded-xl shadow-lg">
-                          <Layers className="w-4 h-4 text-white" />
+                    <div className="rounded-md glassmorphic bg-white/50 dark:bg-gray-700/50 backdrop-blur-sm p-3">
+                      <div className="flex items-center gap-2 mb-3">
+                        <div className="p-1 rounded-md glassmorphic bg-white/60 dark:bg-gray-800/60 text-gray-700 dark:text-gray-200">
+                          <Layers className="w-3 h-3" />
                         </div>
-                        <span className="font-bold text-gray-700 dark:text-gray-300">Embedding Model</span>
+                        <span className="text-sm font-medium text-gray-800 dark:text-gray-200">Embedding Model</span>
                       </div>
-                      <div className="glassmorphic bg-white/40 dark:bg-gray-800/40 p-4 rounded-xl border border-white/20 dark:border-gray-600/20">
-                        <div className="font-bold text-gray-900 dark:text-white">{notebook.embedding_provider.name}</div>
-                        <div className="text-sm text-gray-600 dark:text-gray-400 font-medium">{notebook.embedding_provider.model}</div>
-                        <div className="text-xs text-amber-600 dark:text-amber-400 mt-3 flex items-center gap-2 glassmorphic bg-amber-50/80 dark:bg-amber-900/30 p-2 rounded-lg border border-amber-200/50 dark:border-amber-600/30">
-                          <AlertCircle className="w-3 h-3 flex-shrink-0" />
-                          <span className="font-medium">Cannot be changed (dimensions fixed once created)</span>
+                      {isEditingLLM ? (
+                        <div className="space-y-2">
+                          <div>
+                            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Provider</label>
+                            <select
+                              value={selectedEmbeddingProvider}
+                              onChange={(e) => {
+                                setSelectedEmbeddingProvider(e.target.value);
+                                setSelectedEmbeddingModel('');
+                              }}
+                              className="w-full px-2 py-1.5 text-sm rounded-md glassmorphic bg-white/60 dark:bg-gray-800/60 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-emerald-500/50"
+                            >
+                              <option value="">Select Provider</option>
+                              {providers.filter(p => p.isEnabled).map(provider => (
+                                <option key={provider.id} value={provider.name}>
+                                  {provider.name}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Model</label>
+                            <select
+                              value={selectedEmbeddingModel}
+                              onChange={(e) => setSelectedEmbeddingModel(e.target.value)}
+                              disabled={!selectedEmbeddingProvider}
+                              className="w-full px-2 py-1.5 text-sm rounded-md glassmorphic bg-white/60 dark:bg-gray-800/60 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-emerald-500/50 disabled:opacity-60"
+                            >
+                              <option value="">Select Model</option>
+                              {selectedEmbeddingProvider && getEmbeddingModels(selectedEmbeddingProvider).map(model => (
+                                <option key={model.id} value={model.name}>
+                                  {model.name}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="space-y-2">
+                            <div className="text-[10px] text-amber-700 dark:text-amber-300 flex items-center gap-1.5 rounded-md glassmorphic bg-amber-50/80 dark:bg-amber-900/30 p-2">
+                              <AlertCircle className="w-3 h-3 flex-shrink-0" />
+                              <span>Changing embeddings requires reprocessing documents.</span>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                onClick={handleUpdateLLM}
+                                disabled={isUpdatingConfiguration}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs rounded-md bg-emerald-600 hover:bg-emerald-700 disabled:bg-emerald-400 text-white font-medium transition-colors"
+                              >
+                                {isUpdatingConfiguration ? (
+                                  <>
+                                    <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                                    Updating...
+                                  </>
+                                ) : (
+                                  <>
+                                    <Save className="w-3 h-3" />
+                                    Save Changes
+                                  </>
+                                )}
+                              </button>
+                              <button
+                                onClick={() => setIsEditingLLM(false)}
+                                disabled={isUpdatingConfiguration}
+                                className="inline-flex items-center justify-center px-3 py-1.5 text-xs rounded-md glassmorphic bg-white/60 dark:bg-gray-800/60 text-gray-600 dark:text-gray-300 hover:bg-white/80 dark:hover:bg-gray-800/80 transition-colors"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
                         </div>
-                      </div>
+                      ) : (
+                        <div className="rounded-md glassmorphic bg-white/60 dark:bg-gray-800/60 p-2">
+                          <div className="font-semibold text-sm text-gray-900 dark:text-gray-100">{notebook.embedding_provider.name}</div>
+                          <div className="text-xs text-gray-600 dark:text-gray-400">{notebook.embedding_provider.model}</div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ) : (
-                  <div className="text-center py-8 glassmorphic bg-white/40 dark:bg-gray-700/40 rounded-xl border border-white/20 dark:border-gray-600/20">
-                    <div className="text-gray-500 dark:text-gray-400 font-medium">
+                  <div className="text-center py-6 rounded-lg glassmorphic bg-white/40 dark:bg-gray-800/40 backdrop-blur-sm">
+                    <div className="text-xs text-gray-500 dark:text-gray-400">
                       Provider configuration not available (legacy notebook)
                     </div>
                   </div>
                 )}
               </div>
 
+              {/* Entity Types & Language Configuration */}
+              <div className="rounded-lg glassmorphic bg-white/60 dark:bg-gray-800/60 p-3 shadow-sm mb-3">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 flex items-center gap-2">
+                    <div className="p-1.5 rounded-md bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200">
+                      <Tags className="w-3 h-3" />
+                    </div>
+                    Entity Types & Language
+                  </h3>
+                  {!isEditingEntityTypes && (
+                    <button
+                      onClick={() => setIsEditingEntityTypes(true)}
+                      className="p-1.5 rounded-md glassmorphic bg-white/60 dark:bg-gray-800/60 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:bg-white/80 dark:hover:bg-gray-800/80 transition-colors"
+                      title="Edit Entity Types"
+                    >
+                      <Edit className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+
+                {isEditingEntityTypes ? (
+                  <div className="space-y-3">
+                    {/* Language Selection */}
+                    <div className="rounded-md glassmorphic bg-white/50 dark:bg-gray-700/50 backdrop-blur-sm p-3">
+                      <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
+                        Processing Language
+                      </label>
+                      <select
+                        value={selectedLanguage}
+                        onChange={(e) => setSelectedLanguage(e.target.value)}
+                        className="w-full px-2 py-1.5 text-sm rounded-md glassmorphic bg-white/60 dark:bg-gray-800/60 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-purple-500/50"
+                      >
+                        <option value="en">English</option>
+                        <option value="es">Spanish</option>
+                        <option value="fr">French</option>
+                        <option value="de">German</option>
+                        <option value="it">Italian</option>
+                        <option value="pt">Portuguese</option>
+                        <option value="ru">Russian</option>
+                        <option value="ja">Japanese</option>
+                        <option value="ko">Korean</option>
+                        <option value="zh">Chinese</option>
+                      </select>
+                    </div>
+
+                    {/* Entity Types Management */}
+                    <div className="rounded-md glassmorphic bg-white/50 dark:bg-gray-700/50 backdrop-blur-sm p-3 space-y-2">
+                      <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                        Custom Entity Types
+                      </label>
+                      <div className="flex gap-2">
+                        <input
+                          type="text"
+                          value={customEntityType}
+                          onChange={(e) => setCustomEntityType(e.target.value)}
+                          placeholder="Add custom type (e.g., CUSTOM_TYPE)"
+                          className="flex-1 px-2 py-1.5 text-sm rounded-md glassmorphic bg-white/60 dark:bg-gray-800/60 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-purple-500/50"
+                          onKeyPress={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              addCustomEntityType();
+                            }
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={addCustomEntityType}
+                          className="inline-flex items-center gap-1 px-3 py-1.5 text-xs rounded-md bg-purple-600 hover:bg-purple-700 text-white font-semibold transition-colors"
+                        >
+                          <Plus className="w-3 h-3" />
+                          Add
+                        </button>
+                      </div>
+
+                      {/* Selected Entity Types */}
+                      {selectedEntityTypes.length > 0 && (
+                        <div className="rounded-md glassmorphic bg-white/60 dark:bg-gray-800/60 p-2">
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-xs font-medium text-gray-700 dark:text-gray-300">
+                              Selected Types ({selectedEntityTypes.length})
+                            </span>
+                            {entityTypesData && (
+                              <button
+                                type="button"
+                                onClick={() => setSelectedEntityTypes(entityTypesData.specialized_sets.minimal_set || [])}
+                                className="text-[10px] font-medium text-purple-600 dark:text-purple-300 hover:text-purple-800 dark:hover:text-purple-200"
+                              >
+                                Reset to Minimal
+                              </button>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto custom-scrollbar">
+                            {selectedEntityTypes.map((type) => (
+                              <span
+                                key={type}
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-purple-100 dark:bg-purple-900/40 text-purple-800 dark:text-purple-200 text-[10px] font-medium"
+                              >
+                                {type}
+                                <button
+                                  type="button"
+                                  onClick={() => removeEntityType(type)}
+                                  className="hover:text-purple-600 dark:hover:text-purple-300"
+                                >
+                                  <Minus className="w-2.5 h-2.5" />
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Quick Add Categories */}
+                      {entityTypesData && (
+                        <div className="space-y-1">
+                          <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
+                            Quick Add from Categories
+                          </label>
+                          <div className="grid grid-cols-2 gap-1.5">
+                            {Object.entries(entityTypesData.specialized_sets).map(([setName, types]) => (
+                              <button
+                                key={setName}
+                                type="button"
+                                onClick={() => setSelectedEntityTypes(types)}
+                                className="rounded-md glassmorphic bg-white/60 dark:bg-gray-800/60 px-2 py-1.5 text-left text-[10px] hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+                              >
+                                <div className="font-medium text-gray-900 dark:text-gray-100 capitalize">
+                                  {setName.replace(/_/g, ' ')}
+                                </div>
+                                <div className="text-gray-500 dark:text-gray-400">
+                                  {types.length} types
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="flex flex-wrap gap-2 pt-1">
+                      <button
+                        onClick={handleUpdateEntityTypes}
+                        disabled={isUpdatingConfiguration}
+                        className="inline-flex items-center gap-1 px-3 py-1.5 text-xs rounded-md bg-purple-600 hover:bg-purple-700 disabled:bg-purple-400 text-white font-semibold transition-colors"
+                      >
+                        {isUpdatingConfiguration ? (
+                          <>
+                            <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                            Updating...
+                          </>
+                        ) : (
+                          <>
+                            <Save className="w-3 h-3" />
+                            Save Entity Types
+                          </>
+                        )}
+                      </button>
+                      <button
+                        onClick={() => {
+                          setIsEditingEntityTypes(false);
+                          if (notebook.entity_types) {
+                            setSelectedEntityTypes(notebook.entity_types);
+                          }
+                          if (notebook.language) {
+                            setSelectedLanguage(notebook.language);
+                          }
+                        }}
+                        disabled={isUpdatingConfiguration}
+                        className="inline-flex items-center justify-center px-3 py-1.5 text-xs rounded-md glassmorphic bg-white/60 dark:bg-gray-800/60 text-gray-600 dark:text-gray-300 hover:bg-white/80 dark:hover:bg-gray-800/80 transition-colors"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="rounded-md glassmorphic bg-white/50 dark:bg-gray-700/50 backdrop-blur-sm p-3">
+                      <div className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Language</div>
+                      <div className="font-semibold text-sm text-gray-900 dark:text-gray-100">{selectedLanguage.toUpperCase()}</div>
+                    </div>
+                    {selectedEntityTypes.length > 0 && (
+                      <div className="rounded-md glassmorphic bg-white/50 dark:bg-gray-700/50 backdrop-blur-sm p-3">
+                        <div className="text-xs font-medium text-gray-600 dark:text-gray-400 mb-2">
+                          Entity Types ({selectedEntityTypes.length})
+                        </div>
+                        <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto custom-scrollbar">
+                          {selectedEntityTypes.slice(0, 20).map((type) => (
+                            <span
+                              key={type}
+                              className="px-1.5 py-0.5 rounded-md bg-purple-100 dark:bg-purple-900/40 text-purple-800 dark:text-purple-200 text-[10px] font-medium"
+                            >
+                              {type}
+                            </span>
+                          ))}
+                          {selectedEntityTypes.length > 20 && (
+                            <span className="px-1.5 py-0.5 rounded-md bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 text-[10px] font-medium">
+                              +{selectedEntityTypes.length - 20} more
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Document Reprocessing */}
+              {reprocessingProgress && (
+                <div className="rounded-lg glassmorphic bg-amber-50/80 dark:bg-amber-900/20 backdrop-blur-xl p-3 shadow-sm mb-3">
+                  <h3 className="text-sm font-semibold text-amber-700 dark:text-amber-300 mb-2 flex items-center gap-2">
+                    <div className="p-1.5 rounded-md bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-300">
+                      <RefreshCw className="w-3 h-3" />
+                    </div>
+                    Document Reprocessing
+                  </h3>
+                  <div className="rounded-md glassmorphic bg-white/50 dark:bg-gray-700/50 p-2 mb-2">
+                    <div className="text-xs text-gray-800 dark:text-gray-300 mb-1">
+                      {reprocessingProgress.message}
+                    </div>
+                    <div className="text-[10px] text-gray-600 dark:text-gray-400">
+                      {reprocessingProgress.note}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleReprocessDocuments(false)}
+                    disabled={isReprocessingDocuments}
+                    className="w-full inline-flex items-center justify-center gap-1 px-3 py-1.5 text-xs rounded-md bg-amber-600 hover:bg-amber-700 disabled:bg-amber-400 text-white font-semibold transition-colors"
+                  >
+                    {isReprocessingDocuments ? (
+                      <>
+                        <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                        Reprocessing...
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="w-3 h-3" />
+                        Reprocess All Documents
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
+
               {/* System Status */}
-              <div className="glassmorphic bg-white/60 dark:bg-gray-800/60 backdrop-blur-xl p-6 rounded-2xl border border-white/30 dark:border-gray-700/30 shadow-xl">
-                <h3 className="text-xl font-bold bg-gradient-to-r from-green-600 to-emerald-600 dark:from-green-400 dark:to-emerald-400 bg-clip-text text-transparent mb-6 flex items-center gap-3">
-                  <div className="p-2 bg-gradient-to-br from-green-500 to-emerald-500 rounded-xl shadow-lg">
-                    <Sparkles className="w-5 h-5 text-white" />
+              <div className="rounded-lg glassmorphic bg-white/60 dark:bg-gray-800/60 p-3 shadow-sm mb-3">
+                <h3 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3 flex items-center gap-2">
+                  <div className="p-1.5 rounded-md bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-200">
+                    <Sparkles className="w-3 h-3" />
                   </div>
                   System Status
                 </h3>
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between glassmorphic bg-white/50 dark:bg-gray-700/50 p-4 rounded-xl border border-white/20 dark:border-gray-600/20">
-                    <span className="text-gray-700 dark:text-gray-300 font-semibold">Backend Connection</span>
-                    <div className={`flex items-center gap-3 ${claraNotebookService.isBackendHealthy() ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
-                      <div className={`w-3 h-3 rounded-full shadow-lg ${claraNotebookService.isBackendHealthy() ? 'bg-emerald-500' : 'bg-red-500'}`}></div>
-                      <span className="font-bold">{claraNotebookService.isBackendHealthy() ? 'Connected' : 'Disconnected'}</span>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between rounded-md glassmorphic bg-white/50 dark:bg-gray-700/50 backdrop-blur-sm p-2">
+                    <span className="text-xs font-medium text-gray-700 dark:text-gray-300">Backend Connection</span>
+                    <div className={`flex items-center gap-2 ${claraNotebookService.isBackendHealthy() ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400'}`}>
+                      <div className={`w-2 h-2 rounded-full ${claraNotebookService.isBackendHealthy() ? 'bg-emerald-500' : 'bg-red-500'}`}></div>
+                      <span className="font-semibold text-xs">{claraNotebookService.isBackendHealthy() ? 'Connected' : 'Disconnected'}</span>
                     </div>
                   </div>
-                  <div className="flex items-center justify-between glassmorphic bg-white/50 dark:bg-gray-700/50 p-4 rounded-xl border border-white/20 dark:border-gray-600/20">
-                    <span className="text-gray-700 dark:text-gray-300 font-semibold">Documents</span>
-                    <span className="text-gray-900 dark:text-white font-bold glassmorphic bg-white/60 dark:bg-gray-800/60 px-3 py-1 rounded-lg border border-white/30 dark:border-gray-700/30">{notebook.document_count}</span>
+                  <div className="flex items-center justify-between rounded-md glassmorphic bg-white/50 dark:bg-gray-700/50 backdrop-blur-sm p-2">
+                    <span className="text-xs font-medium text-gray-700 dark:text-gray-300">Documents</span>
+                    <span className="px-2 py-1 rounded-md glassmorphic bg-white/60 dark:bg-gray-800/60 text-xs font-semibold text-gray-900 dark:text-gray-100">{notebook.document_count}</span>
                   </div>
                 </div>
               </div>
 
               {/* Danger Zone */}
-              <div className="glassmorphic bg-red-50/80 dark:bg-red-900/20 backdrop-blur-xl p-6 rounded-2xl border border-red-200/50 dark:border-red-700/30 shadow-xl">
-                <h3 className="text-xl font-bold text-red-800 dark:text-red-400 mb-6 flex items-center gap-3">
-                  <div className="p-2 bg-gradient-to-br from-red-500 to-pink-500 rounded-xl shadow-lg">
-                    <AlertTriangle className="w-5 h-5 text-white" />
+              <div className="rounded-lg glassmorphic bg-red-50/80 dark:bg-red-900/20 backdrop-blur-xl p-3 shadow-sm">
+                <h3 className="text-sm font-semibold text-red-700 dark:text-red-300 mb-3 flex items-center gap-2">
+                  <div className="p-1.5 rounded-md bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300">
+                    <AlertTriangle className="w-3 h-3" />
                   </div>
                   Danger Zone
                 </h3>
-                <div className="space-y-4">
+                <div className="space-y-2">
                   <button
                     onClick={loadDocuments}
                     disabled={!claraNotebookService.isBackendHealthy()}
-                    className="w-full px-6 py-4 glassmorphic bg-gradient-to-r from-gray-600 to-gray-700 hover:from-gray-700 hover:to-gray-800 disabled:from-gray-400 disabled:to-gray-400 disabled:cursor-not-allowed text-white rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl border border-gray-500/30 font-semibold"
+                    className="w-full inline-flex items-center justify-center px-3 py-1.5 text-xs rounded-md glassmorphic bg-white/60 dark:bg-gray-800/60 font-semibold text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors disabled:opacity-60"
                   >
                     Refresh All Documents
+                  </button>
+                  <button
+                    onClick={async () => {
+                      if (window.confirm('⚠️ Rebuild Notebook?\n\nThis will:\n• Clear all indexed data (LightRAG storage)\n• Reset document processing states to "pending"\n• Reprocess ALL documents from scratch\n• Documents will be preserved and reprocessed\n\nThis is useful for recovery after power loss or corruption.\n\nContinue?')) {
+                        try {
+                          setIsReprocessingDocuments(true);
+                          
+                          // Call the new rebuild endpoint (clears storage + reprocesses in one step)
+                          const response = await claraNotebookService.rebuildNotebook(notebook.id);
+                          
+                          // Check if any documents failed due to missing content
+                          if (response.failed_no_content && response.failed_no_content > 0) {
+                            // Try to recover from local storage
+                            const shouldRecover = window.confirm(
+                              `⚠️ ${response.failed_no_content} document(s) have no stored content!\n\n` +
+                              `Would you like to try recovering them from local browser storage?\n\n` +
+                              `This will re-upload the documents if they're available locally.`
+                            );
+                            
+                            if (shouldRecover) {
+                              let recovered = 0;
+                              const failedDocs = documents.filter(doc => 
+                                doc.status === 'failed' && 
+                                doc.error?.includes('No content available')
+                              );
+                              
+                              for (const doc of failedDocs) {
+                                try {
+                                  const localFile = await notebookFileStorage.getFileAsBlob(doc.id);
+                                  if (localFile) {
+                                    console.log(`Recovering ${localFile.filename} from local storage...`);
+                                    
+                                    // Re-upload the file
+                                    await claraNotebookService.uploadDocuments(notebook.id, [localFile.file]);
+                                    recovered++;
+                                  }
+                                } catch (error) {
+                                  console.error(`Failed to recover ${doc.filename}:`, error);
+                                }
+                              }
+                              
+                              if (recovered > 0) {
+                                setNotification({ 
+                                  message: `Recovered ${recovered} document(s) from local storage and queued for processing!`, 
+                                  type: 'success' 
+                                });
+                              } else {
+                                setNotification({ 
+                                  message: `Could not recover documents from local storage. Please re-upload manually.`, 
+                                  type: 'error' 
+                                });
+                              }
+                            } else {
+                              setNotification({ 
+                                message: `${response.queued_for_reprocessing} documents queued. ${response.failed_no_content} documents need manual re-upload.`, 
+                                type: 'success' 
+                              });
+                            }
+                          } else {
+                            setNotification({ 
+                              message: `Notebook rebuild initiated! ${response.queued_for_reprocessing} documents queued for reprocessing.`, 
+                              type: 'success' 
+                            });
+                          }
+                          
+                          // Refresh documents to show new status
+                          await loadDocuments();
+                        } catch (error) {
+                          console.error('Failed to rebuild notebook:', error);
+                          setNotification({ 
+                            message: error instanceof Error ? error.message : 'Failed to rebuild notebook', 
+                            type: 'error' 
+                          });
+                        } finally {
+                          setIsReprocessingDocuments(false);
+                        }
+                      }
+                    }}
+                    disabled={!claraNotebookService.isBackendHealthy() || isReprocessingDocuments}
+                    className="w-full inline-flex items-center justify-center gap-1 px-3 py-1.5 text-xs rounded-md bg-orange-600 hover:bg-orange-700 disabled:bg-orange-400 text-white font-semibold transition-colors"
+                  >
+                    {isReprocessingDocuments ? (
+                      <>
+                        <div className="w-3 h-3 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                        Rebuilding...
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="w-3 h-3" />
+                        Rebuild Notebook
+                      </>
+                    )}
                   </button>
                   <button
                     onClick={() => {
                       setShowSettingsModal(false);
                       onNotebookDeleted();
                     }}
-                    className="w-full px-6 py-4 glassmorphic bg-gradient-to-r from-red-600 to-red-700 hover:from-red-700 hover:to-red-800 text-white rounded-xl transition-all duration-200 shadow-lg hover:shadow-xl border border-red-500/30 font-semibold"
+                    className="w-full inline-flex items-center justify-center px-3 py-1.5 text-xs rounded-md bg-red-600 hover:bg-red-700 text-white font-semibold transition-colors"
                   >
                     Delete Notebook
                   </button>
@@ -1339,23 +2283,100 @@ const NotebookDetails_new: React.FC<NotebookDetailsNewProps> = ({
         </div>
       )}
 
-      {/* Clara Core Status Banner */}
-      <ClaraCoreStatusBanner
-        isRunning={claraCoreStatus.isRunning}
-        isStarting={claraCoreStatus.isStarting}
-        error={claraCoreStatus.error}
-        serviceName={claraCoreStatus.serviceName}
-        phase={claraCoreStatus.phase}
-        requiresClaraCore={claraCoreStatus.requiresClaraCore}
-        onRetry={claraCoreStatus.startClaraCore}
-        isVisible={showClaraCoreStatus}
-        onToggleVisibility={() => setShowClaraCoreStatus(!showClaraCoreStatus)}
-        updateAvailable={claraCoreStatus.updateAvailable}
-        updateChecking={claraCoreStatus.updateChecking}
-        updateError={claraCoreStatus.updateError}
-        onCheckForUpdates={claraCoreStatus.checkForUpdates}
-        onUpdateContainers={claraCoreStatus.updateContainers}
-      />
+      {/* Notebook Model Status Banner (pinned left, offset ~5rem). Auto-hide on success or manual dismiss. */}
+      {(showModelStatus || modelStatus.overall_status !== 'success') && (
+      <div className="fixed bottom-4 left-[12.5rem] z-40">
+        <div className="glassmorphic rounded-xl shadow-2xl backdrop-blur-xl border border-white/30 dark:border-gray-700/30 p-3 w-[340px] bg-white/85 dark:bg-gray-900/80">
+          <div className="flex items-center justify-between mb-2">
+            <div className={`text-sm font-bold ${modelStatus.overall_status === 'success' ? 'text-gray-900 dark:text-white' : 'text-red-700 dark:text-red-300'}`}>{modelStatus.overall_status === 'success' ? 'Model Connectivity' : 'Notebook cannot connect'}</div>
+            <button
+              className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200"
+              onClick={async () => {
+                try {
+                  if (!claraNotebookService.isBackendHealthy()) return;
+                  if (!notebook.llm_provider || !notebook.embedding_provider) {
+                    setModelStatus(prev => ({
+                      ...prev,
+                      llm_accessible: false,
+                      embedding_accessible: false,
+                      overall_status: 'error',
+                      llm_error: 'LLM provider not configured',
+                      embedding_error: 'Embedding provider not configured',
+                      lastChecked: new Date()
+                    }));
+                    setShowModelStatus(true);
+                    return;
+                  }
+                  const validation = await claraNotebookService.validateModels({
+                    name: notebook.name,
+                    description: notebook.description,
+                    llm_provider: notebook.llm_provider,
+                    embedding_provider: notebook.embedding_provider,
+                    entity_types: notebook.entity_types,
+                    language: notebook.language
+                  });
+                  setModelStatus({
+                    llm_accessible: validation.llm_accessible,
+                    llm_error: validation.llm_error,
+                    embedding_accessible: validation.embedding_accessible,
+                    embedding_error: validation.embedding_error,
+                    overall_status: validation.overall_status,
+                    lastChecked: new Date()
+                  });
+                  if (validation.overall_status === 'success') {
+                    if (!modelStatusDismissed) setShowModelStatus(false);
+                  } else {
+                    setShowModelStatus(true);
+                  }
+                } catch (e: any) {
+                  setModelStatus(prev => ({
+                    ...prev,
+                    llm_accessible: false,
+                    embedding_accessible: false,
+                    overall_status: 'error',
+                    llm_error: e?.message ?? 'Validation failed',
+                    embedding_error: e?.message ?? 'Validation failed',
+                    lastChecked: new Date()
+                  }));
+                  setShowModelStatus(true);
+                }
+              }}
+            >
+              Recheck
+            </button>
+          </div>
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-gray-600 dark:text-gray-300 font-medium">LLM</span>
+              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border ${modelStatus.llm_accessible ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-700/40' : 'bg-red-50 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-300 dark:border-red-700/40'}`}
+                    title={modelStatus.llm_error || ''}>
+                <span className={`w-2 h-2 rounded-full ${modelStatus.llm_accessible ? 'bg-emerald-500' : 'bg-red-500'}`}></span>
+                {modelStatus.llm_accessible ? 'Connected' : 'Failed'}
+              </span>
+            </div>
+            <div className="flex items-center justify-between text-xs">
+              <span className="text-gray-600 dark:text-gray-300 font-medium">Embedding</span>
+              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border ${modelStatus.embedding_accessible ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-700/40' : 'bg-red-50 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-300 dark:border-red-700/40'}`}
+                    title={modelStatus.embedding_error || ''}>
+                <span className={`w-2 h-2 rounded-full ${modelStatus.embedding_accessible ? 'bg-emerald-500' : 'bg-red-500'}`}></span>
+                {modelStatus.embedding_accessible ? 'Connected' : 'Failed'}
+              </span>
+            </div>
+            <div className="text-[10px] text-gray-500 dark:text-gray-400 mt-1">
+              Last checked: {modelStatus.lastChecked ? modelStatus.lastChecked.toLocaleTimeString() : '—'}
+            </div>
+            <div className="flex justify-end mt-1">
+              <button
+                className="text-[10px] px-2 py-0.5 rounded-md border border-white/30 dark:border-gray-700/30 text-gray-600 dark:text-gray-300 hover:bg-white/50 dark:hover:bg-gray-800/50"
+                onClick={() => { setShowModelStatus(false); setModelStatusDismissed(true); }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+      )}
     </div>
   );
 };

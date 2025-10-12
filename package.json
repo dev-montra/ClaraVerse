@@ -145,6 +145,7 @@
     "inquirer": "^9.2.0",
     "js-yaml": "^4.1.0",
     "jspdf": "^3.0.1",
+    "jszip": "^3.10.1",
     "katex": "^0.16.22",
     "langchain": "^0.3.19",
     "lucide-react": "^0.294.0",
@@ -230,6 +231,7 @@
     "typescript": "^5.0.0",
     "typescript-eslint": "^8.3.0",
     "vite": "^5.4.2",
+    "vite-plugin-monaco-editor": "^1.1.0",
     "vitest": "^1.6.1",
     "wait-on": "^8.0.3"
   },

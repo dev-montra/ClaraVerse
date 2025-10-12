@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { X, BookOpen, AlertCircle, Bot, ChevronDown } from 'lucide-react';
+import { X, BookOpen, AlertCircle, Bot, ChevronDown, Tags, Plus, Minus } from 'lucide-react';
 import { useProviders } from '../../contexts/ProvidersContext';
 import { claraApiService } from '../../services/claraApiService';
 import { ClaraModel } from '../../types/clara_assistant_types';
-import { ProviderConfig } from '../../services/claraNotebookService';
+import { ProviderConfig, claraNotebookService, EntityTypesResponse } from '../../services/claraNotebookService';
 
 // Utility to check if a provider configuration uses Clara Core
 const usesClaraCore = (providerId: string, providers: any[]): boolean => {
@@ -18,7 +18,7 @@ const usesClaraCore = (providerId: string, providers: any[]): boolean => {
 
 interface CreateNotebookModalProps {
   onClose: () => void;
-  onCreate: (name: string, description: string, llmProvider: ProviderConfig, embeddingProvider: ProviderConfig) => Promise<void>;
+  onCreate: (name: string, description: string, llmProvider: ProviderConfig, embeddingProvider: ProviderConfig, entityTypes?: string[], language?: string, manualEmbeddingDimensions?: number, manualEmbeddingMaxTokens?: number) => Promise<void>;
 }
 
 const CreateNotebookModal: React.FC<CreateNotebookModalProps> = ({ onClose, onCreate }) => {
@@ -35,6 +35,28 @@ const CreateNotebookModal: React.FC<CreateNotebookModalProps> = ({ onClose, onCr
   const [selectedEmbeddingProvider, setSelectedEmbeddingProvider] = useState<string>('');
   const [selectedEmbeddingModel, setSelectedEmbeddingModel] = useState<string>('');
   const [isLoadingModels, setIsLoadingModels] = useState(false);
+
+  // Entity types and language state
+  const [entityTypesData, setEntityTypesData] = useState<EntityTypesResponse | null>(null);
+  const [selectedEntityTypes, setSelectedEntityTypes] = useState<string[]>([]);
+  const [customEntityType, setCustomEntityType] = useState('');
+  const [selectedLanguage, setSelectedLanguage] = useState('en');
+  const [showEntityTypes, setShowEntityTypes] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState<string>('');
+
+  // Embedding dimension validation state
+  const [embeddingValidation, setEmbeddingValidation] = useState<{
+    dimensions?: number;
+    max_tokens?: number;
+    confidence?: number;
+    detected_pattern?: string;
+    warning?: string;
+    override_options?: Array<{ dimensions: number; max_tokens: number; label: string }>;
+  } | null>(null);
+  const [isValidatingEmbedding, setIsValidatingEmbedding] = useState(false);
+  const [manualDimensions, setManualDimensions] = useState<number | null>(null);
+  const [manualMaxTokens, setManualMaxTokens] = useState<number | null>(null);
+  const [showDimensionOverride, setShowDimensionOverride] = useState(false);
 
   // Load models and set default providers
   useEffect(() => {
@@ -78,6 +100,74 @@ const CreateNotebookModal: React.FC<CreateNotebookModalProps> = ({ onClose, onCr
       loadModelsAndDefaults();
     }
   }, [providers]);
+
+  // Load entity types
+  useEffect(() => {
+    const loadEntityTypes = async () => {
+      try {
+        if (claraNotebookService.isBackendHealthy()) {
+          const entityData = await claraNotebookService.getEntityTypes();
+          setEntityTypesData(entityData);
+          // Set default entity types from minimal set
+          setSelectedEntityTypes(entityData.specialized_sets.minimal_set || []);
+        }
+      } catch (error) {
+        console.error('Failed to load entity types:', error);
+      }
+    };
+
+    loadEntityTypes();
+  }, []);
+
+  // Validate embedding dimensions when model changes
+  useEffect(() => {
+    const validateEmbeddingDimensions = async () => {
+      if (!selectedEmbeddingModel) {
+        setEmbeddingValidation(null);
+        setShowDimensionOverride(false);
+        return;
+      }
+
+      // Extract just the model name from the full model ID (format: provider-id:model-name)
+      const modelName = selectedEmbeddingModel.includes(':') 
+        ? selectedEmbeddingModel.split(':')[1] 
+        : selectedEmbeddingModel;
+
+      setIsValidatingEmbedding(true);
+      try {
+        const response = await fetch(
+          `http://localhost:5001/notebooks/validate-embedding-dimensions?model_name=${encodeURIComponent(modelName)}${
+            manualDimensions ? `&manual_dimensions=${manualDimensions}` : ''
+          }${
+            manualMaxTokens ? `&manual_max_tokens=${manualMaxTokens}` : ''
+          }`
+        );
+
+        if (response.ok) {
+          const data = await response.json();
+          setEmbeddingValidation({
+            dimensions: data.specifications.dimensions,
+            max_tokens: data.specifications.max_tokens,
+            confidence: data.specifications.confidence,
+            detected_pattern: data.specifications.detected_pattern,
+            warning: data.warning,
+            override_options: data.specifications.override_options
+          });
+
+          // Show override UI if confidence is low
+          if (data.specifications.confidence < 0.8 && !manualDimensions) {
+            setShowDimensionOverride(true);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to validate embedding dimensions:', error);
+      } finally {
+        setIsValidatingEmbedding(false);
+      }
+    };
+
+    validateEmbeddingDimensions();
+  }, [selectedEmbeddingModel, manualDimensions, manualMaxTokens]);
 
   const validateForm = () => {
     const newErrors: { name?: string; description?: string; providers?: string } = {};
@@ -166,7 +256,69 @@ const CreateNotebookModal: React.FC<CreateNotebookModalProps> = ({ onClose, onCr
         model: embeddingModel.name
       };
 
-      await onCreate(name.trim(), description.trim(), llmProviderConfig, embeddingProviderConfig);
+      // CRITICAL: Validate models before creating notebook
+      console.log('🔍 Validating models before notebook creation...');
+      const validation = await claraNotebookService.validateModels({
+        name: name.trim(),
+        description: description.trim(),
+        llm_provider: llmProviderConfig,
+        embedding_provider: embeddingProviderConfig,
+        entity_types: selectedEntityTypes.length > 0 ? selectedEntityTypes : undefined,
+        language: selectedLanguage
+      });
+
+      console.log('✓ Validation results:', validation);
+
+      // Check validation results
+      if (validation.overall_status === 'failed' || validation.overall_status === 'error') {
+        const errorMessages = [];
+        if (!validation.llm_accessible && validation.llm_error) {
+          errorMessages.push(`LLM Error: ${validation.llm_error}`);
+        }
+        if (!validation.embedding_accessible && validation.embedding_error) {
+          errorMessages.push(`Embedding Error: ${validation.embedding_error}`);
+        }
+        
+        throw new Error(
+          `⚠️ Model Validation Failed\n\n${errorMessages.join('\n\n')}\n\n` +
+          `Please check:\n` +
+          `• Model names are correct\n` +
+          `• API keys are valid\n` +
+          `• Services are running (Clara Core / Ollama / OpenAI)\n` +
+          `• Network connectivity\n\n` +
+          `If you proceed, document processing will fail silently.`
+        );
+      }
+
+      if (validation.overall_status === 'partial') {
+        const partialMessage = [];
+        if (!validation.llm_accessible) {
+          partialMessage.push(`⚠️ LLM not accessible: ${validation.llm_error}`);
+        }
+        if (!validation.embedding_accessible) {
+          partialMessage.push(`⚠️ Embedding not accessible: ${validation.embedding_error}`);
+        }
+        
+        // Show warning but allow creation
+        console.warn('Partial validation:', partialMessage.join(', '));
+        if (!confirm(`${partialMessage.join('\n\n')}\n\nContinue anyway? Document processing may fail.`)) {
+          setIsSubmitting(false);
+          return;
+        }
+      }
+
+      console.log('✓ Models validated successfully, creating notebook...');
+
+      await onCreate(
+        name.trim(), 
+        description.trim(), 
+        llmProviderConfig, 
+        embeddingProviderConfig,
+        selectedEntityTypes.length > 0 ? selectedEntityTypes : undefined,
+        selectedLanguage,
+        manualDimensions || undefined,
+        manualMaxTokens || undefined
+      );
       onClose();
     } catch (error) {
       console.error('Error creating notebook:', error);
@@ -191,10 +343,124 @@ const CreateNotebookModal: React.FC<CreateNotebookModalProps> = ({ onClose, onCr
   };
 
   const getEmbeddingModels = (providerId: string) => {
-    return models.filter(m => 
-      m.provider === providerId && 
-      (m.type === 'embedding' || m.type === 'text')
-    );
+    // Comprehensive list of supported embedding models (verified against backend)
+    const supportedEmbeddingModels = [
+      // OpenAI Models
+      'text-embedding-ada-002',
+      'text-embedding-3-small', 
+      'text-embedding-3-large',
+      // MixedBread AI
+      'mxbai-embed-large',
+      // Nomic AI
+      'nomic-embed',
+      // Microsoft E5 Models
+      'e5-large-v2',
+      'e5-base-v2',
+      'e5-small-v2',
+      // Sentence Transformers - All-MiniLM
+      'all-minilm-l6-v2',
+      'all-minilm-l12-v2',
+      'all-minilm',
+      'all-mpnet-base-v2',
+      // BAAI BGE Models (Beijing Academy AI)
+      'bge-large',
+      'bge-base',
+      'bge-small',
+      'bge-m3',
+      // Qwen Models (Alibaba)
+      'qwen',
+      'qwen2',
+      'qwen2.5-coder',
+      'qwen3-embedding',
+      // Jina AI Models
+      'jina-embeddings-v2',
+      'jina-embeddings',
+      // Cohere Models
+      'embed-english',
+      'embed-multilingual',
+      // Voyage AI
+      'voyage-large-2',
+      'voyage-code-2',
+      'voyage-2',
+      'voyage',
+      // Snowflake Arctic Embed
+      'snowflake-arctic-embed2',
+      'snowflake-arctic-embed',
+      // Google EmbeddingGemma
+      'embeddinggemma',
+      'embedding-gemma',
+      // IBM Granite Embedding
+      'granite-embedding',
+      // Sentence-Transformers Paraphrase
+      'paraphrase-multilingual',
+      'paraphrase-mpnet',
+      'paraphrase-albert',
+      'paraphrase-minilm',
+      // Sentence-T5
+      'sentence-t5',
+      // Alibaba GTE Models
+      'gte-large',
+      'gte-base',
+      'gte-small',
+      'gte-qwen',
+      // UAE (Universal AnglE Embedding)
+      'uae-large-v1',
+      // Instructor Models
+      'instructor-xl',
+      'instructor-large',
+      'instructor-base',
+      // NVIDIA NV-Embed
+      'nv-embed-v2',
+      'nv-embed',
+      // Stella Models
+      'stella'
+    ];
+
+    return models.filter(m => {
+      if (m.provider !== providerId) return false;
+      
+      // Check if it's explicitly marked as embedding type
+      if (m.type === 'embedding') return true;
+      
+      // Check if the model name matches supported embedding models
+      const modelNameLower = m.name.toLowerCase();
+      return supportedEmbeddingModels.some(supported => 
+        modelNameLower.includes(supported.toLowerCase())
+      );
+    });
+  };
+
+  // Entity type management functions
+  const addEntityType = (entityType: string) => {
+    if (entityType && !selectedEntityTypes.includes(entityType)) {
+      setSelectedEntityTypes(prev => [...prev, entityType]);
+    }
+  };
+
+  const removeEntityType = (entityType: string) => {
+    setSelectedEntityTypes(prev => prev.filter(type => type !== entityType));
+  };
+
+  const addCustomEntityType = () => {
+    if (customEntityType.trim()) {
+      addEntityType(customEntityType.trim().toUpperCase());
+      setCustomEntityType('');
+    }
+  };
+
+  const addCategoryTypes = (category: string) => {
+    if (entityTypesData?.categories[category]) {
+      const categoryTypes = entityTypesData.categories[category];
+      setSelectedEntityTypes(prev => {
+        const newTypes = [...prev];
+        categoryTypes.forEach(type => {
+          if (!newTypes.includes(type)) {
+            newTypes.push(type);
+          }
+        });
+        return newTypes;
+      });
+    }
   };
 
   return (
@@ -420,6 +686,117 @@ const CreateNotebookModal: React.FC<CreateNotebookModalProps> = ({ onClose, onCr
               </div>
             </div>
 
+            {/* Embedding Dimension Validation */}
+            {embeddingValidation && (() => {
+              const confidence = embeddingValidation.confidence || 0;
+              return (
+              <div className={`rounded-lg p-3 border ${
+                confidence >= 0.8 
+                  ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
+                  : confidence >= 0.5
+                  ? 'bg-yellow-50 dark:bg-yellow-900/20 border-yellow-200 dark:border-yellow-800'
+                  : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'
+              }`}>
+                <div className="flex items-start gap-2 mb-2">
+                  <div className={`flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center ${
+                    confidence >= 0.8
+                      ? 'bg-green-500'
+                      : confidence >= 0.5
+                      ? 'bg-yellow-500'
+                      : 'bg-red-500'
+                  }`}>
+                    <span className="text-white text-xs font-bold">
+                      {confidence >= 0.8 ? '✓' : '!'}
+                    </span>
+                  </div>
+                  <div className="flex-1">
+                    <h4 className={`text-sm font-medium ${
+                      confidence >= 0.8
+                        ? 'text-green-800 dark:text-green-200'
+                        : confidence >= 0.5
+                        ? 'text-yellow-800 dark:text-yellow-200'
+                        : 'text-red-800 dark:text-red-200'
+                    }`}>
+                      Embedding Model Detected
+                      <span className="ml-2 text-xs font-normal">
+                        (Confidence: {(confidence * 100).toFixed(0)}%)
+                      </span>
+                    </h4>
+                    <p className={`text-xs mt-1 ${
+                      confidence >= 0.8
+                        ? 'text-green-700 dark:text-green-300'
+                        : confidence >= 0.5
+                        ? 'text-yellow-700 dark:text-yellow-300'
+                        : 'text-red-700 dark:text-red-300'
+                    }`}>
+                      Dimensions: {manualDimensions || embeddingValidation.dimensions}d • 
+                      Max Tokens: {manualMaxTokens || embeddingValidation.max_tokens} • 
+                      Pattern: {embeddingValidation.detected_pattern}
+                    </p>
+                    {embeddingValidation.warning && (
+                      <p className={`text-xs mt-1 font-medium ${
+                        confidence >= 0.5
+                          ? 'text-yellow-700 dark:text-yellow-300'
+                          : 'text-red-700 dark:text-red-300'
+                      }`}>
+                        ⚠️ {embeddingValidation.warning}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
+                {/* Manual Override Toggle */}
+                {confidence < 0.8 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowDimensionOverride(!showDimensionOverride)}
+                    className="text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-200 transition-colors mt-2"
+                  >
+                    {showDimensionOverride ? '− Hide Manual Override' : '+ Set Dimensions Manually'}
+                  </button>
+                )}
+
+                {/* Manual Dimension Override Selector */}
+                {showDimensionOverride && embeddingValidation.override_options && (
+                  <div className="mt-3 p-3 bg-white dark:bg-gray-800 rounded border border-gray-200 dark:border-gray-700">
+                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">
+                      Select Embedding Dimensions
+                    </label>
+                    <select
+                      value={manualDimensions || embeddingValidation.dimensions}
+                      onChange={(e) => {
+                        const selected = embeddingValidation.override_options?.find(
+                          opt => opt.dimensions === Number(e.target.value)
+                        );
+                        setManualDimensions(Number(e.target.value));
+                        if (selected) {
+                          setManualMaxTokens(selected.max_tokens);
+                        }
+                      }}
+                      className="w-full px-2 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500"
+                    >
+                      {embeddingValidation.override_options.map(option => (
+                        <option key={option.dimensions} value={option.dimensions}>
+                          {option.label} - {option.dimensions}d, {option.max_tokens} tokens
+                        </option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      Choose the correct dimensions if auto-detection is inaccurate
+                    </p>
+                  </div>
+                )}
+              </div>
+              );
+            })()}
+
+            {isValidatingEmbedding && (
+              <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-600 dark:border-gray-400"></div>
+                <span>Validating embedding model...</span>
+              </div>
+            )}
+
             {/* Provider Errors */}
             {errors.providers && (
               <div className="flex items-center gap-1 text-sm text-red-600">
@@ -448,6 +825,137 @@ const CreateNotebookModal: React.FC<CreateNotebookModalProps> = ({ onClose, onCr
                       <span>• GPU acceleration available</span>
                     </div>
                   </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Entity Types Configuration */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center gap-2">
+                <Tags className="w-4 h-4" />
+                Entity Types & Language
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowEntityTypes(!showEntityTypes)}
+                className="text-xs text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-200 transition-colors"
+              >
+                {showEntityTypes ? 'Hide Advanced' : 'Show Advanced'}
+              </button>
+            </div>
+
+            {showEntityTypes && (
+              <div className="space-y-4 p-4 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700">
+                {/* Language Selection */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Processing Language
+                  </label>
+                  <select
+                    value={selectedLanguage}
+                    onChange={(e) => setSelectedLanguage(e.target.value)}
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-gray-500 focus:border-transparent transition-colors"
+                  >
+                    <option value="en">English</option>
+                    <option value="es">Spanish</option>
+                    <option value="fr">French</option>
+                    <option value="de">German</option>
+                    <option value="it">Italian</option>
+                    <option value="pt">Portuguese</option>
+                    <option value="ru">Russian</option>
+                    <option value="ja">Japanese</option>
+                    <option value="ko">Korean</option>
+                    <option value="zh">Chinese</option>
+                  </select>
+                </div>
+
+                {/* Entity Type Categories */}
+                {entityTypesData && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                      Quick Add Categories
+                    </label>
+                    <div className="grid grid-cols-2 gap-2">
+                      {Object.entries(entityTypesData.specialized_sets).map(([setName, types]) => (
+                        <button
+                          key={setName}
+                          type="button"
+                          onClick={() => setSelectedEntityTypes(types)}
+                          className="px-3 py-2 text-xs bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors text-left"
+                        >
+                          <div className="font-medium text-gray-900 dark:text-white capitalize">
+                            {setName.replace(/_/g, ' ')}
+                          </div>
+                          <div className="text-gray-500 dark:text-gray-400">
+                            {types.length} types
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Custom Entity Type Input */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Add Custom Entity Type
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={customEntityType}
+                      onChange={(e) => setCustomEntityType(e.target.value)}
+                      placeholder="Enter entity type (e.g., CUSTOM_TYPE)"
+                      className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 focus:ring-2 focus:ring-gray-500 focus:border-transparent transition-colors"
+                      onKeyPress={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          addCustomEntityType();
+                        }
+                      }}
+                    />
+                    <button
+                      type="button"
+                      onClick={addCustomEntityType}
+                      className="px-3 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center gap-1"
+                    >
+                      <Plus className="w-4 h-4" />
+                      Add
+                    </button>
+                  </div>
+                </div>
+
+                {/* Selected Entity Types */}
+                {selectedEntityTypes.length > 0 && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                      Selected Entity Types ({selectedEntityTypes.length})
+                    </label>
+                    <div className="flex flex-wrap gap-2 max-h-32 overflow-y-auto">
+                      {selectedEntityTypes.map((type) => (
+                        <span
+                          key={type}
+                          className="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-800 dark:text-blue-200 rounded-lg text-xs"
+                        >
+                          {type}
+                          <button
+                            type="button"
+                            onClick={() => removeEntityType(type)}
+                            className="hover:text-blue-600 dark:hover:text-blue-400 transition-colors"
+                          >
+                            <Minus className="w-3 h-3" />
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="text-xs text-gray-500 dark:text-gray-400">
+                  Entity types help the AI identify and extract specific concepts from your documents. 
+                  You can customize these later in the notebook settings.
                 </div>
               </div>
             )}

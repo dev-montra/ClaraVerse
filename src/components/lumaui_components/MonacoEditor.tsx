@@ -3,6 +3,7 @@ import Editor from '@monaco-editor/react';
 import { FileText, Eye, EyeOff, Code, Zap, Settings, CheckCircle, AlertTriangle, Search, Replace, Command, Palette, MoreVertical, Wand2, RefreshCw } from 'lucide-react';
 import * as monaco from 'monaco-editor';
 import { FileNode } from '../../types';
+import '../../monaco.config'; // Configure Monaco to use local version
 
 interface MonacoEditorProps {
   content: string;

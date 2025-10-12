@@ -1364,6 +1364,36 @@ This is a browser security requirement for WebContainer.`;
     }
   };
 
+  // Clear chat handler
+  const handleClearChat = () => {
+    if (selectedProject) {
+      ChatPersistence.deleteChatData(selectedProject.id);
+      writeToTerminal('\x1b[32m✅ Chat history cleared\x1b[0m\n');
+      // Reload the page to reset chat UI
+      window.location.reload();
+    }
+  };
+
+  // Reset project handler
+  const handleResetProject = async () => {
+    if (selectedProject) {
+      try {
+        writeToTerminal('\n\x1b[33m🔄 Resetting project...\x1b[0m\n');
+
+        // Stop the project first
+        await stopProject(selectedProject);
+
+        // Force cleanup
+        await webContainerManager.forceCleanup(writeToTerminal);
+
+        writeToTerminal('\x1b[32m✅ Project reset complete. You can now start fresh.\x1b[0m\n\n');
+      } catch (error) {
+        console.error('Failed to reset project:', error);
+        writeToTerminal('\x1b[31m❌ Failed to reset project. Please try refreshing the page.\x1b[0m\n');
+      }
+    }
+  };
+
   // Create LumaTools instance for AI operations (after all handlers are defined)
   const lumaTools = useMemo(() => {
     const tools = createLumaTools({
@@ -1573,6 +1603,8 @@ This is a browser security requirement for WebContainer.`;
               project={selectedProject}
               isStarting={isStarting}
               onStartProject={startProject}
+              onClearChat={handleClearChat}
+              onResetProject={handleResetProject}
               viewMode={projectViewMode}
             />
           </section>
