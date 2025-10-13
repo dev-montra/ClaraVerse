@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Play, Save, Download, Upload, Settings, X, Terminal, Clock, CheckCircle, AlertCircle, Info, Folder, Zap, Layout, Check, Edit, FileInput, FileOutput, Image, FileText, FolderOpen, BookOpen, MessageSquare, Palette, Brain, BarChart3, Mic, Volume2, Type, Link, Wrench, Globe, GitBranch } from 'lucide-react';
+import { Plus, Play, Save, Download, Upload, Settings, X, Terminal, Clock, CheckCircle, AlertCircle, Info, Folder, Zap, Check, Edit, FileInput, FileOutput, Image, FileText, FolderOpen, BookOpen, MessageSquare, Palette, Brain, BarChart3, Mic, Volume2, Type, Link, Wrench, Globe, GitBranch } from 'lucide-react';
 import { AgentBuilderProvider, useAgentBuilder } from '../contexts/AgentBuilder/AgentBuilderContext';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
@@ -7,7 +7,8 @@ import Canvas from './AgentBuilder/Canvas/Canvas';
 import WorkflowManager from './AgentBuilder/WorkflowManager';
 import NodeCreator from './AgentBuilder/NodeCreator/NodeCreator';
 import ExportModal from './AgentBuilder/ExportModal';
-import { CustomNodeDefinition } from '../types/agent/types';
+import TemplateBrowser from './AgentBuilder/TemplateBrowser';
+import { CustomNodeDefinition, FlowTemplate } from '../types/agent/types';
 import { customNodeManager } from './AgentBuilder/NodeCreator/CustomNodeManager';
 import { db } from '../db';
 import UIBuilder from './AgentBuilder/UIBuilder/UIBuilder';
@@ -174,6 +175,7 @@ const AgentStudioContent: React.FC<{ onPageChange: (page: string) => void; userN
   const [isNodeCreatorOpen, setIsNodeCreatorOpen] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isUIBuilderOpen, setIsUIBuilderOpen] = useState(false);
+  const [isTemplateBrowserOpen, setIsTemplateBrowserOpen] = useState(false);
   const [editingCustomNode, setEditingCustomNode] = useState<CustomNodeDefinition | null>(null);
   const [customNodes, setCustomNodes] = useState<CustomNodeDefinition[]>([]);
   const [importError, setImportError] = useState<string | null>(null);
@@ -366,6 +368,21 @@ const AgentStudioContent: React.FC<{ onPageChange: (page: string) => void; userN
   const handleCancelEditFlowDescription = () => {
     setIsEditingFlowDescription(false);
     setTempFlowDescription('');
+  };
+
+  const handleSelectTemplate = (template: FlowTemplate) => {
+    // Create a new flow from the template
+    createNewFlow(
+      template.flow.name,
+      template.description,
+      template.flow.icon
+    );
+    
+    // Close the template browser
+    setIsTemplateBrowserOpen(false);
+    
+    // Show success message
+    console.log('Created flow from template:', template.name);
   };
 
   const handleSaveCustomNode = (nodeDefinition: CustomNodeDefinition) => {
@@ -1285,7 +1302,10 @@ const AgentStudioContent: React.FC<{ onPageChange: (page: string) => void; userN
                       >
                         + Create New Flow
                       </button>
-                      <button className="px-4 py-2 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium transition-colors">
+                      <button 
+                        onClick={() => setIsTemplateBrowserOpen(true)}
+                        className="px-4 py-2 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium transition-colors"
+                      >
                         Browse Templates
                       </button>
                     </div>
@@ -1455,6 +1475,13 @@ const AgentStudioContent: React.FC<{ onPageChange: (page: string) => void; userN
         onClose={() => setIsNodeCreatorOpen(false)}
         onSave={handleSaveCustomNode}
         editingNode={editingCustomNode}
+      />
+
+      {/* Template Browser Modal */}
+      <TemplateBrowser
+        isOpen={isTemplateBrowserOpen}
+        onClose={() => setIsTemplateBrowserOpen(false)}
+        onSelectTemplate={handleSelectTemplate}
       />
 
       {/* Export Modal */}
