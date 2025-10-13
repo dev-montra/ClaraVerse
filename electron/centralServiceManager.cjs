@@ -368,9 +368,9 @@ class CentralServiceManager extends EventEmitter {
       // Get deployment mode and URL info
       const deploymentMode = service.deploymentMode || this.getDeploymentMode(name);
       let serviceUrl = null;
-      
-      if (deploymentMode === 'manual' && this.configManager) {
-        // Manual services get URL from config manager
+
+      if ((deploymentMode === 'manual' || deploymentMode === 'remote') && this.configManager) {
+        // Manual and remote services get URL from config manager
         serviceUrl = this.configManager.getServiceUrl(name);
       } else if (deploymentMode === 'docker' && service.serviceUrl) {
         // Docker services get URL from service state (set by main.cjs)
@@ -400,8 +400,8 @@ class CentralServiceManager extends EventEmitter {
         uptime: uptime,
         // NEW: Deployment mode specific information
         serviceUrl: serviceUrl,
-        isManual: deploymentMode === 'manual',
-        canRestart: deploymentMode !== 'manual' && service.autoRestart,
+        isManual: deploymentMode === 'manual' || deploymentMode === 'remote',
+        canRestart: (deploymentMode !== 'manual' && deploymentMode !== 'remote') && service.autoRestart,
         // Platform compatibility info
         supportedModes: this.configManager?.getSupportedModes(name) || ['docker']
       };

@@ -509,6 +509,30 @@ class ClaraFlowRunner {
           }
           return { output: null };
         }
+
+      case 'json-stringify': {
+        const jsonInput = inputs.input || inputs.json || Object.values(inputs)[0];
+        const prettyPrint = node.data?.prettyPrint ?? true;
+        const indentSetting = Number(node.data?.indent ?? 2);
+        const indent = Number.isFinite(indentSetting) ? Math.min(Math.max(Math.round(indentSetting), 0), 8) : 2;
+        const fallback = node.data?.nullFallback ?? '';
+
+        if (jsonInput === null || jsonInput === undefined) {
+          return { output: fallback };
+        }
+
+        if (typeof jsonInput === 'string') {
+          return { output: jsonInput };
+        }
+
+        try {
+          const spacing = prettyPrint ? indent : 0;
+          const output = JSON.stringify(jsonInput, null, spacing || undefined);
+          return { output: output ?? fallback };
+        } catch (error) {
+          return { output: String(jsonInput ?? fallback) };
+        }
+      }
         
       case 'if-else':
         const condition = inputs.condition !== undefined ? inputs.condition : inputs.input;

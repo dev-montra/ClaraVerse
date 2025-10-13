@@ -4342,25 +4342,39 @@ const ClaraAssistantInput: React.FC<ClaraInputProps> = ({
     // **NEW**: Backend document text extraction with frontend fallback
     const extractTextViaBackend = async (file: File): Promise<string | null> => {
       try {
+        // Get Python Backend URL dynamically
+        let backendUrl = 'http://localhost:5001';
+        try {
+          if ((window as any).electronAPI?.getPythonBackendUrl) {
+            const result = await (window as any).electronAPI.getPythonBackendUrl();
+            if (result.success && result.url) {
+              backendUrl = result.url;
+            }
+          }
+        } catch (error) {
+          console.warn('Failed to get Python Backend URL, using default:', error);
+        }
+
         // Check if backend is available by trying a health check first
-        const healthResponse = await fetch('http://localhost:5001/health', { 
+        const healthResponse = await fetch(`${backendUrl}/health`, {
           method: 'GET',
           signal: AbortSignal.timeout(2000) // 2 second timeout
         });
-        
+
         if (!healthResponse.ok) {
           console.log('🔄 Backend not available, falling back to frontend processing');
           return null;
         }
-        
+
         console.log(`🚀 Attempting backend text extraction for: ${file.name}`);
-        
+        console.log(`📄 [Extract] Using Python Backend URL: ${backendUrl}`);
+
         // Create FormData for file upload
         const formData = new FormData();
         formData.append('file', file);
-        
+
         // Send to backend extraction endpoint
-        const response = await fetch('http://localhost:5001/extract-text', {
+        const response = await fetch(`${backendUrl}/extract-text`, {
           method: 'POST',
           body: formData,
           signal: AbortSignal.timeout(30000) // 30 second timeout for large files
@@ -5690,18 +5704,19 @@ const ClaraAssistantInput: React.FC<ClaraInputProps> = ({
         return;
       }
 
-      const status = await (window as any).electronAPI.invoke('check-python-status');
+      // Use the new unified handler that supports all deployment modes
+      const status = await (window as any).electronAPI.invoke('python-backend:check-service-status');
       setPythonBackendStatus({
-        isHealthy: status.isHealthy || false,
+        isHealthy: status.running || false,
         serviceUrl: status.serviceUrl,
         error: status.error
       });
     } catch (error) {
       console.error('Error checking Python backend status:', error);
-      setPythonBackendStatus({ 
-        isHealthy: false, 
-        serviceUrl: null, 
-        error: error instanceof Error ? error.message : 'Unknown error' 
+      setPythonBackendStatus({
+        isHealthy: false,
+        serviceUrl: null,
+        error: error instanceof Error ? error.message : 'Unknown error'
       });
     }
   }, []);

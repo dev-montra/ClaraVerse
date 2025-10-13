@@ -8,6 +8,11 @@ export interface RemoteServerAPI {
     success: boolean;
     osInfo?: string;
     dockerVersion?: string;
+    runningServices?: Record<string, {
+      running: boolean;
+      url: string;
+      port: number;
+    }>;
     error?: string;
   }>;
 

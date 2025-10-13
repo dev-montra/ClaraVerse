@@ -101,8 +101,8 @@ class ServiceConfigurationManager {
       return false;
     }
 
-    // Check URL requirement for manual mode
-    if (mode === 'manual' && (!url || typeof url !== 'string')) {
+    // Check URL requirement for manual and remote modes
+    if ((mode === 'manual' || mode === 'remote') && (!url || typeof url !== 'string')) {
       return false;
     }
 
@@ -143,12 +143,12 @@ class ServiceConfigurationManager {
       throw new Error(`Deployment mode '${mode}' is not supported for service '${serviceName}' on platform '${this.platform}'`);
     }
 
-    // Validate URL for manual mode
-    if (mode === 'manual') {
+    // Validate URL for manual and remote modes
+    if (mode === 'manual' || mode === 'remote') {
       if (!url || typeof url !== 'string') {
-        throw new Error(`URL is required for manual deployment mode of service '${serviceName}'`);
+        throw new Error(`URL is required for ${mode} deployment mode of service '${serviceName}'`);
       }
-      
+
       // Basic URL validation
       try {
         new URL(url);

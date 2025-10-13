@@ -47,12 +47,49 @@ class RemoteServerService {
       const dockerResult = await ssh.execCommand('docker --version');
       const dockerVersion = dockerResult.code === 0 ? dockerResult.stdout : null;
 
+      // Check for running services by checking actual ports (works for Docker, bare metal, PM2, anything!)
+      const runningServices = {};
+
+      // Check ComfyUI on port 8188
+      const comfyuiCheck = await ssh.execCommand('curl -s -f -o /dev/null -w "%{http_code}" http://localhost:8188 --connect-timeout 2 --max-time 3');
+      if (comfyuiCheck.code === 0 && comfyuiCheck.stdout && comfyuiCheck.stdout.trim() !== '000') {
+        runningServices.comfyui = {
+          running: true,
+          url: `http://${config.host}:8188`,
+          port: 8188,
+          httpStatus: comfyuiCheck.stdout.trim()
+        };
+      }
+
+      // Check Python Backend on port 5001
+      const pythonCheck = await ssh.execCommand('curl -s -f -o /dev/null -w "%{http_code}" http://localhost:5001 --connect-timeout 2 --max-time 3');
+      if (pythonCheck.code === 0 && pythonCheck.stdout && pythonCheck.stdout.trim() !== '000') {
+        runningServices.python = {
+          running: true,
+          url: `http://${config.host}:5001`,
+          port: 5001,
+          httpStatus: pythonCheck.stdout.trim()
+        };
+      }
+
+      // Check N8N on port 5678
+      const n8nCheck = await ssh.execCommand('curl -s -f -o /dev/null -w "%{http_code}" http://localhost:5678 --connect-timeout 2 --max-time 3');
+      if (n8nCheck.code === 0 && n8nCheck.stdout && n8nCheck.stdout.trim() !== '000') {
+        runningServices.n8n = {
+          running: true,
+          url: `http://${config.host}:5678`,
+          port: 5678,
+          httpStatus: n8nCheck.stdout.trim()
+        };
+      }
+
       ssh.dispose();
 
       return {
         success: true,
         osInfo,
-        dockerVersion
+        dockerVersion,
+        runningServices
       };
     } catch (error) {
       log.error('Connection test failed:', error);
@@ -83,10 +120,10 @@ class RemoteServerService {
         readyTimeout: 30000
       });
 
-      this.sendLog(webContents, 'success', '✓ Connected successfully');
+      this.sendLog(webContents, 'success', '✓ Connected successfully', 'checking-docker'); // Move to next step
 
       // Step 2: Check Docker
-      this.sendLog(webContents, 'info', 'Checking Docker installation...', 'checking-docker');
+      this.sendLog(webContents, 'info', 'Checking Docker installation...');
 
       const dockerCheck = await this.ssh.execCommand('docker --version');
       if (dockerCheck.code !== 0) {
@@ -103,28 +140,49 @@ class RemoteServerService {
 
       this.sendLog(webContents, 'success', '✓ Docker daemon is running');
 
-      // Step 3: Cleanup old containers
-      this.sendLog(webContents, 'info', 'Cleaning up old containers...');
-
+      // Step 3: Check for existing containers
       const servicesToDeploy = Object.entries(config.services)
         .filter(([_, enabled]) => enabled)
         .map(([name, _]) => name);
 
+      const existingServices = {};
+
+      this.sendLog(webContents, 'info', 'Checking for existing containers...');
+
       for (const service of servicesToDeploy) {
         const containerName = `clara_${service}`;
-        await this.ssh.execCommand(`docker stop ${containerName} 2>/dev/null || true`);
-        await this.ssh.execCommand(`docker rm ${containerName} 2>/dev/null || true`);
+        const checkResult = await this.ssh.execCommand(`docker ps -a --filter name=${containerName} --format "{{.Status}}"`);
+
+        if (checkResult.stdout) {
+          existingServices[service] = checkResult.stdout;
+          if (checkResult.stdout.includes('Up')) {
+            this.sendLog(webContents, 'warning', `  ⚠ ${service} is already running, stopping it first...`);
+          } else {
+            this.sendLog(webContents, 'info', `  → ${service} container exists but stopped, removing it...`);
+          }
+
+          // Stop and remove existing container
+          await this.ssh.execCommand(`docker stop ${containerName} 2>/dev/null || true`);
+          await this.ssh.execCommand(`docker rm ${containerName} 2>/dev/null || true`);
+        }
       }
 
-      this.sendLog(webContents, 'success', '✓ Cleanup complete');
+      this.sendLog(webContents, 'success', '✓ Ready to deploy');
 
       // Step 4: Pull and deploy containers
       this.sendLog(webContents, 'info', 'Pulling container images...', 'pulling-images');
 
       const deployedServices = {};
+      let isFirstDeploy = true;
 
       for (const service of servicesToDeploy) {
-        this.sendLog(webContents, 'info', `Deploying ${service}...`, 'deploying');
+        // Mark pulling-images as complete on first service deploy
+        if (isFirstDeploy) {
+          this.sendLog(webContents, 'info', `Deploying ${service}...`, 'deploying');
+          isFirstDeploy = false;
+        } else {
+          this.sendLog(webContents, 'info', `Deploying ${service}...`);
+        }
 
         const deployment = await this.deployService(service, webContents);
         if (deployment.success) {

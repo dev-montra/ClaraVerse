@@ -146,3 +146,4 @@ searxng-config
 .bmad-infrastructure-devops
 clara-mcp/mcp_workspace/*
 llama-swap/*
+dev_docs/*

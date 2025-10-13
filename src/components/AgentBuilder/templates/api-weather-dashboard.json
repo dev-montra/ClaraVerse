@@ -8,170 +8,219 @@
   "author": "ClaraVerse",
   "downloads": 850,
   "rating": 4.6,
-  "flow": {
-    "id": "flow-api-weather-1",
+    "flow": {
+    "id": "flow-1760369074665",
     "name": "Weather Dashboard API",
     "description": "Fetch and process weather data from API",
     "nodes": [
       {
-        "id": "input-city",
-        "type": "input",
-        "name": "City Input",
-        "position": {
-          "x": -400,
-          "y": 0
-        },
-        "data": {
-          "label": "City Name",
-          "value": "London"
-        },
-        "inputs": [],
-        "outputs": [
-          {
-            "id": "output",
-            "name": "Value",
-            "type": "output",
-            "dataType": "string",
-            "description": "City name for weather lookup"
-          }
-        ]
-      },
-      {
-        "id": "static-api-key",
-        "type": "static-text",
-        "name": "API Config",
-        "position": {
-          "x": -400,
-          "y": 150
-        },
-        "data": {
-          "label": "API Key",
-          "text": "demo_api_key_12345"
-        },
-        "inputs": [],
-        "outputs": [
-          {
-            "id": "text",
-            "name": "Text Output",
-            "type": "output",
-            "dataType": "string"
-          }
-        ]
-      },
-      {
-        "id": "combine-url",
-        "type": "combine-text",
-        "name": "Build API URL",
-        "position": {
-          "x": -50,
-          "y": 50
-        },
-        "data": {
-          "label": "Build URL",
-          "combineMode": "separator",
-          "separator": "",
-          "addSpaces": false,
-          "inputs": [
-            {
-              "id": "text1",
-              "name": "Text 1",
-              "type": "input",
-              "dataType": "string"
-            },
-            {
-              "id": "text2",
-              "name": "Text 2",
-              "type": "input",
-              "dataType": "string"
-            }
-          ],
-          "outputs": [
-            {
-              "id": "combined",
-              "name": "Combined Text",
-              "type": "output",
-              "dataType": "string"
-            }
-          ]
-        }
-      },
-      {
-        "id": "static-base-url",
-        "type": "static-text",
-        "name": "Base URL",
-        "position": {
-          "x": -400,
-          "y": -150
-        },
-        "data": {
-          "label": "API Base URL",
-          "text": "https://api.openweathermap.org/data/2.5/weather?q=",
-          "outputs": [
-            {
-              "id": "text",
-              "name": "Text Output",
-              "type": "output",
-              "dataType": "string"
-            }
-          ]
-        }
-      },
-      {
-        "id": "api-request",
+        "id": "1760369487166-ttxabdf01",
         "type": "api-request",
-        "name": "Fetch Weather",
+        "name": "API Request (Copy)",
         "position": {
-          "x": 300,
-          "y": 0
+          "x": -457.229543189051,
+          "y": 764.2803101815969
         },
         "data": {
-          "label": "Weather API",
-          "method": "GET",
-          "timeout": 10000,
-          "retryCount": 3,
+          "label": "API Request",
           "inputs": [
             {
               "id": "url",
               "name": "URL",
               "type": "input",
               "dataType": "string",
-              "required": true
+              "required": true,
+              "description": "API endpoint URL"
+            },
+            {
+              "id": "body",
+              "name": "Request Body",
+              "type": "input",
+              "dataType": "any",
+              "required": false,
+              "description": "Request body data (JSON object, string, etc.)"
+            },
+            {
+              "id": "headers",
+              "name": "Headers",
+              "type": "input",
+              "dataType": "object",
+              "required": false,
+              "description": "Additional HTTP headers as JSON object"
+            },
+            {
+              "id": "params",
+              "name": "Query Params",
+              "type": "input",
+              "dataType": "object",
+              "required": false,
+              "description": "URL query parameters as JSON object"
+            },
+            {
+              "id": "auth",
+              "name": "Auth Data",
+              "type": "input",
+              "dataType": "object",
+              "required": false,
+              "description": "Authentication data (API key, token, etc.)"
             }
           ],
           "outputs": [
             {
-              "id": "response",
-              "name": "Response",
+              "id": "data",
+              "name": "Response Data",
               "type": "output",
-              "dataType": "object"
+              "dataType": "any",
+              "required": true,
+              "description": "Parsed response data (JSON object or raw text)"
             },
             {
               "id": "status",
               "name": "Status Code",
               "type": "output",
-              "dataType": "number"
+              "dataType": "number",
+              "required": true,
+              "description": "HTTP status code (200, 404, 500, etc.)"
+            },
+            {
+              "id": "headers",
+              "name": "Response Headers",
+              "type": "output",
+              "dataType": "object",
+              "required": true,
+              "description": "HTTP response headers"
+            },
+            {
+              "id": "success",
+              "name": "Success",
+              "type": "output",
+              "dataType": "boolean",
+              "required": true,
+              "description": "Whether the request was successful (2xx status)"
+            },
+            {
+              "id": "metadata",
+              "name": "Metadata",
+              "type": "output",
+              "dataType": "object",
+              "required": false,
+              "description": "Request metadata (timing, retries, etc.)"
             }
-          ]
+          ],
+          "method": "GET"
+        },
+        "inputs": [
+          {
+            "id": "url",
+            "name": "URL",
+            "type": "input",
+            "dataType": "string",
+            "required": true,
+            "description": "API endpoint URL"
+          },
+          {
+            "id": "body",
+            "name": "Request Body",
+            "type": "input",
+            "dataType": "any",
+            "required": false,
+            "description": "Request body data (JSON object, string, etc.)"
+          },
+          {
+            "id": "headers",
+            "name": "Headers",
+            "type": "input",
+            "dataType": "object",
+            "required": false,
+            "description": "Additional HTTP headers as JSON object"
+          },
+          {
+            "id": "params",
+            "name": "Query Params",
+            "type": "input",
+            "dataType": "object",
+            "required": false,
+            "description": "URL query parameters as JSON object"
+          },
+          {
+            "id": "auth",
+            "name": "Auth Data",
+            "type": "input",
+            "dataType": "object",
+            "required": false,
+            "description": "Authentication data (API key, token, etc.)"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "data",
+            "name": "Response Data",
+            "type": "output",
+            "dataType": "any",
+            "required": true,
+            "description": "Parsed response data (JSON object or raw text)"
+          },
+          {
+            "id": "status",
+            "name": "Status Code",
+            "type": "output",
+            "dataType": "number",
+            "required": true,
+            "description": "HTTP status code (200, 404, 500, etc.)"
+          },
+          {
+            "id": "headers",
+            "name": "Response Headers",
+            "type": "output",
+            "dataType": "object",
+            "required": true,
+            "description": "HTTP response headers"
+          },
+          {
+            "id": "success",
+            "name": "Success",
+            "type": "output",
+            "dataType": "boolean",
+            "required": true,
+            "description": "Whether the request was successful (2xx status)"
+          },
+          {
+            "id": "metadata",
+            "name": "Metadata",
+            "type": "output",
+            "dataType": "object",
+            "required": false,
+            "description": "Request metadata (timing, retries, etc.)"
+          }
+        ],
+        "metadata": {
+          "tags": [
+            "data",
+            "api",
+            "http",
+            "rest"
+          ],
+          "documentation": "Handles HTTP/REST API requests with comprehensive features."
         }
       },
       {
-        "id": "json-parse",
+        "id": "1760369580422-fyezp9q6h",
         "type": "json-parse",
-        "name": "Extract Data",
+        "name": "JSON Parser",
         "position": {
-          "x": 650,
-          "y": 0
+          "x": 317.0659236515685,
+          "y": 511.0039265486388
         },
         "data": {
-          "label": "Parse JSON",
-          "extractField": "main.temp",
-          "failOnError": false,
+          "label": "JSON Parser",
           "inputs": [
             {
               "id": "input",
-              "name": "JSON Input",
+              "name": "JSON Data",
               "type": "input",
-              "dataType": "string"
+              "dataType": "string",
+              "required": true,
+              "description": "JSON string to parse"
             }
           ],
           "outputs": [
@@ -179,37 +228,297 @@
               "id": "output",
               "name": "Parsed Data",
               "type": "output",
-              "dataType": "object"
+              "dataType": "any",
+              "description": "Parsed JSON object or extracted field value"
             }
+          ],
+          "extractField": "longitude"
+        },
+        "inputs": [
+          {
+            "id": "input",
+            "name": "JSON Data",
+            "type": "input",
+            "dataType": "string",
+            "required": true,
+            "description": "JSON string to parse"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "output",
+            "name": "Parsed Data",
+            "type": "output",
+            "dataType": "any",
+            "description": "Parsed JSON object or extracted field value"
+          }
+        ],
+        "metadata": {
+          "tags": [
+            "json",
+            "parser",
+            "data"
+          ],
+          "documentation": "Parses JSON strings and optionally extracts specific fields using dot notation."
+        }
+      },
+      {
+        "id": "1760370211706-3sm5rfsad",
+        "type": "json-parse",
+        "name": "JSON Parser (Copy)",
+        "position": {
+          "x": 309.7515923213607,
+          "y": 952.4674314375919
+        },
+        "data": {
+          "label": "JSON Parser (Copy)",
+          "inputs": [
+            {
+              "id": "input",
+              "name": "JSON Data",
+              "type": "input",
+              "dataType": "string",
+              "required": true,
+              "description": "JSON string to parse"
+            }
+          ],
+          "outputs": [
+            {
+              "id": "output",
+              "name": "Parsed Data",
+              "type": "output",
+              "dataType": "any",
+              "description": "Parsed JSON object or extracted field value"
+            }
+          ],
+          "extractField": "latitude"
+        },
+        "inputs": [
+          {
+            "id": "input",
+            "name": "JSON Data",
+            "type": "input",
+            "dataType": "string",
+            "required": true,
+            "description": "JSON string to parse"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "output",
+            "name": "Parsed Data",
+            "type": "output",
+            "dataType": "any",
+            "description": "Parsed JSON object or extracted field value"
+          }
+        ],
+        "metadata": {
+          "tags": [
+            "json",
+            "parser",
+            "data"
+          ],
+          "documentation": "Parses JSON strings and optionally extracts specific fields using dot notation."
+        }
+      },
+      {
+        "id": "1760370472536-hhqdd2zd5",
+        "type": "weather-astro-api-request",
+        "name": "Weather Astro API Request",
+        "position": {
+          "x": 1064.2123242242785,
+          "y": 526.1626113570791
+        },
+        "data": {},
+        "inputs": [
+          {
+            "id": "input_1760370444596_8azodxx4h",
+            "name": "longitude",
+            "type": "input",
+            "dataType": "number",
+            "required": true,
+            "description": "The longitude coordinate (e.g., 113.2)"
+          },
+          {
+            "id": "input_1760370444596_qf2h4qahh",
+            "name": "latitude",
+            "type": "input",
+            "dataType": "number",
+            "required": true,
+            "description": "The latitude coordinate (e.g., 23.1)"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "output_1760370444596_hoiutmflp",
+            "name": "response",
+            "type": "output",
+            "dataType": "object",
+            "description": "The full JSON response from the 7Timer API"
+          },
+          {
+            "id": "output_1760370444596_fjmdqw0oo",
+            "name": "sunrise",
+            "type": "output",
+            "dataType": "string",
+            "description": "Sunrise time in HH:MM format"
+          },
+          {
+            "id": "output_1760370444596_h442vg4qg",
+            "name": "sunset",
+            "type": "output",
+            "dataType": "string",
+            "description": "Sunset time in HH:MM format"
+          },
+          {
+            "id": "output_1760370444596_nf6xggkpp",
+            "name": "moon_phase",
+            "type": "output",
+            "dataType": "string",
+            "description": "Current moon phase description"
+          }
+        ],
+        "metadata": {
+          "tags": [
+            "weather",
+            "api",
+            "astronomy",
+            "geolocation",
+            "7timer",
+            "coordinates"
+          ],
+          "documentation": "",
+          "examples": []
+        }
+      },
+      {
+        "id": "1760370532589-q5kej78ie",
+        "type": "static-text",
+        "name": "Static Text",
+        "position": {
+          "x": -1111.0537165753276,
+          "y": 762.9687029090846
+        },
+        "data": {
+          "label": "Static Text",
+          "inputs": [],
+          "outputs": [
+            {
+              "id": "text",
+              "name": "Text Output",
+              "type": "output",
+              "dataType": "string",
+              "required": true,
+              "description": "The static text content"
+            }
+          ],
+          "text": "https://api.ip2location.io/"
+        },
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "text",
+            "name": "Text Output",
+            "type": "output",
+            "dataType": "string",
+            "required": true,
+            "description": "The static text content"
+          }
+        ],
+        "metadata": {
+          "examples": [
+            {
+              "name": "System Prompt",
+              "description": "Static system prompt for AI models",
+              "config": {
+                "text": "You are a helpful AI assistant. Please respond in a friendly and professional manner.",
+                "label": "System Prompt",
+                "textFormat": "plain",
+                "multiline": true
+              }
+            },
+            {
+              "name": "API Instructions",
+              "description": "Fixed instructions for API requests",
+              "config": {
+                "text": "Please analyze the following data and provide insights:\n\n",
+                "label": "API Instructions",
+                "textFormat": "template",
+                "multiline": true
+              }
+            },
+            {
+              "name": "JSON Template",
+              "description": "Static JSON structure template",
+              "config": {
+                "text": "{\"role\": \"system\", \"content\": \"You are a helpful assistant\"}",
+                "label": "JSON Template",
+                "textFormat": "json",
+                "multiline": false
+              }
+            }
+          ],
+          "tags": [
+            "text",
+            "static",
+            "prompt",
+            "template",
+            "content",
+            "fixed",
+            "constant"
           ]
         }
       },
       {
-        "id": "format-report",
+        "id": "1760370586665-w21v6qps2",
         "type": "llm",
-        "name": "Format Report",
+        "name": "LLM Chat",
         "position": {
-          "x": 1000,
-          "y": 0
+          "x": 3101.1226217570634,
+          "y": 881.1945950968949
         },
         "data": {
-          "label": "Weather Report",
-          "apiBaseUrl": "http://localhost:8091/v1",
-          "model": "gpt-3.5-turbo",
-          "temperature": 0.7,
-          "maxTokens": 500,
+          "label": "LLM Chat",
           "inputs": [
-            {
-              "id": "user",
-              "name": "User Message",
-              "type": "input",
-              "dataType": "string"
-            },
             {
               "id": "system",
               "name": "System Message",
               "type": "input",
-              "dataType": "string"
+              "dataType": "string",
+              "required": false,
+              "description": "System prompt for the LLM"
+            },
+            {
+              "id": "user",
+              "name": "User Message",
+              "type": "input",
+              "dataType": "string",
+              "required": true,
+              "description": "User message/prompt"
+            },
+            {
+              "id": "context",
+              "name": "Pre-context",
+              "type": "input",
+              "dataType": "string",
+              "required": false,
+              "description": "Additional context to prepend"
+            },
+            {
+              "id": "memory",
+              "name": "Memory",
+              "type": "input",
+              "dataType": "array",
+              "required": false,
+              "description": "Conversation history array (messages with role and content)"
+            },
+            {
+              "id": "image",
+              "name": "Image",
+              "type": "input",
+              "dataType": "string",
+              "required": false,
+              "description": "Base64 encoded image data"
             }
           ],
           "outputs": [
@@ -217,104 +526,899 @@
               "id": "response",
               "name": "Response",
               "type": "output",
-              "dataType": "string"
+              "dataType": "string",
+              "description": "LLM response text"
+            },
+            {
+              "id": "usage",
+              "name": "Usage Stats",
+              "type": "output",
+              "dataType": "object",
+              "description": "Token usage and cost information"
             }
-          ]
+          ],
+          "model": "qwen-qwen3-30b-a3b-instruct-2507-3b",
+          "maxTokens": 10000
+        },
+        "inputs": [
+          {
+            "id": "system",
+            "name": "System Message",
+            "type": "input",
+            "dataType": "string",
+            "required": false,
+            "description": "System prompt for the LLM"
+          },
+          {
+            "id": "user",
+            "name": "User Message",
+            "type": "input",
+            "dataType": "string",
+            "required": true,
+            "description": "User message/prompt"
+          },
+          {
+            "id": "context",
+            "name": "Pre-context",
+            "type": "input",
+            "dataType": "string",
+            "required": false,
+            "description": "Additional context to prepend"
+          },
+          {
+            "id": "memory",
+            "name": "Memory",
+            "type": "input",
+            "dataType": "array",
+            "required": false,
+            "description": "Conversation history array (messages with role and content)"
+          },
+          {
+            "id": "image",
+            "name": "Image",
+            "type": "input",
+            "dataType": "string",
+            "required": false,
+            "description": "Base64 encoded image data"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "response",
+            "name": "Response",
+            "type": "output",
+            "dataType": "string",
+            "description": "LLM response text"
+          },
+          {
+            "id": "usage",
+            "name": "Usage Stats",
+            "type": "output",
+            "dataType": "object",
+            "description": "Token usage and cost information"
+          }
+        ],
+        "metadata": {
+          "tags": [
+            "ai",
+            "llm",
+            "chat",
+            "openai"
+          ],
+          "documentation": "Interfaces with OpenAI-compatible APIs for text and vision tasks."
         }
       },
       {
-        "id": "system-prompt",
+        "id": "1760370596802-ppharxx8d",
         "type": "static-text",
-        "name": "System Prompt",
+        "name": "Static Text",
         "position": {
-          "x": 650,
-          "y": 200
+          "x": 1090.3528242533398,
+          "y": 9.370209439272742
         },
         "data": {
-          "label": "Formatting Instructions",
-          "text": "You are a weather report formatter. Create a friendly, readable weather summary from the JSON data provided. Include temperature, conditions, humidity, and wind speed. Keep it concise and user-friendly.",
+          "label": "Static Text",
+          "inputs": [],
           "outputs": [
             {
               "id": "text",
               "name": "Text Output",
               "type": "output",
-              "dataType": "string"
+              "dataType": "string",
+              "required": true,
+              "description": "The static text content"
             }
+          ],
+          "text": "Your name is clara and you are a wheather forcaster\n\nand tell about today's weather \n\nyou will be given raw thingy and you should beatifully explain the stuff"
+        },
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "text",
+            "name": "Text Output",
+            "type": "output",
+            "dataType": "string",
+            "required": true,
+            "description": "The static text content"
+          }
+        ],
+        "metadata": {
+          "examples": [
+            {
+              "name": "System Prompt",
+              "description": "Static system prompt for AI models",
+              "config": {
+                "text": "You are a helpful AI assistant. Please respond in a friendly and professional manner.",
+                "label": "System Prompt",
+                "textFormat": "plain",
+                "multiline": true
+              }
+            },
+            {
+              "name": "API Instructions",
+              "description": "Fixed instructions for API requests",
+              "config": {
+                "text": "Please analyze the following data and provide insights:\n\n",
+                "label": "API Instructions",
+                "textFormat": "template",
+                "multiline": true
+              }
+            },
+            {
+              "name": "JSON Template",
+              "description": "Static JSON structure template",
+              "config": {
+                "text": "{\"role\": \"system\", \"content\": \"You are a helpful assistant\"}",
+                "label": "JSON Template",
+                "textFormat": "json",
+                "multiline": false
+              }
+            }
+          ],
+          "tags": [
+            "text",
+            "static",
+            "prompt",
+            "template",
+            "content",
+            "fixed",
+            "constant"
           ]
         }
       },
       {
-        "id": "output-report",
-        "type": "output",
-        "name": "Weather Report",
+        "id": "1760370682511-r680urjzn",
+        "type": "json-parse",
+        "name": "JSON Parser (Copy) (Copy)",
         "position": {
-          "x": 1350,
-          "y": 0
+          "x": 289.61561458649567,
+          "y": 1339.7491173253127
         },
         "data": {
-          "label": "Final Report",
-          "format": "text",
+          "label": "JSON Parser (Copy)",
           "inputs": [
             {
               "id": "input",
-              "name": "Value",
+              "name": "JSON Data",
               "type": "input",
-              "dataType": "any"
+              "dataType": "string",
+              "required": true,
+              "description": "JSON string to parse"
             }
           ],
-          "outputs": []
+          "outputs": [
+            {
+              "id": "output",
+              "name": "Parsed Data",
+              "type": "output",
+              "dataType": "any",
+              "description": "Parsed JSON object or extracted field value"
+            }
+          ],
+          "extractField": "latitude"
+        },
+        "inputs": [
+          {
+            "id": "input",
+            "name": "JSON Data",
+            "type": "input",
+            "dataType": "string",
+            "required": true,
+            "description": "JSON string to parse"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "output",
+            "name": "Parsed Data",
+            "type": "output",
+            "dataType": "any",
+            "description": "Parsed JSON object or extracted field value"
+          }
+        ],
+        "metadata": {
+          "tags": [
+            "json",
+            "parser",
+            "data"
+          ],
+          "documentation": "Parses JSON strings and optionally extracts specific fields using dot notation."
+        }
+      },
+      {
+        "id": "1760370692803-qf26kijfg",
+        "type": "combine-text",
+        "name": "Combine Text",
+        "position": {
+          "x": 2066.679513064887,
+          "y": 911.581291211759
+        },
+        "data": {},
+        "inputs": [
+          {
+            "id": "text1",
+            "name": "Text 1",
+            "type": "input",
+            "dataType": "string",
+            "required": true,
+            "description": "First text input"
+          },
+          {
+            "id": "text2",
+            "name": "Text 2",
+            "type": "input",
+            "dataType": "string",
+            "required": true,
+            "description": "Second text input"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "combined",
+            "name": "Combined Text",
+            "type": "output",
+            "dataType": "string",
+            "required": true,
+            "description": "Combined text result"
+          },
+          {
+            "id": "metadata",
+            "name": "Metadata",
+            "type": "output",
+            "dataType": "object",
+            "required": false,
+            "description": "Combination metadata (mode, separator, lengths, etc.)"
+          }
+        ],
+        "metadata": {
+          "examples": [
+            {
+              "name": "Simple Prompt Building",
+              "description": "Combine system prompt with user input",
+              "config": {
+                "combineMode": "concat",
+                "addSpaces": true
+              }
+            },
+            {
+              "name": "Prompt with Separator",
+              "description": "Add context with clear separation",
+              "config": {
+                "combineMode": "separator",
+                "separator": "\\n\\n---\\n\\n",
+                "addSpaces": false
+              }
+            },
+            {
+              "name": "Prefix Instructions",
+              "description": "Add instructions before main content",
+              "config": {
+                "combineMode": "prefix",
+                "addSpaces": true
+              }
+            }
+          ],
+          "tags": [
+            "text",
+            "combine",
+            "prompt",
+            "concatenate",
+            "string",
+            "merge"
+          ]
+        }
+      },
+      {
+        "id": "1760370702751-rooq7mkia",
+        "type": "combine-text",
+        "name": "Combine Text (Copy)",
+        "position": {
+          "x": 1601.335880451353,
+          "y": 1466.3149078597203
+        },
+        "data": {},
+        "inputs": [
+          {
+            "id": "text1",
+            "name": "Text 1",
+            "type": "input",
+            "dataType": "string",
+            "required": true,
+            "description": "First text input"
+          },
+          {
+            "id": "text2",
+            "name": "Text 2",
+            "type": "input",
+            "dataType": "string",
+            "required": true,
+            "description": "Second text input"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "combined",
+            "name": "Combined Text",
+            "type": "output",
+            "dataType": "string",
+            "required": true,
+            "description": "Combined text result"
+          },
+          {
+            "id": "metadata",
+            "name": "Metadata",
+            "type": "output",
+            "dataType": "object",
+            "required": false,
+            "description": "Combination metadata (mode, separator, lengths, etc.)"
+          }
+        ],
+        "metadata": {
+          "examples": [
+            {
+              "name": "Simple Prompt Building",
+              "description": "Combine system prompt with user input",
+              "config": {
+                "combineMode": "concat",
+                "addSpaces": true
+              }
+            },
+            {
+              "name": "Prompt with Separator",
+              "description": "Add context with clear separation",
+              "config": {
+                "combineMode": "separator",
+                "separator": "\\n\\n---\\n\\n",
+                "addSpaces": false
+              }
+            },
+            {
+              "name": "Prefix Instructions",
+              "description": "Add instructions before main content",
+              "config": {
+                "combineMode": "prefix",
+                "addSpaces": true
+              }
+            }
+          ],
+          "tags": [
+            "text",
+            "combine",
+            "prompt",
+            "concatenate",
+            "string",
+            "merge"
+          ]
+        }
+      },
+      {
+        "id": "1760370718832-nl8cx01gt",
+        "type": "static-text",
+        "name": "Static Text",
+        "position": {
+          "x": 1152.702423459118,
+          "y": 1366.296261164878
+        },
+        "data": {
+          "label": "Static Text",
+          "inputs": [],
+          "outputs": [
+            {
+              "id": "text",
+              "name": "Text Output",
+              "type": "output",
+              "dataType": "string",
+              "required": true,
+              "description": "The static text content"
+            }
+          ],
+          "text": "We are in "
+        },
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "text",
+            "name": "Text Output",
+            "type": "output",
+            "dataType": "string",
+            "required": true,
+            "description": "The static text content"
+          }
+        ],
+        "metadata": {
+          "examples": [
+            {
+              "name": "System Prompt",
+              "description": "Static system prompt for AI models",
+              "config": {
+                "text": "You are a helpful AI assistant. Please respond in a friendly and professional manner.",
+                "label": "System Prompt",
+                "textFormat": "plain",
+                "multiline": true
+              }
+            },
+            {
+              "name": "API Instructions",
+              "description": "Fixed instructions for API requests",
+              "config": {
+                "text": "Please analyze the following data and provide insights:\n\n",
+                "label": "API Instructions",
+                "textFormat": "template",
+                "multiline": true
+              }
+            },
+            {
+              "name": "JSON Template",
+              "description": "Static JSON structure template",
+              "config": {
+                "text": "{\"role\": \"system\", \"content\": \"You are a helpful assistant\"}",
+                "label": "JSON Template",
+                "textFormat": "json",
+                "multiline": false
+              }
+            }
+          ],
+          "tags": [
+            "text",
+            "static",
+            "prompt",
+            "template",
+            "content",
+            "fixed",
+            "constant"
+          ]
+        }
+      },
+      {
+        "id": "1760370747784-ehban8c79",
+        "type": "combine-text",
+        "name": "Combine Text (Copy) (Copy)",
+        "position": {
+          "x": 2077.252235640774,
+          "y": 1388.9947162728472
+        },
+        "data": {},
+        "inputs": [
+          {
+            "id": "text1",
+            "name": "Text 1",
+            "type": "input",
+            "dataType": "string",
+            "required": true,
+            "description": "First text input"
+          },
+          {
+            "id": "text2",
+            "name": "Text 2",
+            "type": "input",
+            "dataType": "string",
+            "required": true,
+            "description": "Second text input"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "combined",
+            "name": "Combined Text",
+            "type": "output",
+            "dataType": "string",
+            "required": true,
+            "description": "Combined text result"
+          },
+          {
+            "id": "metadata",
+            "name": "Metadata",
+            "type": "output",
+            "dataType": "object",
+            "required": false,
+            "description": "Combination metadata (mode, separator, lengths, etc.)"
+          }
+        ],
+        "metadata": {
+          "examples": [
+            {
+              "name": "Simple Prompt Building",
+              "description": "Combine system prompt with user input",
+              "config": {
+                "combineMode": "concat",
+                "addSpaces": true
+              }
+            },
+            {
+              "name": "Prompt with Separator",
+              "description": "Add context with clear separation",
+              "config": {
+                "combineMode": "separator",
+                "separator": "\\n\\n---\\n\\n",
+                "addSpaces": false
+              }
+            },
+            {
+              "name": "Prefix Instructions",
+              "description": "Add instructions before main content",
+              "config": {
+                "combineMode": "prefix",
+                "addSpaces": true
+              }
+            }
+          ],
+          "tags": [
+            "text",
+            "combine",
+            "prompt",
+            "concatenate",
+            "string",
+            "merge"
+          ]
+        }
+      },
+      {
+        "id": "1760370757031-etbs97v84",
+        "type": "static-text",
+        "name": "Static Text (Copy)",
+        "position": {
+          "x": 1616.1042523503554,
+          "y": 1908.8872036390308
+        },
+        "data": {
+          "label": "Static Text (Copy)",
+          "inputs": [],
+          "outputs": [
+            {
+              "id": "text",
+              "name": "Text Output",
+              "type": "output",
+              "dataType": "string",
+              "required": true,
+              "description": "The static text content"
+            }
+          ],
+          "text": "Give me the weather report "
+        },
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "text",
+            "name": "Text Output",
+            "type": "output",
+            "dataType": "string",
+            "required": true,
+            "description": "The static text content"
+          }
+        ],
+        "metadata": {
+          "examples": [
+            {
+              "name": "System Prompt",
+              "description": "Static system prompt for AI models",
+              "config": {
+                "text": "You are a helpful AI assistant. Please respond in a friendly and professional manner.",
+                "label": "System Prompt",
+                "textFormat": "plain",
+                "multiline": true
+              }
+            },
+            {
+              "name": "API Instructions",
+              "description": "Fixed instructions for API requests",
+              "config": {
+                "text": "Please analyze the following data and provide insights:\n\n",
+                "label": "API Instructions",
+                "textFormat": "template",
+                "multiline": true
+              }
+            },
+            {
+              "name": "JSON Template",
+              "description": "Static JSON structure template",
+              "config": {
+                "text": "{\"role\": \"system\", \"content\": \"You are a helpful assistant\"}",
+                "label": "JSON Template",
+                "textFormat": "json",
+                "multiline": false
+              }
+            }
+          ],
+          "tags": [
+            "text",
+            "static",
+            "prompt",
+            "template",
+            "content",
+            "fixed",
+            "constant"
+          ]
+        }
+      },
+      {
+        "id": "1760370775567-ka4aiztrd",
+        "type": "combine-text",
+        "name": "Combine Text (Copy) (Copy) (Copy)",
+        "position": {
+          "x": 2589.545788426445,
+          "y": 1078.254173443373
+        },
+        "data": {},
+        "inputs": [
+          {
+            "id": "text1",
+            "name": "Text 1",
+            "type": "input",
+            "dataType": "string",
+            "required": true,
+            "description": "First text input"
+          },
+          {
+            "id": "text2",
+            "name": "Text 2",
+            "type": "input",
+            "dataType": "string",
+            "required": true,
+            "description": "Second text input"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "combined",
+            "name": "Combined Text",
+            "type": "output",
+            "dataType": "string",
+            "required": true,
+            "description": "Combined text result"
+          },
+          {
+            "id": "metadata",
+            "name": "Metadata",
+            "type": "output",
+            "dataType": "object",
+            "required": false,
+            "description": "Combination metadata (mode, separator, lengths, etc.)"
+          }
+        ],
+        "metadata": {
+          "examples": [
+            {
+              "name": "Simple Prompt Building",
+              "description": "Combine system prompt with user input",
+              "config": {
+                "combineMode": "concat",
+                "addSpaces": true
+              }
+            },
+            {
+              "name": "Prompt with Separator",
+              "description": "Add context with clear separation",
+              "config": {
+                "combineMode": "separator",
+                "separator": "\\n\\n---\\n\\n",
+                "addSpaces": false
+              }
+            },
+            {
+              "name": "Prefix Instructions",
+              "description": "Add instructions before main content",
+              "config": {
+                "combineMode": "prefix",
+                "addSpaces": true
+              }
+            }
+          ],
+          "tags": [
+            "text",
+            "combine",
+            "prompt",
+            "concatenate",
+            "string",
+            "merge"
+          ]
+        }
+      },
+      {
+        "id": "1760370795367-efnzu4b2b",
+        "type": "output",
+        "name": "Output",
+        "position": {
+          "x": 3661.693873604729,
+          "y": 918.6595513740566
+        },
+        "data": {},
+        "inputs": [
+          {
+            "id": "input",
+            "name": "Value",
+            "type": "input",
+            "dataType": "any",
+            "required": true,
+            "description": "Value to output"
+          }
+        ],
+        "outputs": [],
+        "metadata": {
+          "tags": [
+            "output",
+            "basic",
+            "sink"
+          ],
+          "documentation": "Displays the final result with various formatting options."
+        }
+      },
+      {
+        "id": "1760372740840-1m111m9zw",
+        "type": "json-stringify",
+        "name": "JSON Stringify",
+        "position": {
+          "x": 1858.8669899452052,
+          "y": 366.3483366645106
+        },
+        "data": {},
+        "inputs": [
+          {
+            "id": "input",
+            "name": "JSON/Data",
+            "type": "input",
+            "dataType": "any",
+            "required": true,
+            "description": "Object, array, or value to stringify"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "output",
+            "name": "String Output",
+            "type": "output",
+            "dataType": "string",
+            "description": "Stringified JSON output"
+          }
+        ],
+        "metadata": {
+          "tags": [
+            "json",
+            "stringify",
+            "data"
+          ],
+          "documentation": "Converts JSON objects into text while preserving formatting, ideal for LLM prompts and text outputs."
         }
       }
     ],
     "connections": [
       {
-        "id": "conn-1",
-        "sourceNodeId": "static-base-url",
-        "sourcePortId": "text",
-        "targetNodeId": "combine-url",
-        "targetPortId": "text1"
+        "id": "1760369583010-c6k1e08vl",
+        "sourceNodeId": "1760369487166-ttxabdf01",
+        "sourcePortId": "data",
+        "targetNodeId": "1760369580422-fyezp9q6h",
+        "targetPortId": "input"
       },
       {
-        "id": "conn-2",
-        "sourceNodeId": "input-city",
+        "id": "1760370214509-39sw2a1f6",
+        "sourceNodeId": "1760369487166-ttxabdf01",
+        "sourcePortId": "data",
+        "targetNodeId": "1760370211706-3sm5rfsad",
+        "targetPortId": "input"
+      },
+      {
+        "id": "1760370477297-e5irrck8j",
+        "sourceNodeId": "1760369580422-fyezp9q6h",
         "sourcePortId": "output",
-        "targetNodeId": "combine-url",
-        "targetPortId": "text2"
+        "targetNodeId": "1760370472536-hhqdd2zd5",
+        "targetPortId": "input_1760370444596_8azodxx4h"
       },
       {
-        "id": "conn-3",
-        "sourceNodeId": "combine-url",
-        "sourcePortId": "combined",
-        "targetNodeId": "api-request",
+        "id": "1760370482566-x3qnzp57o",
+        "sourceNodeId": "1760370211706-3sm5rfsad",
+        "sourcePortId": "output",
+        "targetNodeId": "1760370472536-hhqdd2zd5",
+        "targetPortId": "input_1760370444596_qf2h4qahh"
+      },
+      {
+        "id": "1760370536897-7xqrprwpw",
+        "sourceNodeId": "1760370532589-q5kej78ie",
+        "sourcePortId": "text",
+        "targetNodeId": "1760369487166-ttxabdf01",
         "targetPortId": "url"
       },
       {
-        "id": "conn-4",
-        "sourceNodeId": "api-request",
-        "sourcePortId": "response",
-        "targetNodeId": "json-parse",
-        "targetPortId": "input"
-      },
-      {
-        "id": "conn-5",
-        "sourceNodeId": "json-parse",
-        "sourcePortId": "output",
-        "targetNodeId": "format-report",
-        "targetPortId": "user"
-      },
-      {
-        "id": "conn-6",
-        "sourceNodeId": "system-prompt",
+        "id": "1760370600581-xchac7vcp",
+        "sourceNodeId": "1760370596802-ppharxx8d",
         "sourcePortId": "text",
-        "targetNodeId": "format-report",
+        "targetNodeId": "1760370586665-w21v6qps2",
         "targetPortId": "system"
       },
       {
-        "id": "conn-7",
-        "sourceNodeId": "format-report",
-        "sourcePortId": "response",
-        "targetNodeId": "output-report",
+        "id": "1760370686391-4ziyjev21",
+        "sourceNodeId": "1760369487166-ttxabdf01",
+        "sourcePortId": "data",
+        "targetNodeId": "1760370682511-r680urjzn",
         "targetPortId": "input"
+      },
+      {
+        "id": "1760370709098-a00jznb3j",
+        "sourceNodeId": "1760370682511-r680urjzn",
+        "sourcePortId": "output",
+        "targetNodeId": "1760370702751-rooq7mkia",
+        "targetPortId": "text2"
+      },
+      {
+        "id": "1760370733697-sqyr2mwum",
+        "sourceNodeId": "1760370718832-nl8cx01gt",
+        "sourcePortId": "text",
+        "targetNodeId": "1760370702751-rooq7mkia",
+        "targetPortId": "text1"
+      },
+      {
+        "id": "1760370752600-jxg9s020o",
+        "sourceNodeId": "1760370702751-rooq7mkia",
+        "sourcePortId": "combined",
+        "targetNodeId": "1760370747784-ehban8c79",
+        "targetPortId": "text1"
+      },
+      {
+        "id": "1760370760847-4nvuls03x",
+        "sourceNodeId": "1760370757031-etbs97v84",
+        "sourcePortId": "text",
+        "targetNodeId": "1760370747784-ehban8c79",
+        "targetPortId": "text2"
+      },
+      {
+        "id": "1760370779834-dw3lqc7xx",
+        "sourceNodeId": "1760370692803-qf26kijfg",
+        "sourcePortId": "combined",
+        "targetNodeId": "1760370775567-ka4aiztrd",
+        "targetPortId": "text1"
+      },
+      {
+        "id": "1760370781509-bcr6cys24",
+        "sourceNodeId": "1760370747784-ehban8c79",
+        "sourcePortId": "combined",
+        "targetNodeId": "1760370775567-ka4aiztrd",
+        "targetPortId": "text2"
+      },
+      {
+        "id": "1760370787700-35o0z8ubu",
+        "sourceNodeId": "1760370775567-ka4aiztrd",
+        "sourcePortId": "combined",
+        "targetNodeId": "1760370586665-w21v6qps2",
+        "targetPortId": "user"
+      },
+      {
+        "id": "1760370797651-i2mbm8e75",
+        "sourceNodeId": "1760370586665-w21v6qps2",
+        "sourcePortId": "response",
+        "targetNodeId": "1760370795367-efnzu4b2b",
+        "targetPortId": "input"
+      },
+      {
+        "id": "1760372744177-tk17ublo5",
+        "sourceNodeId": "1760370472536-hhqdd2zd5",
+        "sourcePortId": "output_1760370444596_hoiutmflp",
+        "targetNodeId": "1760372740840-1m111m9zw",
+        "targetPortId": "input"
+      },
+      {
+        "id": "1760372814872-j0vwyasjd",
+        "sourceNodeId": "1760372740840-1m111m9zw",
+        "sourcePortId": "output",
+        "targetNodeId": "1760370692803-qf26kijfg",
+        "targetPortId": "text1"
       }
     ],
     "variables": [],
@@ -322,8 +1426,102 @@
       "name": "Weather Dashboard API",
       "version": "1.0.0"
     },
-    "createdAt": "2025-10-13T14:00:00.000Z",
-    "updatedAt": "2025-10-13T14:00:00.000Z",
+    "createdAt": "2025-10-13T15:25:23.705Z",
+    "updatedAt": "2025-10-13T16:27:25.981Z",
     "version": "1.0.0"
+  },
+  "customNodes": [
+    {
+      "id": "node-1760370465408-zc656cd66",
+      "type": "weather-astro-api-request",
+      "name": "Weather Astro API Request",
+      "description": "Fetches astronomical weather data (sunrise, sunset, moon phase, etc.) using longitude and latitude coordinates via the 7Timer API. Returns structured JSON response.",
+      "category": "custom",
+      "icon": "🌐",
+      "inputs": [
+        {
+          "id": "input_1760370444596_8azodxx4h",
+          "name": "longitude",
+          "type": "input",
+          "dataType": "number",
+          "required": true,
+          "description": "The longitude coordinate (e.g., 113.2)"
+        },
+        {
+          "id": "input_1760370444596_qf2h4qahh",
+          "name": "latitude",
+          "type": "input",
+          "dataType": "number",
+          "required": true,
+          "description": "The latitude coordinate (e.g., 23.1)"
+        }
+      ],
+      "outputs": [
+        {
+          "id": "output_1760370444596_hoiutmflp",
+          "name": "response",
+          "type": "output",
+          "dataType": "object",
+          "description": "The full JSON response from the 7Timer API"
+        },
+        {
+          "id": "output_1760370444596_fjmdqw0oo",
+          "name": "sunrise",
+          "type": "output",
+          "dataType": "string",
+          "description": "Sunrise time in HH:MM format"
+        },
+        {
+          "id": "output_1760370444596_h442vg4qg",
+          "name": "sunset",
+          "type": "output",
+          "dataType": "string",
+          "description": "Sunset time in HH:MM format"
+        },
+        {
+          "id": "output_1760370444596_nf6xggkpp",
+          "name": "moon_phase",
+          "type": "output",
+          "dataType": "string",
+          "description": "Current moon phase description"
+        }
+      ],
+      "properties": [
+        {
+          "id": "prop_1760370444596_58jl71jm2",
+          "name": "unit",
+          "type": "string",
+          "required": false,
+          "defaultValue": "metric",
+          "description": "Temperature unit (metric, imperial)"
+        },
+        {
+          "id": "prop_1760370444596_ty9qluhii",
+          "name": "timezone_shift",
+          "type": "number",
+          "required": false,
+          "defaultValue": "0",
+          "description": "Adjust for local timezone offset (in hours)"
+        }
+      ],
+      "executionCode": "async function execute(inputs, properties, context) {\n  const { longitude, latitude } = inputs;\n  const { unit, timezone_shift } = properties;\n\n  const url = `https://www.7timer.info/bin/astro.php?lon=${longitude}&lat=${latitude}&ac=0&unit=${unit}&output=json&tzshift=${timezone_shift}`;\n\n  try {\n    const response = await fetch(url);\n    if (!response.ok) {\n      throw new Error(`HTTP error! status: ${response.status}`);\n    }\n    const data = await response.json();\n\n    // Extract key fields\n    const sunrise = data.dataseries?.[0]?.sunrise || 'N/A';\n    const sunset = data.dataseries?.[0]?.sunset || 'N/A';\n    const moon_phase = data.dataseries?.[0]?.moonphase || 'N/A';\n\n    context.log('API Request Successful:', url);\n\n    return {\n      response: data,\n      sunrise: sunrise,\n      sunset: sunset,\n      moon_phase: moon_phase\n    };\n  } catch (error) {\n    context.log('Error fetching weather data:', error.message);\n    throw error;\n  }\n}",
+      "metadata": {
+        "tags": [
+          "weather",
+          "api",
+          "astronomy",
+          "geolocation",
+          "7timer",
+          "coordinates"
+        ],
+        "documentation": "",
+        "examples": []
+      }
+    }
+  ],
+  "metadata": {
+    "exportedAt": "2025-10-13T16:40:28.405Z",
+    "exportedBy": "Clara Agent Studio",
+    "hasCustomNodes": true
   }
 }

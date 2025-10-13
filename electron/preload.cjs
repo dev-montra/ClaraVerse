@@ -155,6 +155,15 @@ contextBridge.exposeInMainWorld('electron', {
   getInitializationState: () => ipcRenderer.invoke('get-initialization-state'),
   saveFeatureSelection: (features) => ipcRenderer.invoke('save-feature-selection', features),
   initializeService: (serviceName) => ipcRenderer.invoke('initialize-service', serviceName),
+
+  // electron-store API for persistent configuration
+  store: {
+    get: (key) => ipcRenderer.invoke('store:get', key),
+    set: (key, value) => ipcRenderer.invoke('store:set', key, value),
+    delete: (key) => ipcRenderer.invoke('store:delete', key),
+    has: (key) => ipcRenderer.invoke('store:has', key),
+    clear: () => ipcRenderer.invoke('store:clear')
+  }
 });
 
 // Add Docker container management API
@@ -214,12 +223,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('service-status-update', subscription);
     return () => ipcRenderer.removeListener('service-status-update', subscription);
   },
-  
+
   // Request initialization
   requestInitialization: () => ipcRenderer.invoke('request-initialization'),
-  
+
   // Get initialization status
-  getInitializationStatus: () => ipcRenderer.invoke('get-initialization-status')
+  getInitializationStatus: () => ipcRenderer.invoke('get-initialization-status'),
+
+  // Get Python Backend URL (for dynamic service URL resolution)
+  getPythonBackendUrl: () => ipcRenderer.invoke('python-backend:get-url')
 });
 
 // Add llama-swap service API - REMOVED (service deprecated)

@@ -135,8 +135,21 @@ const CreateNotebookModal: React.FC<CreateNotebookModalProps> = ({ onClose, onCr
 
       setIsValidatingEmbedding(true);
       try {
+        // Get Python Backend URL dynamically
+        let backendUrl = 'http://localhost:5001';
+        try {
+          if ((window as any).electronAPI?.getPythonBackendUrl) {
+            const result = await (window as any).electronAPI.getPythonBackendUrl();
+            if (result.success && result.url) {
+              backendUrl = result.url;
+            }
+          }
+        } catch (error) {
+          console.warn('Failed to get Python Backend URL, using default:', error);
+        }
+
         const response = await fetch(
-          `http://localhost:5001/notebooks/validate-embedding-dimensions?model_name=${encodeURIComponent(modelName)}${
+          `${backendUrl}/notebooks/validate-embedding-dimensions?model_name=${encodeURIComponent(modelName)}${
             manualDimensions ? `&manual_dimensions=${manualDimensions}` : ''
           }${
             manualMaxTokens ? `&manual_max_tokens=${manualMaxTokens}` : ''

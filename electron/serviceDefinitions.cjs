@@ -59,7 +59,24 @@ const SERVICE_DEFINITIONS = {
     autoRestart: true,
     priority: 2,
     dependencies: ['docker'],
-    
+
+    // NEW: Deployment mode support
+    deploymentModes: ['docker', 'manual', 'remote'],
+    platformSupport: {
+      docker: ['win32', 'darwin', 'linux'], // Docker supported on all platforms
+      manual: ['win32', 'darwin', 'linux'], // Manual/BYOS supported on all platforms
+      remote: ['win32', 'darwin', 'linux'] // Remote server supported on all platforms
+    },
+
+    // NEW: Manual service configuration
+    manual: {
+      urlRequired: true,
+      defaultUrl: 'http://localhost:5001',
+      healthEndpoint: '/health',
+      configKey: 'python_backend_url',
+      description: 'Bring Your Own Python Backend - Connect to external Python Backend instance'
+    },
+
     dockerContainer: {
       name: 'clara_python',
       image: 'clara17verse/clara-backend:latest',
@@ -73,11 +90,13 @@ const SERVICE_DEFINITIONS = {
         'CLARA_ENV=production'
       ]
     },
-    
-    healthCheck: async () => {
+
+    healthCheck: async (serviceUrl = null) => {
       const http = require('http');
+      const url = serviceUrl || 'http://localhost:5001';
+      const endpoint = serviceUrl ? `${url}/health` : 'http://localhost:5001/health';
       return new Promise((resolve) => {
-        const req = http.get('http://localhost:5001/health', (res) => {
+        const req = http.get(endpoint, (res) => {
           resolve(res.statusCode === 200);
         });
         req.on('error', () => resolve(false));
@@ -148,12 +167,13 @@ const SERVICE_DEFINITIONS = {
     autoRestart: true,
     priority: 4,
     dependencies: ['docker', 'python-backend'],
-    
+
     // NEW: Deployment mode support
-    deploymentModes: ['docker', 'manual'],
+    deploymentModes: ['docker', 'manual', 'remote'],
     platformSupport: {
       docker: ['win32'], // Docker only supported on Windows
-      manual: ['win32', 'darwin', 'linux'] // Manual/BYOS supported on all platforms
+      manual: ['win32', 'darwin', 'linux'], // Manual/BYOS supported on all platforms
+      remote: ['win32', 'darwin', 'linux'] // Remote server supported on all platforms
     },
     
     // NEW: Manual service configuration
@@ -210,12 +230,13 @@ const SERVICE_DEFINITIONS = {
     autoRestart: true,
     priority: 5,
     dependencies: ['docker'],
-    
+
     // NEW: Deployment mode support
-    deploymentModes: ['docker', 'manual'],
+    deploymentModes: ['docker', 'manual', 'remote'],
     platformSupport: {
       docker: ['win32', 'darwin', 'linux'], // Docker supported on all platforms
-      manual: ['win32', 'darwin', 'linux'] // Manual/BYOS supported on all platforms
+      manual: ['win32', 'darwin', 'linux'], // Manual/BYOS supported on all platforms
+      remote: ['win32', 'darwin', 'linux'] // Remote server supported on all platforms
     },
     
     // NEW: Manual service configuration

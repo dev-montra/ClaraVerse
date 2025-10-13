@@ -162,7 +162,7 @@ export class FlowValidator {
    */
   validateNodeType(node, errors, warnings) {
     const supportedBuiltinTypes = [
-      'input', 'output', 'llm', 'json-parse', 'if-else', 'image-input'
+      'input', 'output', 'llm', 'json-parse', 'json-stringify', 'if-else', 'image-input'
     ];
 
     // Check if it's a built-in type or custom type

@@ -8,99 +8,257 @@
   "author": "ClaraVerse",
   "downloads": 1120,
   "rating": 4.9,
-  "flow": {
-    "id": "flow-notebook-analysis-1",
+    "flow": {
+    "id": "flow-1760373889686",
     "name": "Data Analysis Notebook",
     "description": "Automated data analysis with Python and Pandas",
     "nodes": [
       {
-        "id": "file-upload-csv",
+        "id": "1760374329726-qk7uqq04q",
         "type": "file-upload",
-        "name": "Upload CSV",
+        "name": "File Upload",
         "position": {
-          "x": -400,
-          "y": 0
+          "x": -281.4451251964976,
+          "y": 379.91531017214544
         },
         "data": {
-          "label": "Data File",
-          "outputFormat": "base64",
-          "maxSize": 10485760,
-          "allowedTypes": ["text/csv", "application/vnd.ms-excel"],
+          "label": "File Upload",
           "inputs": [],
-          "outputs": [
+          "outputs": {
+            "content": "TmV3IEVtcCBJRCxFbXAgTmFtZSxDdXJyZW50IEZpeGVkIENULEN1cnJlbnQgVmFyaWFibGUgQ1QsQ3VycmVudCBWYXJpYWJsZSAlLEluYyAlLEFkZGl0aW9uYWwvQ29ycmVjdGlvbiAlLEZpbmFsIEluYyAlLEZpbmFsIFByby1yYXRlZCBJbmMgJQ0KMTQzMDAwMTgsSm9obiBQcmVtIEt1bWFyIFMsMzkxMDUwMCwwLDAlLDAlLDUlLDUlLDUlDQoxNDMwMDA1OCxQcmF2ZWVuIEcsMjg2MjgwNCwwLDAlLDMlLDAlLDMlLDMlDQoxNDMwMDEzOCxCYWxhamkgQW5hbmQgQiwxNzQ3MzA4LDAsMCUsNSUsMCUsNSUsNSUNCjE0MzAwMTQwLFNhbnRob3NoIE4gUywxODQxMzA0LDAsMCUsNCUsMCUsNCUsNCUNCjE0MzAwMTQyLEthcnRoaWtyYWogViwxODkwNDA4LDAsMCUsNCUsMCUsNCUsNCUNCjE0MzAwMTY1LFAgU2FpIERhcnNoYW4sMTM3ODAwOCwwLDAlLDUlLDAlLDUlLDUlDQoxNDMwMDE5NSxBbmFuZCBLdW1hciw1MjA2MDgsMCwwJSw5JSwwJSw5JSw5JQ0KMTQzMDAyNzUsUmFqZXN3YXJpIFNlbHZha3VtYXIsOTE2ODAwLDAsMCUsNiUsMCUsNiUsNiUNCjE0MzAwMzYwLFJhamVzd2FyaSBBbmFuZGFuLDkxODEwOCwwLDAlLDglLDAlLDglLDglDQoxNDMwMDM2MSxBcnVuIEssMTgxNDgwOCwwLDAlLDQlLDAlLDQlLDQlDQoxNDMwMDQxOSxHb2t1bCBQcmFzYW50aCw4MTMwMDAsMCwwJSw4JSwwJSw4JSw4JQ0KMTQzMDA1OTgsUmlzaGlrZXNoIEsgTSw3MDIwMDAsMCwwJSw4JSwwJSw4JSw2JQ0KMTQzMDA1OTksRW1heWFrZWVydGhpIE4sNzIwMDAwLDAsMCUsMTIlLDMlLDE1JSwxMSUNCjE0MzAwNjAwLFNyaWRldmltYW5qdSBSYWphLDg1ODAwMCwwLDAlLDEwJSwwJSwxMCUsOCUNCjE0MzAwNjAxLE1vaGFuYXB1aXZhIFMsODU4MDAwLDAsMCUsMTAlLDAlLDEwJSw4JQ0KMTQzMDA2MDIsS293c2hpa2EgRSw2NDIwMDAsMCwwJSw4JSw0JSwxMiUsOSUNCjE0MzAwNjAzLFJhYWprdW1hciBTLDg1NDAwNCwwLDAlLDEyJSwwJSwxMiUsOSUNCjE0MzAwNjMwLFNha3RoaXZlbCBNIFAsNzI0NTAwLDAsMCUsOCUsMCUsOCUsNCUNCjE0MzAwNjMxLFJvc2hpbmkgTSBQLDY1MDAwNCwwLDAlLDglLDE4JSwyNiUsNiUNCjE0MzAwNjMyLEhhcmluaSBNdXJhbGksNjAwMDk2LDAsMCUsOCUsMCUsOCUsMSUNCjE0MzAwOTEwLEdhbmRoYW1hdGhhbiBWLDcwMDAwNCwwLDAlLDEwJSwwJSwxMCUsMTAlDQoxNDMwMDkxMSxKYXdhaGFyIFNyaW5pdmFzIFMsNjQ5OTkyLDAsMCUsOCUsMCUsOCUsOCUNCg==",
+            "metadata": {
+              "name": "Salary_Increment_Data__For_Cross_Check_ (1).csv",
+              "size": 1225,
+              "type": "text/csv",
+              "lastModified": 1757574048781,
+              "format": "base64"
+            }
+          }
+        },
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "content",
+            "name": "File Content",
+            "type": "output",
+            "dataType": "any",
+            "required": true,
+            "description": "File content in the specified format"
+          },
+          {
+            "id": "metadata",
+            "name": "File Metadata",
+            "type": "output",
+            "dataType": "object",
+            "required": false,
+            "description": "File metadata (name, size, type, format, etc.)"
+          }
+        ],
+        "metadata": {
+          "examples": [
             {
-              "id": "content",
-              "name": "File Content",
-              "type": "output",
-              "dataType": "string",
-              "description": "Base64 encoded file content"
+              "name": "Image Upload as Base64",
+              "description": "Upload image files and output as base64 for AI processing",
+              "config": {
+                "outputFormat": "base64",
+                "acceptedTypes": "image/*",
+                "maxSize": 5
+              }
             },
             {
-              "id": "metadata",
-              "name": "File Metadata",
-              "type": "output",
-              "dataType": "object",
-              "description": "File information (name, size, type)"
+              "name": "Document Upload as Text",
+              "description": "Upload text documents and output content as plain text",
+              "config": {
+                "outputFormat": "text",
+                "acceptedTypes": ".txt,.md,.csv,.doc,.docx,.pdf,.rtf,.html,.htm,.xml,.json",
+                "maxSize": 2
+              }
+            },
+            {
+              "name": "Any File Upload",
+              "description": "Upload any file type and get file object with metadata",
+              "config": {
+                "outputFormat": "file",
+                "acceptedTypes": "*/*",
+                "maxSize": 10
+              }
             }
+          ],
+          "tags": [
+            "file",
+            "upload",
+            "input",
+            "base64",
+            "binary",
+            "text",
+            "universal"
           ]
         }
       },
       {
-        "id": "analysis-instructions",
-        "type": "static-text",
-        "name": "Analysis Goals",
+        "id": "1760374677372-i34jzillb",
+        "type": "base64-csv-decoder",
+        "name": "Base64 CSV Decoder",
         "position": {
-          "x": -400,
-          "y": 200
+          "x": 203.01922915956163,
+          "y": 222.7751577391578
+        },
+        "data": {},
+        "inputs": [
+          {
+            "id": "input_1760374649212_1yqmp2g59",
+            "name": "base64Csv",
+            "type": "input",
+            "dataType": "string",
+            "required": true,
+            "description": "The base64-encoded string representing the CSV file."
+          }
+        ],
+        "outputs": [
+          {
+            "id": "output_1760374649212_u2bos1f94",
+            "name": "csvText",
+            "type": "output",
+            "dataType": "string",
+            "description": "The decoded CSV as plain text."
+          }
+        ],
+        "metadata": {
+          "tags": [
+            "csv",
+            "base64",
+            "decode",
+            "data",
+            "encoding",
+            "text",
+            "import"
+          ],
+          "documentation": "",
+          "examples": []
+        }
+      },
+      {
+        "id": "1760374731613-vzikid79h",
+        "type": "json-parse",
+        "name": "JSON Parser",
+        "position": {
+          "x": 982.4336957575442,
+          "y": 181.49031983143414
         },
         "data": {
-          "label": "Analysis Instructions",
-          "text": "Analyze the provided CSV data:\n1. Load data using pandas\n2. Display basic statistics (mean, median, std)\n3. Check for missing values\n4. Generate correlation matrix\n5. Create visualizations (histograms, scatter plots)\n6. Summarize key findings\n\nProvide Python code and execution results.",
+          "label": "JSON Parser",
+          "inputs": [
+            {
+              "id": "input",
+              "name": "JSON Data",
+              "type": "input",
+              "dataType": "string",
+              "required": true,
+              "description": "JSON string to parse"
+            }
+          ],
           "outputs": [
             {
-              "id": "text",
-              "name": "Text Output",
+              "id": "output",
+              "name": "Parsed Data",
               "type": "output",
-              "dataType": "string"
+              "dataType": "any",
+              "description": "Parsed JSON object or extracted field value"
             }
-          ]
+          ],
+          "extractField": "csvText"
+        },
+        "inputs": [
+          {
+            "id": "input",
+            "name": "JSON Data",
+            "type": "input",
+            "dataType": "string",
+            "required": true,
+            "description": "JSON string to parse"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "output",
+            "name": "Parsed Data",
+            "type": "output",
+            "dataType": "any",
+            "description": "Parsed JSON object or extracted field value"
+          }
+        ],
+        "metadata": {
+          "tags": [
+            "json",
+            "parser",
+            "data"
+          ],
+          "documentation": "Parses JSON strings and optionally extracts specific fields using dot notation."
         }
       },
       {
-        "id": "agent-executor-analysis",
-        "type": "agent-executor",
-        "name": "Python Analysis Agent",
+        "id": "1760374747170-ra2a8h8oe",
+        "type": "output",
+        "name": "Output",
         "position": {
-          "x": 0,
-          "y": 50
+          "x": 1570.9342239622536,
+          "y": -209.8757265038056
+        },
+        "data": {},
+        "inputs": [
+          {
+            "id": "input",
+            "name": "Value",
+            "type": "input",
+            "dataType": "any",
+            "required": true,
+            "description": "Value to output"
+          }
+        ],
+        "outputs": [],
+        "metadata": {
+          "tags": [
+            "output",
+            "basic",
+            "sink"
+          ],
+          "documentation": "Displays the final result with various formatting options."
+        }
+      },
+      {
+        "id": "1760374765204-ey9pvnpog",
+        "type": "agent-executor",
+        "name": "Agent Executor",
+        "position": {
+          "x": 1586.7683188915285,
+          "y": 657.8326756204481
         },
         "data": {
-          "label": "Data Science Agent",
-          "textModel": "gpt-4o-mini",
-          "codeModel": "gpt-4o-mini",
-          "provider": "openai",
-          "enabledMCPServers": ["python-mcp"],
+          "label": "Agent Executor",
           "inputs": [
             {
               "id": "instructions",
               "name": "Instructions",
               "type": "input",
               "dataType": "string",
-              "required": true
+              "required": true,
+              "description": "Task instructions for the autonomous agent"
             },
             {
               "id": "context",
               "name": "Context",
               "type": "input",
               "dataType": "string",
-              "required": false
+              "required": false,
+              "description": "Additional context for the task"
             },
             {
               "id": "attachments",
               "name": "Attachments",
               "type": "input",
               "dataType": "array",
-              "required": false
+              "required": false,
+              "description": "File attachments for the task"
             }
           ],
           "outputs": [
@@ -109,241 +267,361 @@
               "name": "Result",
               "type": "output",
               "dataType": "string",
-              "description": "Analysis results with code and outputs"
+              "description": "Agent execution result"
             },
             {
               "id": "toolResults",
               "name": "Tool Results",
               "type": "output",
               "dataType": "array",
-              "description": "Python execution results"
+              "description": "Results from MCP tools used"
+            },
+            {
+              "id": "executionLog",
+              "name": "Execution Log",
+              "type": "output",
+              "dataType": "string",
+              "description": "Detailed execution log"
+            },
+            {
+              "id": "success",
+              "name": "Success",
+              "type": "output",
+              "dataType": "boolean",
+              "description": "Whether execution was successful"
             },
             {
               "id": "metadata",
               "name": "Metadata",
               "type": "output",
-              "dataType": "object"
+              "dataType": "object",
+              "description": "Execution metadata (timing, tools used, etc.)"
             }
-          ]
+          ],
+          "textModel": "eb8e82fd-231a-45e8-9e02-08bf38de1394:gpt-oss-20b-20b",
+          "visionModel": "eb8e82fd-231a-45e8-9e02-08bf38de1394:gpt-oss-20b-20b",
+          "codeModel": "eb8e82fd-231a-45e8-9e02-08bf38de1394:gpt-oss-20b-20b",
+          "provider": "eb8e82fd-231a-45e8-9e02-08bf38de1394",
+          "enabledMCPServers": [
+            "python-mcp"
+          ],
+          "instructions": "you do anutonomous agentic working you are a pythonista and you have all the tools needed",
+          "maxToolCalls": 50,
+          "maxTokens": 24000
+        },
+        "inputs": [
+          {
+            "id": "instructions",
+            "name": "Instructions",
+            "type": "input",
+            "dataType": "string",
+            "required": true,
+            "description": "Task instructions for the autonomous agent"
+          },
+          {
+            "id": "context",
+            "name": "Context",
+            "type": "input",
+            "dataType": "string",
+            "required": false,
+            "description": "Additional context for the task"
+          },
+          {
+            "id": "attachments",
+            "name": "Attachments",
+            "type": "input",
+            "dataType": "array",
+            "required": false,
+            "description": "File attachments for the task"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "result",
+            "name": "Result",
+            "type": "output",
+            "dataType": "string",
+            "description": "Agent execution result"
+          },
+          {
+            "id": "toolResults",
+            "name": "Tool Results",
+            "type": "output",
+            "dataType": "array",
+            "description": "Results from MCP tools used"
+          },
+          {
+            "id": "executionLog",
+            "name": "Execution Log",
+            "type": "output",
+            "dataType": "string",
+            "description": "Detailed execution log"
+          },
+          {
+            "id": "success",
+            "name": "Success",
+            "type": "output",
+            "dataType": "boolean",
+            "description": "Whether execution was successful"
+          },
+          {
+            "id": "metadata",
+            "name": "Metadata",
+            "type": "output",
+            "dataType": "object",
+            "description": "Execution metadata (timing, tools used, etc.)"
+          }
+        ],
+        "metadata": {
+          "tags": [
+            "ai",
+            "agent",
+            "autonomous",
+            "mcp",
+            "tools"
+          ],
+          "documentation": "Executes autonomous AI agents with tool access for complex multi-step tasks."
         }
       },
       {
-        "id": "format-notebook",
+        "id": "1760374783716-hu3z4h6ey",
         "type": "static-text",
-        "name": "Notebook Template",
+        "name": "Static Text",
         "position": {
-          "x": 450,
-          "y": 200
+          "x": 283.62230621222125,
+          "y": 859.7173859687005
         },
         "data": {
-          "label": "Markdown Template",
-          "text": "# Data Analysis Report\n\n## Dataset Overview\n{dataset_info}\n\n## Statistical Summary\n{statistics}\n\n## Key Findings\n{findings}\n\n## Visualizations\n{charts}\n\n## Recommendations\n{recommendations}\n\n---\n*Generated by ClaraVerse Data Analysis Workflow*",
+          "label": "Static Text",
+          "inputs": [],
           "outputs": [
             {
               "id": "text",
               "name": "Text Output",
               "type": "output",
-              "dataType": "string"
+              "dataType": "string",
+              "required": true,
+              "description": "The static text content"
             }
+          ],
+          "text": "i have provided the csv data i want you to create a insights and chart that will be useful from it and also use all the posible tools like python and pandas and even matplotlib chart is cool"
+        },
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "text",
+            "name": "Text Output",
+            "type": "output",
+            "dataType": "string",
+            "required": true,
+            "description": "The static text content"
+          }
+        ],
+        "metadata": {
+          "examples": [
+            {
+              "name": "System Prompt",
+              "description": "Static system prompt for AI models",
+              "config": {
+                "text": "You are a helpful AI assistant. Please respond in a friendly and professional manner.",
+                "label": "System Prompt",
+                "textFormat": "plain",
+                "multiline": true
+              }
+            },
+            {
+              "name": "API Instructions",
+              "description": "Fixed instructions for API requests",
+              "config": {
+                "text": "Please analyze the following data and provide insights:\n\n",
+                "label": "API Instructions",
+                "textFormat": "template",
+                "multiline": true
+              }
+            },
+            {
+              "name": "JSON Template",
+              "description": "Static JSON structure template",
+              "config": {
+                "text": "{\"role\": \"system\", \"content\": \"You are a helpful assistant\"}",
+                "label": "JSON Template",
+                "textFormat": "json",
+                "multiline": false
+              }
+            }
+          ],
+          "tags": [
+            "text",
+            "static",
+            "prompt",
+            "template",
+            "content",
+            "fixed",
+            "constant"
           ]
         }
       },
       {
-        "id": "combine-report",
+        "id": "1760374855250-shb6wdprq",
         "type": "combine-text",
-        "name": "Build Report",
+        "name": "Combine Text",
         "position": {
-          "x": 450,
-          "y": 0
+          "x": 1020.6994251699584,
+          "y": 671.027754728177
         },
-        "data": {
-          "label": "Combine Results",
-          "combineMode": "separator",
-          "separator": "\n\n---\n\n",
-          "addSpaces": true,
-          "inputs": [
+        "data": {},
+        "inputs": [
+          {
+            "id": "text1",
+            "name": "Text 1",
+            "type": "input",
+            "dataType": "string",
+            "required": true,
+            "description": "First text input"
+          },
+          {
+            "id": "text2",
+            "name": "Text 2",
+            "type": "input",
+            "dataType": "string",
+            "required": true,
+            "description": "Second text input"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "combined",
+            "name": "Combined Text",
+            "type": "output",
+            "dataType": "string",
+            "required": true,
+            "description": "Combined text result"
+          },
+          {
+            "id": "metadata",
+            "name": "Metadata",
+            "type": "output",
+            "dataType": "object",
+            "required": false,
+            "description": "Combination metadata (mode, separator, lengths, etc.)"
+          }
+        ],
+        "metadata": {
+          "examples": [
             {
-              "id": "text1",
-              "name": "Analysis Results",
-              "type": "input",
-              "dataType": "string"
+              "name": "Simple Prompt Building",
+              "description": "Combine system prompt with user input",
+              "config": {
+                "combineMode": "concat",
+                "addSpaces": true
+              }
             },
             {
-              "id": "text2",
-              "name": "Template",
-              "type": "input",
-              "dataType": "string"
-            }
-          ],
-          "outputs": [
-            {
-              "id": "combined",
-              "name": "Combined Report",
-              "type": "output",
-              "dataType": "string"
-            }
-          ]
-        }
-      },
-      {
-        "id": "enhance-report",
-        "type": "llm",
-        "name": "Polish Report",
-        "position": {
-          "x": 850,
-          "y": 0
-        },
-        "data": {
-          "label": "Report Formatter",
-          "apiBaseUrl": "http://localhost:8091/v1",
-          "model": "gpt-3.5-turbo",
-          "temperature": 0.3,
-          "maxTokens": 2000,
-          "inputs": [
-            {
-              "id": "user",
-              "name": "User Message",
-              "type": "input",
-              "dataType": "string"
+              "name": "Prompt with Separator",
+              "description": "Add context with clear separation",
+              "config": {
+                "combineMode": "separator",
+                "separator": "\\n\\n---\\n\\n",
+                "addSpaces": false
+              }
             },
             {
-              "id": "system",
-              "name": "System Message",
-              "type": "input",
-              "dataType": "string"
+              "name": "Prefix Instructions",
+              "description": "Add instructions before main content",
+              "config": {
+                "combineMode": "prefix",
+                "addSpaces": true
+              }
             }
           ],
-          "outputs": [
-            {
-              "id": "response",
-              "name": "Response",
-              "type": "output",
-              "dataType": "string"
-            }
+          "tags": [
+            "text",
+            "combine",
+            "prompt",
+            "concatenate",
+            "string",
+            "merge"
           ]
         }
       },
       {
-        "id": "report-system-prompt",
-        "type": "static-text",
-        "name": "Formatting Instructions",
-        "position": {
-          "x": 850,
-          "y": 200
-        },
-        "data": {
-          "label": "System Prompt",
-          "text": "You are a data science report writer. Format the analysis results into a clear, professional markdown report. Ensure code blocks are properly formatted, add insights and context to statistical findings, and make recommendations actionable. Keep technical accuracy while making it readable for business stakeholders.",
-          "outputs": [
-            {
-              "id": "text",
-              "name": "Text Output",
-              "type": "output",
-              "dataType": "string"
-            }
-          ]
-        }
-      },
-      {
-        "id": "output-notebook",
+        "id": "1760374903327-3dxbdxzv4",
         "type": "output",
-        "name": "Analysis Report",
+        "name": "Output",
         "position": {
-          "x": 1200,
-          "y": 0
+          "x": 2334.137599553295,
+          "y": 541.7159794724333
         },
-        "data": {
-          "label": "Final Notebook",
-          "format": "markdown",
-          "inputs": [
-            {
-              "id": "input",
-              "name": "Value",
-              "type": "input",
-              "dataType": "any"
-            }
+        "data": {},
+        "inputs": [
+          {
+            "id": "input",
+            "name": "Value",
+            "type": "input",
+            "dataType": "any",
+            "required": true,
+            "description": "Value to output"
+          }
+        ],
+        "outputs": [],
+        "metadata": {
+          "tags": [
+            "output",
+            "basic",
+            "sink"
           ],
-          "outputs": []
-        }
-      },
-      {
-        "id": "save-results",
-        "type": "output",
-        "name": "Raw Results",
-        "position": {
-          "x": 450,
-          "y": -200
-        },
-        "data": {
-          "label": "Analysis Output",
-          "format": "json",
-          "inputs": [
-            {
-              "id": "input",
-              "name": "Value",
-              "type": "input",
-              "dataType": "any"
-            }
-          ],
-          "outputs": []
+          "documentation": "Displays the final result with various formatting options."
         }
       }
     ],
     "connections": [
       {
-        "id": "conn-1",
-        "sourceNodeId": "analysis-instructions",
-        "sourcePortId": "text",
-        "targetNodeId": "agent-executor-analysis",
-        "targetPortId": "instructions"
-      },
-      {
-        "id": "conn-2",
-        "sourceNodeId": "file-upload-csv",
+        "id": "1760374681140-vsfzx2lao",
+        "sourceNodeId": "1760374329726-qk7uqq04q",
         "sourcePortId": "content",
-        "targetNodeId": "agent-executor-analysis",
-        "targetPortId": "context"
+        "targetNodeId": "1760374677372-i34jzillb",
+        "targetPortId": "input_1760374649212_1yqmp2g59"
       },
       {
-        "id": "conn-3",
-        "sourceNodeId": "agent-executor-analysis",
-        "sourcePortId": "result",
-        "targetNodeId": "combine-report",
-        "targetPortId": "text1"
-      },
-      {
-        "id": "conn-4",
-        "sourceNodeId": "format-notebook",
-        "sourcePortId": "text",
-        "targetNodeId": "combine-report",
-        "targetPortId": "text2"
-      },
-      {
-        "id": "conn-5",
-        "sourceNodeId": "combine-report",
-        "sourcePortId": "combined",
-        "targetNodeId": "enhance-report",
-        "targetPortId": "user"
-      },
-      {
-        "id": "conn-6",
-        "sourceNodeId": "report-system-prompt",
-        "sourcePortId": "text",
-        "targetNodeId": "enhance-report",
-        "targetPortId": "system"
-      },
-      {
-        "id": "conn-7",
-        "sourceNodeId": "enhance-report",
-        "sourcePortId": "response",
-        "targetNodeId": "output-notebook",
+        "id": "1760374734232-iayeba01f",
+        "sourceNodeId": "1760374677372-i34jzillb",
+        "sourcePortId": "output_1760374649212_u2bos1f94",
+        "targetNodeId": "1760374731613-vzikid79h",
         "targetPortId": "input"
       },
       {
-        "id": "conn-8",
-        "sourceNodeId": "agent-executor-analysis",
-        "sourcePortId": "toolResults",
-        "targetNodeId": "save-results",
+        "id": "1760374750006-nphtymz2c",
+        "sourceNodeId": "1760374731613-vzikid79h",
+        "sourcePortId": "output",
+        "targetNodeId": "1760374747170-ra2a8h8oe",
+        "targetPortId": "input"
+      },
+      {
+        "id": "1760374857739-4grrjd5tu",
+        "sourceNodeId": "1760374731613-vzikid79h",
+        "sourcePortId": "output",
+        "targetNodeId": "1760374855250-shb6wdprq",
+        "targetPortId": "text1"
+      },
+      {
+        "id": "1760374859743-1t00ds1kl",
+        "sourceNodeId": "1760374783716-hu3z4h6ey",
+        "sourcePortId": "text",
+        "targetNodeId": "1760374855250-shb6wdprq",
+        "targetPortId": "text2"
+      },
+      {
+        "id": "1760374864813-rzk8qxjtx",
+        "sourceNodeId": "1760374855250-shb6wdprq",
+        "sourcePortId": "combined",
+        "targetNodeId": "1760374765204-ey9pvnpog",
+        "targetPortId": "instructions"
+      },
+      {
+        "id": "1760374910167-h67brvvz4",
+        "sourceNodeId": "1760374765204-ey9pvnpog",
+        "sourcePortId": "result",
+        "targetNodeId": "1760374903327-3dxbdxzv4",
         "targetPortId": "input"
       }
     ],
@@ -352,8 +630,66 @@
       "name": "Data Analysis Notebook",
       "version": "1.0.0"
     },
-    "createdAt": "2025-10-13T14:00:00.000Z",
-    "updatedAt": "2025-10-13T14:00:00.000Z",
+    "createdAt": "2025-10-13T16:45:19.213Z",
+    "updatedAt": "2025-10-13T17:05:23.701Z",
     "version": "1.0.0"
+  },
+  "customNodes": [
+    {
+      "id": "node-1760374670117-4mdcn0j57",
+      "type": "base64-csv-decoder",
+      "name": "Base64 CSV Decoder",
+      "description": "Decodes a base64-encoded CSV file to readable CSV text. Supports multiple character encodings for compatibility with various CSV sources.",
+      "category": "data",
+      "icon": "🗂️",
+      "inputs": [
+        {
+          "id": "input_1760374649212_1yqmp2g59",
+          "name": "base64Csv",
+          "type": "input",
+          "dataType": "string",
+          "required": true,
+          "description": "The base64-encoded string representing the CSV file."
+        }
+      ],
+      "outputs": [
+        {
+          "id": "output_1760374649212_u2bos1f94",
+          "name": "csvText",
+          "type": "output",
+          "dataType": "string",
+          "description": "The decoded CSV as plain text."
+        }
+      ],
+      "properties": [
+        {
+          "id": "prop_1760374649212_phsqno0ze",
+          "name": "encoding",
+          "type": "select",
+          "required": false,
+          "defaultValue": "utf-8",
+          "description": "The character encoding to use when decoding the CSV. Common options: utf-8, utf-16le, latin1, win1252."
+        }
+      ],
+      "executionCode": "async function execute(inputs, properties, context) {\n  // Access base64 input and encoding property\n  const base64Csv = inputs.base64Csv;\n  const encoding = properties.encoding || 'utf-8';\n\n  try {\n    if (typeof base64Csv !== 'string' || !base64Csv.trim()) {\n      throw new Error('Input base64Csv must be a non-empty string.');\n    }\n\n    // Check if input is already plain text CSV (from file upload in runner)\n    // CSV files typically start with column headers\n    const trimmed = base64Csv.trim();\n    const looksLikePlainCSV = /^[a-zA-Z0-9\\s_,.-]+,/.test(trimmed) || trimmed.includes('\\n') || trimmed.includes('\\r');\n    \n    if (looksLikePlainCSV) {\n      context.log('Input appears to be plain CSV text, passing through without base64 decoding');\n      return { csvText: base64Csv };\n    }\n\n    // Helper: base64 decode to Uint8Array with error handling\n    function base64ToUint8Array(base64) {\n      if (typeof atob === 'function') {\n        // Browser - try to decode, fallback if it fails\n        try {\n          const binary = atob(base64);\n          const len = binary.length;\n          const bytes = new Uint8Array(len);\n          for (let i = 0; i < len; i++) {\n            bytes[i] = binary.charCodeAt(i);\n          }\n          return bytes;\n        } catch (error) {\n          // atob failed - input is likely plain text, not base64\n          context.log('Base64 decode failed, treating input as plain text');\n          return null;\n        }\n      } else if (typeof Buffer !== 'undefined') {\n        // Node.js\n        return Uint8Array.from(Buffer.from(base64, 'base64'));\n      } else {\n        throw new Error('Base64 decoding not supported in this environment.');\n      }\n    }\n\n    // Helper: decode bytes to string with encoding\n    function decodeBytesToString(bytes, encoding) {\n      if (encoding.toLowerCase() === 'utf-8' || encoding.toLowerCase() === 'utf8') {\n        if (typeof TextDecoder !== 'undefined') {\n          return new TextDecoder('utf-8').decode(bytes);\n        } else if (typeof Buffer !== 'undefined') {\n          return Buffer.from(bytes).toString('utf8');\n        } else {\n          throw new Error('TextDecoder not available for utf-8 decoding.');\n        }\n      } else if (encoding.toLowerCase() === 'utf-16le' || encoding.toLowerCase() === 'utf16le') {\n        if (typeof TextDecoder !== 'undefined') {\n          return new TextDecoder('utf-16le').decode(bytes);\n        } else if (typeof Buffer !== 'undefined') {\n          return Buffer.from(bytes).toString('utf16le');\n        } else {\n          throw new Error('TextDecoder not available for utf-16le decoding.');\n        }\n      } else if (encoding.toLowerCase() === 'latin1' || encoding.toLowerCase() === 'iso-8859-1') {\n        if (typeof TextDecoder !== 'undefined') {\n          return new TextDecoder('latin1').decode(bytes);\n        } else if (typeof Buffer !== 'undefined') {\n          return Buffer.from(bytes).toString('latin1');\n        } else {\n          throw new Error('TextDecoder not available for latin1 decoding.');\n        }\n      } else if (encoding.toLowerCase() === 'win1252' || encoding.toLowerCase() === 'windows-1252') {\n        // Try TextDecoder if available\n        if (typeof TextDecoder !== 'undefined') {\n          try {\n            return new TextDecoder('windows-1252').decode(bytes);\n          } catch (e) {\n            // Fallback to latin1 if not supported\n            return new TextDecoder('latin1').decode(bytes);\n          }\n        } else if (typeof Buffer !== 'undefined') {\n          return Buffer.from(bytes).toString('latin1');\n        } else {\n          throw new Error('TextDecoder not available for windows-1252 decoding.');\n        }\n      } else {\n        throw new Error('Unsupported encoding: ' + encoding);\n      }\n    }\n\n    // Main logic\n    const bytes = base64ToUint8Array(base64Csv.trim());\n    \n    // If base64 decode failed (returned null), treat input as plain text\n    if (bytes === null) {\n      context.log('Using input as plain text (base64 decode not needed)');\n      return { csvText: base64Csv };\n    }\n    \n    const csvText = decodeBytesToString(bytes, encoding);\n\n    return { csvText };\n  } catch (error) {\n    // Final fallback: if anything fails, try returning input as-is\n    if (error.message && error.message.includes('atob')) {\n      context.log('All decode attempts failed, returning input as plain text');\n      return { csvText: base64Csv };\n    }\n    context.log('Error:', error.message);\n    throw error;\n  }\n}",
+      "metadata": {
+        "tags": [
+          "csv",
+          "base64",
+          "decode",
+          "data",
+          "encoding",
+          "text",
+          "import"
+        ],
+        "documentation": "",
+        "examples": []
+      }
+    }
+  ],
+  "metadata": {
+    "exportedAt": "2025-10-13T17:13:39.211Z",
+    "exportedBy": "Clara Agent Studio",
+    "hasCustomNodes": true
   }
 }

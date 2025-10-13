@@ -110,6 +110,65 @@ export const simpleNodeDefinitions: NodeDefinition[] = [
     }
   },
 
+  // JSON STRINGIFY NODE
+  {
+    id: 'json-stringify-node',
+    name: 'JSON Stringify',
+    type: 'json-stringify',
+    category: 'data',
+    description: 'Convert JSON data to a string for prompts and display nodes',
+    icon: 'file-text',
+    version: '1.0.0',
+    author: 'Clara',
+    inputs: [
+      {
+        id: 'input',
+        name: 'JSON/Data',
+        type: 'input',
+        dataType: 'any',
+        required: true,
+        description: 'Object, array, or value to stringify'
+      }
+    ],
+    outputs: [
+      {
+        id: 'output',
+        name: 'String Output',
+        type: 'output',
+        dataType: 'string',
+        description: 'Stringified JSON output'
+      }
+    ],
+    properties: [
+      {
+        id: 'prettyPrint',
+        name: 'Pretty Print',
+        type: 'boolean',
+        defaultValue: true,
+        description: 'Format output with whitespace for readability'
+      },
+      {
+        id: 'indent',
+        name: 'Indent Spaces',
+        type: 'number',
+        defaultValue: 2,
+        description: 'Number of spaces to use for indentation when pretty print is enabled'
+      },
+      {
+        id: 'nullFallback',
+        name: 'Null Fallback Text',
+        type: 'string',
+        defaultValue: '',
+        description: 'Text to output when input is null or undefined'
+      }
+    ],
+    executionHandler: 'json-stringify-node-handler',
+    metadata: {
+      tags: ['json', 'stringify', 'data'],
+      documentation: 'Converts JSON objects into text while preserving formatting, ideal for LLM prompts and text outputs.'
+    }
+  },
+
   // OUTPUT NODE
   {
     id: 'output-node',

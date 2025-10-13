@@ -40,12 +40,14 @@ interface ConfigurableService {
   description: string;
   icon: React.ComponentType<{ className?: string }>;
   status: 'running' | 'stopped';
-  mode: 'docker' | 'manual';
+  mode: 'docker' | 'manual' | 'remote';
   serviceUrl?: string;
   manualUrl?: string;
+  remoteUrl?: string;
   platformSupport: {
     docker: boolean;
     manual: boolean;
+    remote: boolean;
   };
   isLoading?: boolean;
   error?: string;
@@ -85,7 +87,7 @@ const UnifiedServiceManager: React.FC = () => {
   const [enhancedServiceStatus, setEnhancedServiceStatus] = useState<any>({});
   const [currentPlatform, setCurrentPlatform] = useState<string>('win32');
   
-  // N8N and ComfyUI service status (reused from ServicesTab)
+  // N8N, ComfyUI, and Python Backend service status (reused from ServicesTab)
   const [n8nStatus, setN8nStatus] = useState<ServiceStatus>({
     running: false,
     serviceUrl: 'http://localhost:5678'
@@ -94,11 +96,16 @@ const UnifiedServiceManager: React.FC = () => {
     running: false,
     serviceUrl: 'http://localhost:8188'
   });
+  const [pythonBackendStatus, setPythonBackendStatus] = useState<ServiceStatus>({
+    running: false,
+    serviceUrl: 'http://localhost:5001'
+  });
 
   // Loading states
   const [globalLoading, setGlobalLoading] = useState(false);
   const [n8nLoading, setN8nLoading] = useState(false);
   const [comfyuiLoading, setComfyuiLoading] = useState(false);
+  const [pythonBackendLoading, setPythonBackendLoading] = useState(false);
   
   // Feature Configuration State
   const [featureConfig, setFeatureConfig] = useState({
@@ -164,6 +171,10 @@ const UnifiedServiceManager: React.FC = () => {
   const [testingServices, setTestingServices] = useState<{ [key: string]: boolean }>({});
   const [serviceTestResults, setServiceTestResults] = useState<{ [key: string]: any }>({});
 
+  // Remote server state
+  const [remoteServerConfig, setRemoteServerConfig] = useState<any>(null);
+  const [loadingRemoteConfig, setLoadingRemoteConfig] = useState(false);
+
   const expectedServiceStatesRef = useRef<{ [key: string]: boolean }>({});
 
   // Platform detection (reused from Settings.tsx)
@@ -179,10 +190,23 @@ const UnifiedServiceManager: React.FC = () => {
     }
   }, []);
 
+  // Load remote server configuration
+  const loadRemoteServerConfig = async () => {
+    try {
+      if (window.electron?.store?.get) {
+        const config = await window.electron.store.get('remoteServer');
+        setRemoteServerConfig(config);
+      }
+    } catch (error) {
+      console.error('Failed to load remote server config:', error);
+    }
+  };
+
   // Load service configurations (reused from Settings.tsx)
   useEffect(() => {
     loadServiceConfigurations();
     loadFeatureConfig(); // Load feature configuration on mount
+    loadRemoteServerConfig(); // Load remote server configuration
   }, []);
 
   // Status checking intervals (reused from ServicesTab)
@@ -202,7 +226,8 @@ const UnifiedServiceManager: React.FC = () => {
     checkDockerServices();
     fetchN8nStatus();
     fetchComfyuiStatus();
-    
+    fetchPythonBackendStatus();
+
     const interval = setInterval(() => {
       checkDockerServices();
     }, 60000);
@@ -217,7 +242,18 @@ const UnifiedServiceManager: React.FC = () => {
     try {
       if ((window as any).electronAPI?.invoke) {
         const configs = await (window as any).electronAPI.invoke('service-config:get-all-configs');
-        setServiceConfigs(configs);
+
+        // Map currentMode to mode for consistency with UI expectations
+        const normalizedConfigs: any = {};
+        Object.keys(configs).forEach(serviceName => {
+          normalizedConfigs[serviceName] = {
+            ...configs[serviceName],
+            mode: configs[serviceName].currentMode || 'docker',
+            url: configs[serviceName].currentUrl
+          };
+        });
+
+        setServiceConfigs(normalizedConfigs);
 
         const status = await (window as any).electronAPI.invoke('service-config:get-enhanced-status');
         setEnhancedServiceStatus(status);
@@ -265,6 +301,25 @@ const UnifiedServiceManager: React.FC = () => {
     }
   };
 
+  // Fetch Python Backend status
+  const fetchPythonBackendStatus = async () => {
+    try {
+      const result = await (window as any).electronAPI.invoke('python-backend:check-service-status');
+      setPythonBackendStatus({
+        running: result.running || false,
+        serviceUrl: result.serviceUrl || 'http://localhost:5001',
+        error: result.error
+      });
+    } catch (error) {
+      console.error('Error fetching Python Backend status:', error);
+      setPythonBackendStatus({
+        running: false,
+        serviceUrl: 'http://localhost:5001',
+        error: 'Failed to check status'
+      });
+    }
+  };
+
   // Handle N8N actions (from ServicesTab)
   const handleN8nAction = async (action: 'start' | 'stop' | 'restart') => {
     setN8nLoading(true);
@@ -300,7 +355,7 @@ const UnifiedServiceManager: React.FC = () => {
       } else if (action === 'restart' && (window as any).electronAPI) {
         result = await (window as any).electronAPI.invoke('comfyui-restart');
       }
-      
+
       if (result?.success) {
         setTimeout(() => fetchComfyuiStatus(), 5000);
         setTimeout(() => fetchComfyuiStatus(), 15000);
@@ -309,6 +364,33 @@ const UnifiedServiceManager: React.FC = () => {
       console.error('Error performing ComfyUI action:', error);
     } finally {
       setComfyuiLoading(false);
+    }
+  };
+
+  // Handle Python Backend actions
+  const handlePythonBackendAction = async (action: 'start' | 'stop' | 'restart') => {
+    setPythonBackendLoading(true);
+    try {
+      let result;
+      if (action === 'start' && (window as any).electronAPI) {
+        result = await (window as any).electronAPI.invoke('start-python-container');
+      } else if (action === 'stop' && (window as any).electronAPI) {
+        result = await (window as any).electronAPI.invoke('stop-docker-service', 'python');
+      } else if (action === 'restart' && (window as any).electronAPI) {
+        // Stop then start
+        await (window as any).electronAPI.invoke('stop-docker-service', 'python');
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        result = await (window as any).electronAPI.invoke('start-python-container');
+      }
+
+      if (result?.success) {
+        setTimeout(() => fetchPythonBackendStatus(), 3000);
+        setTimeout(() => fetchPythonBackendStatus(), 10000);
+      }
+    } catch (error) {
+      console.error('Error performing Python Backend action:', error);
+    } finally {
+      setPythonBackendLoading(false);
     }
   };
 
@@ -385,7 +467,13 @@ const UnifiedServiceManager: React.FC = () => {
   const updateServiceConfig = async (serviceName: string, mode: string, url?: string) => {
     try {
       setSavingServiceConfig(prev => ({ ...prev, [serviceName]: true }));
-      
+
+      // For remote mode, get URL from remote server config
+      if (mode === 'remote') {
+        const remoteService = remoteServerConfig?.services?.[serviceName];
+        url = remoteService?.url || url;
+      }
+
       if ((window as any).electronAPI?.invoke) {
         await (window as any).electronAPI.invoke('service-config:set-config', serviceName, mode, url);
         // Don't reload configurations immediately - let the local state updates persist
@@ -462,7 +550,8 @@ const UnifiedServiceManager: React.FC = () => {
       await Promise.all([
         loadServiceConfigurations(),
         fetchN8nStatus(),
-        fetchComfyuiStatus()
+        fetchComfyuiStatus(),
+        fetchPythonBackendStatus()
       ]);
     } catch (error) {
       console.error('Error refreshing services:', error);
@@ -489,26 +578,30 @@ const UnifiedServiceManager: React.FC = () => {
       configurable: false,
       statusColor: 'emerald',
       actions: ['open']
-    },
-    {
-      id: 'python-backend',
-      name: 'Python Backend',
-      description: 'RAG, TTS, STT, and document processing services \n (Might take a few minutes to start if its the first time)',
-      icon: Code,
-      status: enhancedServiceStatus?.['python-backend']?.state === 'running' || dockerServices?.pythonAvailable ? 'running' : 'stopped',
-      serviceUrl: enhancedServiceStatus?.['python-backend']?.serviceUrl || 'http://localhost:5001',
-      port: '5001',
-      deployment: 'Docker Container',
-      engine: 'RAG, TTS, STT',
-      autoStart: true,
-      configurable: false,
-      statusColor: 'blue',
-      actions: dockerServices?.pythonAvailable ? ['open', 'stop', 'restart'] : ['start']
     }
   ];
 
   // Configurable Services
   const configurableServices: ConfigurableService[] = [
+    {
+      id: 'python-backend',
+      name: 'Python Backend',
+      description: 'RAG, TTS, STT, and document processing services',
+      icon: Code,
+      status: pythonBackendStatus.running ? 'running' : 'stopped',
+      mode: serviceConfigs['python-backend']?.mode || 'docker',
+      serviceUrl: pythonBackendStatus.serviceUrl,
+      manualUrl: serviceConfigs['python-backend']?.url,
+      remoteUrl: remoteServerConfig?.services?.python?.url,
+      platformSupport: {
+        docker: true,
+        manual: true,
+        remote: true
+      },
+      isLoading: pythonBackendLoading,
+      error: pythonBackendStatus.error,
+      actions: pythonBackendStatus.running ? ['open', 'stop', 'restart'] : ['start']
+    },
     {
       id: 'n8n',
       name: 'N8N Workflows',
@@ -518,9 +611,11 @@ const UnifiedServiceManager: React.FC = () => {
       mode: serviceConfigs.n8n?.mode || 'docker',
       serviceUrl: n8nStatus.serviceUrl,
       manualUrl: serviceConfigs.n8n?.url,
+      remoteUrl: remoteServerConfig?.services?.n8n?.url,
       platformSupport: {
         docker: true,
-        manual: true
+        manual: true,
+        remote: true
       },
       isLoading: n8nLoading,
       error: n8nStatus.error,
@@ -535,9 +630,11 @@ const UnifiedServiceManager: React.FC = () => {
       mode: serviceConfigs.comfyui?.mode || 'docker',
       serviceUrl: comfyuiStatus.serviceUrl,
       manualUrl: serviceConfigs.comfyui?.url,
+      remoteUrl: remoteServerConfig?.services?.comfyui?.url,
       platformSupport: {
         docker: currentPlatform === 'win32',
-        manual: true
+        manual: true,
+        remote: true
       },
       isLoading: comfyuiLoading,
       error: comfyuiStatus.error,
@@ -751,20 +848,22 @@ const UnifiedServiceManager: React.FC = () => {
           </div>
           <div className="flex items-center gap-2">
             <span className={`px-3 py-1 rounded-full text-xs font-medium ${
-              isRunning 
+              isRunning
                 ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300'
-                : service.isLoading 
+                : service.isLoading
                   ? 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300'
                   : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'
             }`}>
               {service.isLoading ? 'Starting...' : (isRunning ? 'Running' : 'Stopped')}
             </span>
             <span className={`px-3 py-1 rounded-full text-xs font-medium ${
-              config.mode === 'docker' 
+              config.mode === 'docker'
                 ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
-                : 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300'
+                : config.mode === 'remote'
+                  ? 'bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300'
+                  : 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300'
             }`}>
-              {config.mode === 'docker' ? 'Docker' : 'Manual'}
+              {config.mode === 'docker' ? 'Docker' : config.mode === 'remote' ? 'Remote' : 'Manual'}
             </span>
           </div>
         </div>
@@ -836,28 +935,30 @@ const UnifiedServiceManager: React.FC = () => {
               <button
                 onClick={() => {
                   // Pre-populate with default URL if none exists
-                  const defaultUrl = service.id === 'comfyui' 
-                    ? 'http://localhost:8188' 
-                    : 'http://localhost:5678';
-                  
+                  const defaultUrl = service.id === 'comfyui'
+                    ? 'http://localhost:8188'
+                    : service.id === 'python-backend'
+                      ? 'http://localhost:5001'
+                      : 'http://localhost:5678';
+
                   const urlToUse = config.url || defaultUrl;
-                  
+
                   // Immediately update local state for instant UI response
                   setServiceConfigs((prev: any) => ({
                     ...prev,
-                    [service.id]: { 
-                      ...prev[service.id], 
+                    [service.id]: {
+                      ...prev[service.id],
                       mode: 'manual',
                       url: urlToUse
                     }
                   }));
-                  
+
                   // Set temp URL for editing
                   setTempServiceUrls(prev => ({
                     ...prev,
                     [service.id]: urlToUse
                   }));
-                  
+
                   // Update config with default URL to satisfy backend validation
                   updateServiceConfig(service.id, 'manual', urlToUse);
                 }}
@@ -883,8 +984,102 @@ const UnifiedServiceManager: React.FC = () => {
                   External service with custom URL
                 </p>
               </button>
+
+              {/* Remote Mode */}
+              <button
+                onClick={() => {
+                  // Check if remote server is configured
+                  if (!remoteServerConfig || !remoteServerConfig.isConnected) {
+                    alert('⚠️ Please setup Remote Server first!\n\nGo to Settings → System → Remote Server to configure your remote server.');
+                    return;
+                  }
+
+                  // Check if this service is deployed remotely
+                  // Map service IDs to remote server keys (python-backend -> python)
+                  const remoteServiceKey = service.id === 'python-backend' ? 'python' : service.id;
+                  console.log('🔍 [Remote Mode] Checking remote service:', service.id, '-> key:', remoteServiceKey);
+                  console.log('🔍 [Remote Mode] Available services:', remoteServerConfig.services);
+                  const remoteService = remoteServerConfig.services?.[remoteServiceKey];
+                  console.log('🔍 [Remote Mode] Found remote service:', remoteService);
+
+                  if (!remoteService) {
+                    alert(`⚠️ ${service.name} is not deployed on remote server.\n\nGo to Remote Server tab to deploy it first.`);
+                    return;
+                  }
+
+                  // Switch to remote mode
+                  const remoteUrl = remoteService.url;
+                  console.log('🔍 [Remote Mode] Using URL:', remoteUrl);
+
+                  setServiceConfigs((prev: any) => ({
+                    ...prev,
+                    [service.id]: {
+                      ...prev[service.id],
+                      mode: 'remote',
+                      url: remoteUrl
+                    }
+                  }));
+
+                  updateServiceConfig(service.id, 'remote', remoteUrl);
+
+                  // Refresh service status after mode change
+                  setTimeout(() => {
+                    if (service.id === 'n8n') fetchN8nStatus();
+                    else if (service.id === 'comfyui') fetchComfyuiStatus();
+                    else if (service.id === 'python-backend') fetchPythonBackendStatus();
+                  }, 1000);
+                }}
+                disabled={!remoteServerConfig?.isConnected}
+                className={`flex-1 p-3 rounded-lg border-2 transition-all relative ${
+                  config.mode === 'remote'
+                    ? 'border-orange-500 bg-orange-50 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 shadow-md'
+                    : remoteServerConfig?.isConnected
+                      ? 'border-gray-200 dark:border-gray-700 hover:border-orange-300 dark:hover:border-orange-500 hover:bg-orange-50/50 dark:hover:bg-orange-900/10 text-gray-700 dark:text-gray-300'
+                      : 'border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800/50 text-gray-400 dark:text-gray-600 cursor-not-allowed'
+                }`}
+              >
+                {config.mode === 'remote' && (
+                  <div className="absolute -top-1 -right-1 w-3 h-3 bg-orange-500 rounded-full border-2 border-white dark:border-gray-800"></div>
+                )}
+                <div className="flex items-center gap-2">
+                  <Server className={`w-4 h-4 ${config.mode === 'remote' ? 'text-orange-600 dark:text-orange-400' : ''}`} />
+                  <span className="font-medium">Remote</span>
+                  {config.mode === 'remote' && (
+                    <span className="ml-auto text-xs bg-orange-100 dark:bg-orange-800 px-2 py-0.5 rounded-full">
+                      Active
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs mt-1 text-left">
+                  {remoteServerConfig?.isConnected
+                    ? `Server: ${remoteServerConfig.host}`
+                    : 'Setup required'
+                  }
+                </p>
+              </button>
             </div>
           </div>
+
+          {/* Remote Server Info */}
+          {config.mode === 'remote' && remoteServerConfig && (
+            <div className="p-4 bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 rounded-lg">
+              <div className="flex items-start gap-3">
+                <Server className="w-5 h-5 text-orange-600 dark:text-orange-400 mt-0.5" />
+                <div className="flex-1 space-y-2">
+                  <h4 className="font-medium text-orange-900 dark:text-orange-100">
+                    Running on Remote Server
+                  </h4>
+                  <div className="text-sm text-orange-700 dark:text-orange-300 space-y-1">
+                    <p><strong>Host:</strong> {remoteServerConfig.host}</p>
+                    <p><strong>Service URL:</strong> <code className="bg-orange-100 dark:bg-orange-900/30 px-1 py-0.5 rounded">{config.url}</code></p>
+                    <p className="text-xs mt-2 pt-2 border-t border-orange-200 dark:border-orange-700">
+                      💡 This service is running on your remote server. To switch back to local, select Docker or Manual mode.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Manual URL Configuration */}
           {config.mode === 'manual' && (
@@ -922,9 +1117,11 @@ const UnifiedServiceManager: React.FC = () => {
                       }
                     }}
                     className="flex-1 px-3 py-2 rounded-lg bg-white/50 border border-gray-200 focus:outline-none focus:border-purple-300 dark:bg-gray-800/50 dark:border-gray-700 dark:text-gray-100"
-                    placeholder={service.id === 'comfyui' 
-                      ? 'http://localhost:8188' 
-                      : 'http://localhost:5678'
+                    placeholder={service.id === 'comfyui'
+                      ? 'http://localhost:8188'
+                      : service.id === 'python-backend'
+                        ? 'http://localhost:5001'
+                        : 'http://localhost:5678'
                     }
                   />
                   
@@ -1056,7 +1253,7 @@ const UnifiedServiceManager: React.FC = () => {
                 {/* URL Format Help */}
                 <div className="text-xs text-gray-500 dark:text-gray-400">
                   <p><strong>Expected format:</strong> http://localhost:port or https://your-domain.com</p>
-                  <p><strong>Default ports:</strong> ComfyUI (8188), N8N (5678)</p>
+                  <p><strong>Default ports:</strong> Python Backend (5001), ComfyUI (8188), N8N (5678)</p>
                   <p><strong>Tip:</strong> Press Enter to save quickly</p>
                 </div>
               </div>
@@ -1099,6 +1296,7 @@ const UnifiedServiceManager: React.FC = () => {
                       onClick={() => {
                         if (service.id === 'n8n') handleN8nAction('start');
                         else if (service.id === 'comfyui') handleComfyuiAction('start');
+                        else if (service.id === 'python-backend') handlePythonBackendAction('start');
                       }}
                       disabled={service.isLoading}
                       className="px-3 py-1 bg-green-500 text-white rounded text-sm hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
@@ -1112,6 +1310,7 @@ const UnifiedServiceManager: React.FC = () => {
                       onClick={() => {
                         if (service.id === 'n8n') handleN8nAction('stop');
                         else if (service.id === 'comfyui') handleComfyuiAction('stop');
+                        else if (service.id === 'python-backend') handlePythonBackendAction('stop');
                       }}
                       disabled={service.isLoading}
                       className="px-3 py-1 bg-red-500 text-white rounded text-sm hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
@@ -1125,6 +1324,7 @@ const UnifiedServiceManager: React.FC = () => {
                       onClick={() => {
                         if (service.id === 'n8n') handleN8nAction('restart');
                         else if (service.id === 'comfyui') handleComfyuiAction('restart');
+                        else if (service.id === 'python-backend') handlePythonBackendAction('restart');
                       }}
                       disabled={service.isLoading}
                       className="px-3 py-1 bg-amber-500 text-white rounded text-sm hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
@@ -1141,17 +1341,19 @@ const UnifiedServiceManager: React.FC = () => {
                 <div>
                   <span className="text-gray-500 dark:text-gray-400">Deployment:</span>
                   <span className={`ml-1 font-medium ${
-                    config.mode === 'docker' 
-                      ? 'text-blue-700 dark:text-blue-300' 
-                      : 'text-purple-700 dark:text-purple-300'
+                    config.mode === 'docker'
+                      ? 'text-blue-700 dark:text-blue-300'
+                      : config.mode === 'remote'
+                        ? 'text-orange-700 dark:text-orange-300'
+                        : 'text-purple-700 dark:text-purple-300'
                   }`}>
-                    {config.mode === 'docker' ? 'Docker Container' : 'Manual Setup'}
+                    {config.mode === 'docker' ? 'Docker Container' : config.mode === 'remote' ? 'Remote Server' : 'Manual Setup'}
                   </span>
                 </div>
                 <div>
                   <span className="text-gray-500 dark:text-gray-400">Service Type:</span>
                   <span className="ml-1 text-gray-700 dark:text-gray-300 font-medium">
-                    {service.id === 'comfyui' ? 'Image Generation' : 'Workflow Automation'}
+                    {service.id === 'comfyui' ? 'Image Generation' : service.id === 'python-backend' ? 'AI Processing' : 'Workflow Automation'}
                   </span>
                 </div>
                 <div>
@@ -1187,22 +1389,26 @@ const UnifiedServiceManager: React.FC = () => {
             <div className="flex items-center justify-between">
               <div>
                 <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                  {service.id === 'comfyui' ? '🎨 Enable' : '⚡ Enable'}
+                  {service.id === 'comfyui' ? '🎨 Enable' : service.id === 'python-backend' ? '🧠 Enable' : '⚡ Enable'}
                 </label>
                 <p className="text-xs text-gray-500 dark:text-gray-400">
-                  {service.id === 'comfyui' 
-                    ? 'Show ComfyUI in the sidebar' 
-                    : 'Show N8N in the sidebar'
+                  {service.id === 'comfyui'
+                    ? 'Show ComfyUI in the sidebar'
+                    : service.id === 'python-backend'
+                      ? 'Enable RAG and TTS features in the sidebar'
+                      : 'Show N8N in the sidebar'
                   }
                 </p>
               </div>
               <label className="relative inline-flex items-center cursor-pointer">
                 <input
                   type="checkbox"
-                  checked={service.id === 'comfyui' ? featureConfig.comfyUI : featureConfig.n8n}
+                  checked={service.id === 'comfyui' ? featureConfig.comfyUI : service.id === 'python-backend' ? featureConfig.ragAndTts : featureConfig.n8n}
                   onChange={(e) => {
                     if (service.id === 'comfyui') {
                       updateFeatureConfig({ comfyUI: e.target.checked });
+                    } else if (service.id === 'python-backend') {
+                      updateFeatureConfig({ ragAndTts: e.target.checked });
                     } else {
                       updateFeatureConfig({ n8n: e.target.checked });
                     }
@@ -1213,7 +1419,7 @@ const UnifiedServiceManager: React.FC = () => {
                 <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-purple-300/20 dark:peer-focus:ring-purple-800/20 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-purple-600"></div>
               </label>
             </div>
-            
+
             {savingFeatureConfig && (
               <div className="mt-2 p-2 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded text-sm">
                 <div className="flex items-center gap-2">
@@ -1224,13 +1430,13 @@ const UnifiedServiceManager: React.FC = () => {
                 </div>
               </div>
             )}
-            
+
             <div className="mt-2 p-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded text-xs">
               <div className="flex items-start gap-2">
                 <div className="text-blue-600 dark:text-blue-400 mt-0.5">💡</div>
                 <div className="text-blue-700 dark:text-blue-300">
-                  <strong>Tip:</strong> Enabling this feature will make {service.id === 'comfyui' ? 'Image Generation' : 'Workflow Automation'} 
-                  available in the sidebar and include it in the onboarding flow for new users. 
+                  <strong>Tip:</strong> Enabling this feature will make {service.id === 'comfyui' ? 'Image Generation' : service.id === 'python-backend' ? 'RAG and TTS' : 'Workflow Automation'}
+                  available in the sidebar and include it in the onboarding flow for new users.
                   This is useful if you initially skipped this service during setup.
                 </div>
               </div>

@@ -655,6 +655,7 @@ const UIBuilder: React.FC<UIBuilderProps> = ({ isOpen, onClose }) => {
       node.type === 'text' ||
       node.type === 'static-text' ||
       node.type === 'combine-text' ||
+  node.type === 'json-stringify' ||
       node.type === 'json-parse' ||
       node.type === 'api-request' ||
       node.type === 'llm' ||
@@ -678,6 +679,7 @@ const UIBuilder: React.FC<UIBuilderProps> = ({ isOpen, onClose }) => {
       node.type === 'text' ||
       node.type === 'static-text' ||
       node.type === 'combine-text' ||
+      node.type === 'json-stringify' ||
       (node.data && node.data.isStatic === true)
     );
     

@@ -334,8 +334,21 @@ const NotebookChat: React.FC<NotebookChatProps> = ({
     setShowDocumentModal(true);
 
     try {
+      // Get Python Backend URL dynamically
+      let backendUrl = 'http://localhost:5001';
+      try {
+        if ((window as any).electronAPI?.getPythonBackendUrl) {
+          const result = await (window as any).electronAPI.getPythonBackendUrl();
+          if (result.success && result.url) {
+            backendUrl = result.url;
+          }
+        }
+      } catch (error) {
+        console.warn('Failed to get Python Backend URL, using default:', error);
+      }
+
       const response = await fetch(
-        `http://localhost:5001/notebooks/${notebookId}/documents/${citation.document_id}/download`
+        `${backendUrl}/notebooks/${notebookId}/documents/${citation.document_id}/download`
       );
 
       if (!response.ok) {

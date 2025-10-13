@@ -24,6 +24,7 @@ const { debugPaths, logDebugInfo } = require('./debug-paths.cjs');
 const IPCLogger = require('./ipcLogger.cjs');
 const WidgetService = require('./widgetService.cjs');
 const { SchedulerElectronService } = require('./schedulerElectronService.cjs');
+const { setupRemoteServerIPC } = require('./remoteServerIPC.cjs');
 
 // NEW: Enhanced service management system (Backward compatible)
 const CentralServiceManager = require('./centralServiceManager.cjs');
@@ -266,10 +267,9 @@ app.whenReady().then(() => {
   // Initialize Network Service Manager to prevent UI refreshes during crashes
   networkServiceManager = new NetworkServiceManager();
   log.info('🛡️ Network Service Manager initialized');
-  
-  // Initialize Immutable Startup Settings Manager
-  startupSettingsManager = getStartupSettingsManager();
-  log.info('🔒 Immutable Startup Settings Manager initialized');
+
+  // Note: Startup Settings Manager is initialized later in the main initialization flow (line 4530)
+  // This duplicate initialization has been removed to prevent errors
 });
 
 // macOS Security Configuration - Prevent unnecessary firewall prompts
@@ -857,17 +857,24 @@ function registerServiceConfigurationHandlers() {
   // Set service configuration (mode and URL)
   ipcMain.handle('service-config:set-config', async (event, serviceName, mode, url = null) => {
     try {
+      log.info(`📝 [Config] Received set-config request: serviceName=${serviceName}, mode=${mode}, url=${url}`);
+
       const configManager = ensureServiceConfigManager();
       if (!configManager || typeof configManager.setServiceConfig !== 'function') {
         throw new Error('Service configuration manager not initialized or setServiceConfig method not available');
       }
-      
+
       configManager.setServiceConfig(serviceName, mode, url);
-      log.info(`Service ${serviceName} configured: mode=${mode}${url ? `, url=${url}` : ''}`);
-      
+      log.info(`✅ [Config] Service ${serviceName} configured: mode=${mode}${url ? `, url=${url}` : ''}`);
+
+      // Verify it was saved
+      const savedMode = configManager.getServiceMode(serviceName);
+      const savedUrl = configManager.getServiceUrl(serviceName);
+      log.info(`🔍 [Config] Verification - saved mode=${savedMode}, saved url=${savedUrl}`);
+
       return { success: true };
     } catch (error) {
-      log.error(`Error setting service configuration for ${serviceName}:`, error);
+      log.error(`❌ [Config] Error setting service configuration for ${serviceName}:`, error);
       return { success: false, error: error.message };
     }
   });
@@ -1197,16 +1204,16 @@ function registerN8NHandlers() {
       if (serviceConfigManager && typeof serviceConfigManager.getServiceMode === 'function') {
         try {
           const n8nMode = serviceConfigManager.getServiceMode('n8n');
-          if (n8nMode === 'manual' && typeof serviceConfigManager.getServiceUrl === 'function') {
+          if ((n8nMode === 'manual' || n8nMode === 'remote') && typeof serviceConfigManager.getServiceUrl === 'function') {
             const n8nUrl = serviceConfigManager.getServiceUrl('n8n');
             if (n8nUrl) {
               serviceUrl = n8nUrl;
               try {
                 const { createManualHealthCheck } = require('./serviceDefinitions.cjs');
-                const healthCheck = createManualHealthCheck(n8nUrl, '/');
+                const healthCheck = createManualHealthCheck(n8nUrl, '/healthz');
                 n8nRunning = await healthCheck();
               } catch (error) {
-                log.debug(`N8N manual health check failed: ${error.message}`);
+                log.debug(`N8N ${n8nMode} health check failed: ${error.message}`);
                 n8nRunning = false;
               }
             }
@@ -1346,7 +1353,7 @@ function registerComfyUIHandlers() {
       if (serviceConfigManager && typeof serviceConfigManager.getServiceMode === 'function') {
         try {
           const comfyuiMode = serviceConfigManager.getServiceMode('comfyui');
-          if (comfyuiMode === 'manual' && typeof serviceConfigManager.getServiceUrl === 'function') {
+          if ((comfyuiMode === 'manual' || comfyuiMode === 'remote') && typeof serviceConfigManager.getServiceUrl === 'function') {
             const comfyuiUrl = serviceConfigManager.getServiceUrl('comfyui');
             if (comfyuiUrl) {
               serviceUrl = comfyuiUrl;
@@ -1355,7 +1362,7 @@ function registerComfyUIHandlers() {
                 const healthCheck = createManualHealthCheck(comfyuiUrl, '/');
                 comfyuiRunning = await healthCheck();
               } catch (error) {
-                log.debug(`ComfyUI manual health check failed: ${error.message}`);
+                log.debug(`ComfyUI ${comfyuiMode} health check failed: ${error.message}`);
                 comfyuiRunning = false;
               }
             }
@@ -1557,6 +1564,101 @@ function registerPythonBackendHandlers() {
     } catch (error) {
       log.error('Error checking Python backend status:', error);
       return { isHealthy: false, serviceUrl: null, mode: 'docker', error: error.message };
+    }
+  });
+
+  // Check Python Backend service status (unified pattern like N8N/ComfyUI)
+  ipcMain.handle('python-backend:check-service-status', async () => {
+    try {
+      if (!dockerSetup) {
+        return { running: false, error: 'Docker setup not initialized' };
+      }
+
+      // Check service configuration mode
+      let pythonRunning = false;
+      let serviceUrl = 'http://localhost:5001';
+
+      if (serviceConfigManager && typeof serviceConfigManager.getServiceMode === 'function') {
+        try {
+          const pythonMode = serviceConfigManager.getServiceMode('python-backend');
+          if (pythonMode === 'manual' && typeof serviceConfigManager.getServiceUrl === 'function') {
+            const pythonUrl = serviceConfigManager.getServiceUrl('python-backend');
+            if (pythonUrl) {
+              serviceUrl = pythonUrl;
+              try {
+                const { createManualHealthCheck } = require('./serviceDefinitions.cjs');
+                const healthCheck = createManualHealthCheck(pythonUrl, '/health');
+                pythonRunning = await healthCheck();
+              } catch (error) {
+                log.error('Error checking manual Python Backend health:', error);
+                pythonRunning = false;
+              }
+            }
+          } else if (pythonMode === 'remote' && typeof serviceConfigManager.getServiceUrl === 'function') {
+            const pythonUrl = serviceConfigManager.getServiceUrl('python-backend');
+            if (pythonUrl) {
+              serviceUrl = pythonUrl;
+              try {
+                const { createManualHealthCheck } = require('./serviceDefinitions.cjs');
+                const healthCheck = createManualHealthCheck(pythonUrl, '/health');
+                pythonRunning = await healthCheck();
+              } catch (error) {
+                log.error('Error checking remote Python Backend health:', error);
+                pythonRunning = false;
+              }
+            }
+          } else {
+            // Docker mode
+            pythonRunning = await dockerSetup.isPythonRunning();
+            if (dockerSetup.ports && dockerSetup.ports.python) {
+              serviceUrl = `http://localhost:${dockerSetup.ports.python}`;
+            }
+          }
+        } catch (error) {
+          log.warn('Error checking service config, falling back to Docker check:', error);
+          pythonRunning = await dockerSetup.isPythonRunning();
+        }
+      } else {
+        // Fallback to Docker check if service config manager not available
+        pythonRunning = await dockerSetup.isPythonRunning();
+      }
+
+      return { running: pythonRunning, serviceUrl };
+    } catch (error) {
+      log.error('Error checking Python Backend status:', error);
+      return { running: false, serviceUrl: 'http://localhost:5001', error: error.message };
+    }
+  });
+
+  // Get Python Backend URL (for frontend services to use)
+  ipcMain.handle('python-backend:get-url', async () => {
+    try {
+      // Default URL
+      let serviceUrl = 'http://localhost:5001';
+
+      if (serviceConfigManager && typeof serviceConfigManager.getServiceMode === 'function') {
+        try {
+          const pythonMode = serviceConfigManager.getServiceMode('python-backend');
+          if ((pythonMode === 'manual' || pythonMode === 'remote') && typeof serviceConfigManager.getServiceUrl === 'function') {
+            const pythonUrl = serviceConfigManager.getServiceUrl('python-backend');
+            if (pythonUrl) {
+              serviceUrl = pythonUrl;
+            }
+          } else if (pythonMode === 'docker') {
+            // Docker mode - check if container is running and get actual port
+            if (dockerSetup && dockerSetup.ports && dockerSetup.ports.python) {
+              serviceUrl = `http://localhost:${dockerSetup.ports.python}`;
+            }
+          }
+        } catch (error) {
+          log.warn('Error getting Python Backend URL from config, using default:', error);
+        }
+      }
+
+      return { success: true, url: serviceUrl };
+    } catch (error) {
+      log.error('Error getting Python Backend URL:', error);
+      return { success: false, url: 'http://localhost:5001', error: error.message };
     }
   });
 
@@ -4430,6 +4532,10 @@ async function createMainWindow() {
   // Create and set the application menu
   createAppMenu(mainWindow);
 
+  // Setup remote server IPC handlers
+  setupRemoteServerIPC(mainWindow);
+  log.info('Remote server IPC handlers registered');
+
   // Set security policies for webview, using the dynamic n8n port
   mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
     const url = webContents.getURL();
@@ -4785,6 +4891,90 @@ ipcMain.handle('reset-feature-config', async () => {
     return false;
   } catch (error) {
     log.error('Error resetting feature configuration:', error);
+    return false;
+  }
+});
+
+// Initialize electron-store for persistent configuration (using dynamic import for ES module)
+let store = null;
+let storeInitPromise = null;
+
+// Lazy initialize store when needed
+async function getStore() {
+  if (store) return store;
+  if (storeInitPromise) return storeInitPromise;
+
+  storeInitPromise = (async () => {
+    try {
+      const StoreModule = await import('electron-store');
+      const Store = StoreModule.default;
+      store = new Store();
+      log.info('📦 [Store] Initialized successfully');
+      return store;
+    } catch (error) {
+      log.error('📦 [Store] Failed to initialize:', error);
+      throw error;
+    }
+  })();
+
+  return storeInitPromise;
+}
+
+// electron-store IPC handlers for configuration persistence
+ipcMain.handle('store:get', async (event, key) => {
+  try {
+    const store = await getStore();
+    const value = store.get(key);
+    log.info(`📦 [Store] GET ${key}:`, value);
+    return value;
+  } catch (error) {
+    log.error(`Error getting store key ${key}:`, error);
+    return null;
+  }
+});
+
+ipcMain.handle('store:set', async (event, key, value) => {
+  try {
+    const store = await getStore();
+    store.set(key, value);
+    log.info(`📦 [Store] SET ${key}:`, value);
+    return true;
+  } catch (error) {
+    log.error(`Error setting store key ${key}:`, error);
+    return false;
+  }
+});
+
+ipcMain.handle('store:delete', async (event, key) => {
+  try {
+    const store = await getStore();
+    store.delete(key);
+    log.info(`📦 [Store] DELETE ${key}`);
+    return true;
+  } catch (error) {
+    log.error(`Error deleting store key ${key}:`, error);
+    return false;
+  }
+});
+
+ipcMain.handle('store:has', async (event, key) => {
+  try {
+    const store = await getStore();
+    return store.has(key);
+  } catch (error) {
+    log.error(`Error checking store key ${key}:`, error);
+    return false;
+  }
+});
+
+ipcMain.handle('store:clear', async () => {
+  try {
+    const store = await getStore();
+    store.clear();
+    log.info('📦 [Store] CLEARED');
+    return true;
+  } catch (error) {
+    log.error('Error clearing store:', error);
     return false;
   }
 });

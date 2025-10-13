@@ -38,6 +38,7 @@ import PDFInputNode from '../Nodes/PDFInputNode';
 import FileUploadNode from '../Nodes/FileUploadNode';
 import WhisperTranscriptionNode from '../Nodes/WhisperTranscriptionNode';
 import CombineTextNode from '../Nodes/CombineTextNode';
+import JsonStringifyNode from '../Nodes/JsonStringifyNode';
 import APIRequestNode from '../Nodes/APIRequestNode';
 import TextToSpeechNode from '../Nodes/TextToSpeechNode';
 import SpeechToTextNode from '../Nodes/SpeechToTextNode';
@@ -63,6 +64,7 @@ console.log('Node imports loaded:', {
   FileUploadNode: !!FileUploadNode,
   WhisperTranscriptionNode: !!WhisperTranscriptionNode,
   CombineTextNode: !!CombineTextNode,
+  JsonStringifyNode: !!JsonStringifyNode,
   APIRequestNode: !!APIRequestNode,
   StaticTextNode: !!StaticTextNode,
   AgentExecutorNode: !!AgentExecutorNode,
@@ -85,6 +87,7 @@ const baseNodeTypes: NodeTypes = {
   'file-upload': FileUploadNode,
   'whisper-transcription': WhisperTranscriptionNode,
   'combine-text': CombineTextNode,
+  'json-stringify': JsonStringifyNode,
   'api-request': APIRequestNode,
   'static-text': StaticTextNode,
   'text': TextNode,
@@ -140,7 +143,6 @@ const CanvasContent: React.FC<CanvasProps> = ({ className = '' }) => {
     updateCanvas,
     selectNodes,
     clearSelection,
-    duplicateNode,
     addExecutionLog,
     saveFlow,
   } = useAgentBuilder();
@@ -430,7 +432,7 @@ const CanvasContent: React.FC<CanvasProps> = ({ className = '' }) => {
   }, [canvas.selection.nodeIds, nodes, addExecutionLog]);
 
   // Paste node from clipboard
-  const handlePasteNode = useCallback((event: KeyboardEvent) => {
+  const handlePasteNode = useCallback(() => {
     if (!clipboard || !clipboard.nodeData) return;
 
     // Check if clipboard data is not too old (5 minutes)
@@ -548,7 +550,7 @@ const CanvasContent: React.FC<CanvasProps> = ({ className = '' }) => {
       // Handle paste (Ctrl+V or Cmd+V)
       else if ((event.ctrlKey || event.metaKey) && event.key === 'v' && clipboard) {
         event.preventDefault();
-        handlePasteNode(event);
+  handlePasteNode();
       }
     };
 
@@ -569,6 +571,7 @@ const CanvasContent: React.FC<CanvasProps> = ({ className = '' }) => {
       case 'output':
         return '#10b981';
       case 'json-parse': return '#3b82f6';
+  case 'json-stringify': return '#3b82f6';
       case 'api-request': return '#10b981';
       case 'if-else': return '#84cc16';
       case 'llm': return '#ec4899';

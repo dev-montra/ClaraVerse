@@ -122,6 +122,36 @@ export class NodeRegistry {
       }
     });
 
+    // JSON Stringify Node
+    this.nodeExecutors.set('json-stringify', (node: FlowNode, inputs: Record<string, any>) => {
+      const inputValue = inputs.input ?? Object.values(inputs)[0];
+      const prettyPrint = node.data?.prettyPrint ?? true;
+      const indentSetting = Number.isFinite(node.data?.indent) ? Number(node.data?.indent) : 2;
+      const indent = Math.min(Math.max(Math.round(indentSetting), 0), 8);
+      const fallback = node.data?.nullFallback ?? '';
+
+      if (inputValue === null || inputValue === undefined) {
+        return { output: fallback };
+      }
+
+      if (typeof inputValue === 'string') {
+        return { output: inputValue };
+      }
+
+      try {
+        const spacing = prettyPrint ? indent : 0;
+        const jsonText = JSON.stringify(inputValue, null, spacing || undefined);
+        return { output: jsonText ?? fallback };
+      } catch (error) {
+        console.warn('JSON Stringify error:', error);
+        try {
+          return { output: String(inputValue) };
+        } catch {
+          return { output: fallback };
+        }
+      }
+    });
+
     // If/Else Node
     this.nodeExecutors.set('if-else', (node: FlowNode, inputs: Record<string, any>) => {
       const inputValue = inputs.input || Object.values(inputs)[0];

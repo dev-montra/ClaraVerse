@@ -1021,6 +1021,14 @@ const AgentStudioContent: React.FC<{ onPageChange: (page: string) => void; userN
                             features: ['Multiple modes', 'Custom separators', 'Prompt building', 'Space control']
                           },
                           { 
+                            name: 'JSON → Text', 
+                            type: 'json-stringify', 
+                            icon: <FileText className="w-4 h-4" />, 
+                            description: 'Turn JSON objects into strings for prompts and logging', 
+                            color: 'bg-blue-500',
+                            features: ['Pretty print', 'Indent control', 'Null fallback']
+                          },
+                          { 
                             name: 'JSON Parser', 
                             type: 'json-parse', 
                             icon: <Wrench className="w-4 h-4" />, 

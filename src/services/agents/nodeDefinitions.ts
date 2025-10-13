@@ -431,6 +431,64 @@ export const defaultNodeDefinitions: NodeDefinition[] = [
       documentation: 'Parse JSON strings and extract specific data using JSON paths.'
     }
   },
+  {
+    id: 'util-json-stringify',
+    name: 'JSON Stringify',
+    type: 'util-json-stringify',
+    category: 'utilities',
+    description: 'Convert JSON data into string form',
+    icon: 'file-text',
+    version: '1.0.0',
+    author: 'Clara',
+    inputs: [
+      {
+        id: 'json',
+        name: 'JSON/Data',
+        type: 'input',
+        dataType: 'any',
+        required: true,
+        description: 'JSON value to stringify'
+      }
+    ],
+    outputs: [
+      {
+        id: 'text',
+        name: 'String Output',
+        type: 'output',
+        dataType: 'string',
+        description: 'Stringified JSON result'
+      }
+    ],
+    properties: [
+      {
+        id: 'prettyPrint',
+        name: 'Pretty Print',
+        type: 'boolean',
+        defaultValue: true,
+        description: 'Format output with whitespace'
+      },
+      {
+        id: 'indent',
+        name: 'Indent Spaces',
+        type: 'number',
+        defaultValue: 2,
+        validation: { min: 0, max: 8 },
+        description: 'Spaces to use for indentation when pretty printing'
+      },
+      {
+        id: 'nullFallback',
+        name: 'Null Fallback Text',
+        type: 'string',
+        defaultValue: '',
+        description: 'Text to output when input is null or undefined'
+      }
+    ],
+    executionHandler: 'json-stringify-handler',
+    metadata: {
+      tags: ['json', 'stringify', 'data'],
+      documentation: 'Convert JSON objects into text for use in prompts, logging, or output nodes.'
+    }
+  },
 
   // LOGIC NODES
   {

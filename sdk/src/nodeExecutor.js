@@ -15,6 +15,7 @@ export class NodeExecutor {
       'llm': this.executeLLMNode.bind(this),
       'structured-llm': this.executeStructuredLLMNode.bind(this),
       'json-parse': this.executeJsonParseNode.bind(this),
+  'json-stringify': this.executeJsonStringifyNode.bind(this),
       'if-else': this.executeIfElseNode.bind(this),
       'image-input': this.executeImageInputNode.bind(this),
       'pdf-input': this.executePDFInputNode.bind(this),
@@ -291,6 +292,43 @@ export class NodeExecutor {
       } else {
         this.logger.warn(`JSON parsing failed: ${error.message}, returning original input`);
         return inputData;
+      }
+    }
+  }
+
+  /**
+   * Execute JSON Stringify Node
+   * Converts objects into string output for downstream text nodes
+   */
+  async executeJsonStringifyNode(inputs, data = {}) {
+    const {
+      prettyPrint = true,
+      indent = 2,
+      nullFallback = ''
+    } = data;
+
+    const inputValue = inputs.input ?? inputs.json ?? Object.values(inputs)[0];
+
+    if (inputValue === null || inputValue === undefined) {
+      return nullFallback;
+    }
+
+    if (typeof inputValue === 'string') {
+      return inputValue;
+    }
+
+    try {
+      const normalizedIndent = Math.min(Math.max(Number.isFinite(indent) ? Math.round(indent) : 2, 0), 8);
+      const spacing = prettyPrint ? normalizedIndent : 0;
+      const stringified = JSON.stringify(inputValue, null, spacing || undefined);
+      return stringified ?? nullFallback;
+    } catch (error) {
+      this.logger.warn('JSON stringify failed, falling back to toString()', { error: error.message });
+      try {
+        return String(inputValue);
+      } catch (stringError) {
+        this.logger.error('String coercion failed', { error: stringError.message });
+        return nullFallback;
       }
     }
   }
