@@ -250,7 +250,11 @@ export class ClaraNotebookService {
   private isHealthy: boolean = false;
   private healthCheckInterval: NodeJS.Timeout | null = null;
   private healthCheckCallbacks: ((isHealthy: boolean) => void)[] = [];
-  private abortController: AbortController | null = null;
+  private queryAbortController: AbortController | null = null;
+  private chatAbortController: AbortController | null = null;
+  // Validation cache to reduce load on smaller machines
+  private validationCache: Map<string, { result: any, timestamp: number }> = new Map();
+  private readonly VALIDATION_CACHE_TTL = 60000; // Cache for 60 seconds
 
   constructor(baseUrl: string = 'http://localhost:5001') {
     this.baseUrl = baseUrl;
@@ -410,6 +414,7 @@ public async getEntityTypes(): Promise<EntityTypesResponse> {
 
 /**
  * Validate notebook models before creation
+ * Results are cached for 60 seconds to reduce load on smaller machines
  */
 public async validateModels(config: NotebookCreate): Promise<{
   llm_accessible: boolean;
@@ -420,6 +425,20 @@ public async validateModels(config: NotebookCreate): Promise<{
 }> {
   if (!this.isHealthy) {
     throw new Error('Notebook backend is not available');
+  }
+
+  // Create cache key from config
+  const cacheKey = JSON.stringify({
+    llm: { baseUrl: config.llm_provider.baseUrl, model: config.llm_provider.model },
+    emb: { baseUrl: config.embedding_provider.baseUrl, model: config.embedding_provider.model }
+  });
+
+  // Check cache first
+  const cached = this.validationCache.get(cacheKey);
+  const now = Date.now();
+  if (cached && (now - cached.timestamp) < this.VALIDATION_CACHE_TTL) {
+    console.log('📦 Using cached validation result');
+    return cached.result;
   }
 
   try {
@@ -435,7 +454,18 @@ public async validateModels(config: NotebookCreate): Promise<{
       throw new Error(`Failed to validate models: ${response.statusText}`);
     }
 
-    return await response.json();
+    const result = await response.json();
+
+    // Cache successful results
+    this.validationCache.set(cacheKey, { result, timestamp: now });
+
+    // Clean up old cache entries (keep cache size manageable)
+    if (this.validationCache.size > 10) {
+      const oldestKey = this.validationCache.keys().next().value;
+      this.validationCache.delete(oldestKey);
+    }
+
+    return result;
   } catch (error) {
     console.error('Validate models error:', error);
     throw error;
@@ -822,11 +852,12 @@ public async validateModels(config: NotebookCreate): Promise<{
     }
 
     try {
-      // Cancel any previous request
-      if (this.abortController) {
-        this.abortController.abort();
+      // Cancel any previous query request (only if one exists and hasn't completed)
+      if (this.queryAbortController && !this.queryAbortController.signal.aborted) {
+        console.log('📝 Cancelling previous query request');
+        this.queryAbortController.abort();
       }
-      this.abortController = new AbortController();
+      this.queryAbortController = new AbortController();
 
       const response = await fetch(`${this.baseUrl}/notebooks/${notebookId}/query`, {
         method: 'POST',
@@ -839,7 +870,7 @@ public async validateModels(config: NotebookCreate): Promise<{
           response_type: query.response_type || 'Multiple Paragraphs',
           top_k: query.top_k || 60,
         }),
-        signal: this.abortController.signal,
+        signal: this.queryAbortController.signal,
       });
 
       if (!response.ok) {
@@ -847,12 +878,21 @@ public async validateModels(config: NotebookCreate): Promise<{
         throw new Error(errorData.detail || `Failed to query notebook: ${response.statusText}`);
       }
 
-      return await response.json();
+      const result = await response.json();
+
+      // Clear the controller after successful completion
+      this.queryAbortController = null;
+
+      return result;
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         throw new Error('Query was cancelled');
       }
       console.error('Query notebook error:', error);
+
+      // Clear the controller on error
+      this.queryAbortController = null;
+
       throw error;
     }
   }
@@ -937,11 +977,12 @@ public async validateModels(config: NotebookCreate): Promise<{
     }
 
     try {
-      // Cancel any previous request
-      if (this.abortController) {
-        this.abortController.abort();
+      // Cancel any previous chat request (only if one exists and hasn't completed)
+      if (this.chatAbortController && !this.chatAbortController.signal.aborted) {
+        console.log('📝 Cancelling previous chat request');
+        this.chatAbortController.abort();
       }
-      this.abortController = new AbortController();
+      this.chatAbortController = new AbortController();
 
       const response = await fetch(`${this.baseUrl}/notebooks/${notebookId}/chat`, {
         method: 'POST',
@@ -956,7 +997,7 @@ public async validateModels(config: NotebookCreate): Promise<{
           llm_provider: query.llm_provider || null,
           use_chat_history: query.use_chat_history !== false, // Default to true
         }),
-        signal: this.abortController.signal,
+        signal: this.chatAbortController.signal,
       });
 
       if (!response.ok) {
@@ -964,12 +1005,21 @@ public async validateModels(config: NotebookCreate): Promise<{
         throw new Error(errorData.detail || `Failed to send chat message: ${response.statusText}`);
       }
 
-      return await response.json();
+      const result = await response.json();
+
+      // Clear the controller after successful completion
+      this.chatAbortController = null;
+
+      return result;
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         throw new Error('Chat message was cancelled');
       }
       console.error('Send chat message error:', error);
+
+      // Clear the controller on error
+      this.chatAbortController = null;
+
       throw error;
     }
   }
@@ -1100,8 +1150,11 @@ public async validateModels(config: NotebookCreate): Promise<{
    * Stop current operations
    */
   public stop(): void {
-    if (this.abortController) {
-      this.abortController.abort();
+    if (this.queryAbortController) {
+      this.queryAbortController.abort();
+    }
+    if (this.chatAbortController) {
+      this.chatAbortController.abort();
     }
   }
 

@@ -216,10 +216,11 @@ const NotebookDetails_new: React.FC<NotebookDetailsNewProps> = ({
     checkNotebookModelStatus().then(success => {
       // Only set up interval if initial check failed
       if (!success) {
+        // Check every 2 minutes (120000ms) to reduce load on smaller machines
         interval = setInterval(async () => {
           await checkNotebookModelStatus();
           // Interval will be cleared inside the function if connection succeeds
-        }, 30000);
+        }, 120000);
       }
     });
 

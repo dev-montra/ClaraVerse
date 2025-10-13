@@ -241,6 +241,7 @@ export const useClaraCoreAutostart = (notebook: NotebookResponse | null) => {
   }, [notebook?.name, checkClaraCoreStatus]);
 
   // Auto-start Clara Core when notebook requires it
+  // DISABLED: LlamaSwap service has been removed, autostart is no longer needed
   useEffect(() => {
     const handleNotebookChange = async () => {
       if (!notebook) {
@@ -264,72 +265,24 @@ export const useClaraCoreAutostart = (notebook: NotebookResponse | null) => {
       }
 
       console.log('📝 useClaraCoreAutostart: Notebook requires Clara Core, checking status and updates...', notebook.name);
-      
-      // First check for updates
-      const hasUpdates = await checkForUpdates();
-      
-      // Check if Clara Core is already running
-      const isRunning = await checkClaraCoreStatus();
-      
-      if (isRunning && !hasUpdates) {
-        console.log('📝 useClaraCoreAutostart: Clara Core is running and up to date');
-        setStatus(prev => ({
-          ...prev,
-          isRunning: true,
-          isStarting: false,
-          error: null,
-          serviceName: "Clara's Core",
-          phase: 'Running'
-        }));
-        return;
-      }
 
-      if (hasUpdates) {
-        console.log('📝 useClaraCoreAutostart: Container updates available, user should be prompted');
-        setStatus(prev => ({
-          ...prev,
-          isRunning,
-          serviceName: "Clara's Core",
-          phase: isRunning ? 'Running (update available)' : 'Update available'
-        }));
-        return;
-      }
+      // DISABLED: Skip autostart since LlamaSwap is not available
+      // Just check for updates but don't try to start anything
+      await checkForUpdates();
 
-      // Start Clara Core if not running and no updates
-      if (!isRunning) {
-        console.log('📝 useClaraCoreAutostart: Clara Core not running, starting automatically...');
-        await startClaraCore();
-      }
+      // Don't try to start Clara Core automatically
+      console.log('📝 useClaraCoreAutostart: Autostart disabled (LlamaSwap service removed)');
     };
 
     handleNotebookChange();
-  }, [notebook, requiresClaraCore, checkClaraCoreStatus, checkForUpdates, startClaraCore]);
+  }, [notebook, requiresClaraCore, checkForUpdates]);
 
   // Periodic health check when Clara Core should be running
+  // DISABLED: LlamaSwap service has been removed, no need for periodic checks
   useEffect(() => {
-    if (!notebook || !requiresClaraCore(notebook)) return;
-
-    const interval = setInterval(async () => {
-      if (status.isStarting) return; // Don't check while starting
-
-      const isRunning = await checkClaraCoreStatus();
-      
-      setStatus(prev => {
-        if (prev.isRunning !== isRunning) {
-          console.log('📝 useClaraCoreAutostart: Clara Core status changed:', { was: prev.isRunning, now: isRunning });
-          return {
-            ...prev,
-            isRunning,
-            phase: isRunning ? 'Running' : 'Stopped',
-            error: !isRunning && prev.isRunning ? 'Service stopped unexpectedly' : null
-          };
-        }
-        return prev;
-      });
-    }, 10000); // Check every 10 seconds
-
-    return () => clearInterval(interval);
-  }, [notebook, requiresClaraCore, checkClaraCoreStatus, status.isStarting]);
+    // Skip periodic health checks since LlamaSwap is not available
+    return;
+  }, [notebook, requiresClaraCore, status.isStarting]);
 
   return {
     ...status,

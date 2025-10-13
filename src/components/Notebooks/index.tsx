@@ -112,7 +112,7 @@ const NotebooksContent: React.FC<{ onPageChange: (page: string) => void; userNam
       if (notebooksNeedingRefresh.length > 0) {
         loadDocumentStatusForNotebooks(notebooksNeedingRefresh);
       }
-    }, 30000); // Refresh every 30 seconds
+    }, 60000); // Refresh every 60 seconds (1 minute)
 
     return () => clearInterval(interval);
   }, [isBackendHealthy, notebooks]);
@@ -416,9 +416,9 @@ const NotebooksContent: React.FC<{ onPageChange: (page: string) => void; userNam
         </div>
 
           {/* Main Content - Canvas Area */}
-          <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+          <div className="flex-1 flex flex-col min-h-0">
             {/* Canvas Content */}
-            <div className="flex-1 overflow-hidden">
+            <div className="flex-1 flex flex-col overflow-hidden">
               {/* Error state */}
               {error && (
                 <div className="flex-1 flex items-center justify-center">

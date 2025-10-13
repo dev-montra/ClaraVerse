@@ -27,6 +27,9 @@ from Speech2Text import Speech2Text
 # Import Text2Speech
 from Text2Speech import Text2Speech
 
+# Import Document Queue for persistent job processing
+from document_queue import DocumentQueue
+
 # LightRAG imports
 try:
     from lightrag import LightRAG, QueryParam
@@ -130,6 +133,11 @@ if LIGHTRAG_AVAILABLE:
     NOTEBOOKS_DB_FILE = LIGHTRAG_METADATA_PATH / "notebooks.json"
     DOCUMENTS_DB_FILE = LIGHTRAG_METADATA_PATH / "documents.json"
     CHAT_HISTORY_DB_FILE = LIGHTRAG_METADATA_PATH / "chat_history.json"
+
+    # Initialize document processing queue
+    QUEUE_DB_FILE = LIGHTRAG_METADATA_PATH / "document_queue.db"
+    document_queue = DocumentQueue(db_path=str(QUEUE_DB_FILE))
+    logger.info(f"Document queue initialized at {QUEUE_DB_FILE}")
 
     def save_notebooks_db():
         """Save notebooks database to disk"""
@@ -810,13 +818,13 @@ if LIGHTRAG_AVAILABLE:
             ('text-embedding-3-small', 1536, 8192, ['embedding-3-small', 'openai-3-small', 'text-3-small']),
             ('text-embedding-3-large', 3072, 8192, ['embedding-3-large', 'openai-3-large', 'text-3-large']),
             
-            # Qwen Models (Alibaba)
-            ('qwen3-embedding-0.6b', 1024, 512, ['qwen3-0.6b', 'qwen3-06b', 'qwen-3-embedding-0.6b']),
+            # Qwen Models (Alibaba) - IMPORTANT: Order matters! More specific patterns first
+            ('qwen3-embedding-0.6b', 1024, 512, ['qwen3-0.6b', 'qwen3-06b', 'qwen-3-embedding-0.6b', 'qwen3-embedding-06b']),
             ('qwen3-embedding-4b', 2560, 1024, ['qwen3-4b', 'qwen-3-embedding-4b']),
             ('qwen3-embedding-8b', 4096, 1024, ['qwen3-8b', 'qwen-3-embedding-8b']),
             ('qwen2.5-coder', 2560, 2048, ['qwen2.5-coder', 'qwen25-coder']),
             ('qwen2', 2560, 2048, ['qwen-2', 'qwen 2']),
-            ('qwen', 2560, 2048, ['qwen-embedding']),
+            ('qwen', 2560, 2048, ['qwen-embedding']),  # Generic fallback - must be LAST
             
             # Jina AI Models
             ('jina-embeddings-v4', 2048, 8192, ['jina-v4', 'jina-4', 'jina-embeddings-4']),
@@ -874,25 +882,28 @@ if LIGHTRAG_AVAILABLE:
         best_match = None
         best_confidence = 0.0
         detected_pattern = 'unknown'
-        
+        best_match_length = 0  # Track match length to prefer longer/more specific matches
+
         # Try exact substring match first (highest confidence)
+        # Prefer longer matches to avoid generic patterns matching specific models
         for pattern, dims, tokens, aliases in model_database:
             if pattern in normalized_name:
-                best_match = (pattern, dims, tokens)
-                best_confidence = 0.95
-                detected_pattern = pattern
-                break
-            
+                # Prefer longer pattern matches (more specific)
+                if len(pattern) > best_match_length or (len(pattern) == best_match_length and 0.95 > best_confidence):
+                    best_match = (pattern, dims, tokens)
+                    best_confidence = 0.95
+                    detected_pattern = pattern
+                    best_match_length = len(pattern)
+
             # Check aliases
             for alias in aliases:
                 if alias in normalized_name:
-                    best_match = (pattern, dims, tokens)
-                    best_confidence = 0.90
-                    detected_pattern = f"{pattern} (alias: {alias})"
-                    break
-            
-            if best_match:
-                break
+                    # Prefer longer alias matches
+                    if len(alias) > best_match_length or (len(alias) == best_match_length and 0.90 > best_confidence):
+                        best_match = (pattern, dims, tokens)
+                        best_confidence = 0.90
+                        detected_pattern = f"{pattern} (alias: {alias})"
+                        best_match_length = len(alias)
         
         # If no exact match, try fuzzy matching
         if not best_match:
@@ -1042,24 +1053,29 @@ if LIGHTRAG_AVAILABLE:
             logger.info(f"  - Confidence: {embedding_specs['confidence']}")
             logger.info(f"  - Pattern: {embedding_specs['detected_pattern']}")
             logger.info(f"  - Manual override: {embedding_specs['is_manual_override']}")
-            
-            # LEGACY FALLBACK: Keep old logic commented for reference
-            # The old if-elif chain is replaced by fuzzy matching above
-            # If needed for debugging, uncomment specific checks below
-            
-            # OpenAI Models (LEGACY - now handled by fuzzy matching)
-            if False and 'text-embedding-ada-002' in embedding_model_name:
+
+            # LEGACY FALLBACK: All dimension detection below is DISABLED
+            # The fuzzy matching above handles all models correctly
+            # DO NOT re-enable the code below - it will override correct detection
+
+            if False:  # DISABLED: Legacy hardcoded dimension detection
+                # This entire block is disabled to prevent overriding fuzzy matching results
+                # The new detect_embedding_model_specs() function handles all models
+                pass
+
+            # OpenAI Models (LEGACY - DISABLED)
+            elif False and 'text-embedding-ada-002' in embedding_model_name:
                 embedding_dim = 1536
                 embedding_max_tokens = 8192
-            elif 'text-embedding-3-small' in embedding_model_name:
+            elif False and 'text-embedding-3-small' in embedding_model_name:
                 embedding_dim = 1536
                 embedding_max_tokens = 8192
-            elif 'text-embedding-3-large' in embedding_model_name:
+            elif False and 'text-embedding-3-large' in embedding_model_name:
                 embedding_dim = 3072
                 embedding_max_tokens = 8192
-            
+
             # MixedBread AI Models
-            elif 'mxbai-embed-large' in embedding_model_name:
+            elif False and 'mxbai-embed-large' in embedding_model_name:
                 embedding_dim = 1024
                 embedding_max_tokens = 512  # mxbai has lower token limit
             
@@ -1104,23 +1120,23 @@ if LIGHTRAG_AVAILABLE:
                 embedding_dim = 1024
                 embedding_max_tokens = 8192  # bge-m3 supports longer contexts
             
-            # Qwen Models (Alibaba)
-            elif 'qwen' in embedding_model_name.lower():
+            # Qwen Models (Alibaba) - DISABLED: Now handled by fuzzy matching
+            elif False and 'qwen' in embedding_model_name.lower():
                 embedding_dim = 2560
                 embedding_max_tokens = 2048  # Qwen models have moderate token limits
-            elif 'qwen2.5-coder' in embedding_model_name.lower():
+            elif False and 'qwen2.5-coder' in embedding_model_name.lower():
                 embedding_dim = 2560
                 embedding_max_tokens = 2048
-            elif 'qwen2' in embedding_model_name.lower():
+            elif False and 'qwen2' in embedding_model_name.lower():
                 embedding_dim = 2560
                 embedding_max_tokens = 2048
-            elif "qwen3-embedding-0.6b" in embedding_model_name.lower() or "qwen3-embedding-06b" in embedding_model_name.lower():
+            elif False and ("qwen3-embedding-0.6b" in embedding_model_name.lower() or "qwen3-embedding-06b" in embedding_model_name.lower()):
                 embedding_dim = 1024
                 embedding_max_tokens = 512  # CRITICAL: 0.6B model needs much smaller batches due to server limitations
-            elif "qwen3-embedding-4b" in embedding_model_name.lower():
+            elif False and "qwen3-embedding-4b" in embedding_model_name.lower():
                 embedding_dim = 2560
                 embedding_max_tokens = 1024  # Reduced for batch processing stability
-            elif "qwen3-embedding-8b" in embedding_model_name.lower():
+            elif False and "qwen3-embedding-8b" in embedding_model_name.lower():
                 embedding_dim = 4096
                 embedding_max_tokens = 1024  # Reduced for batch processing stability
             
@@ -1369,6 +1385,19 @@ if LIGHTRAG_AVAILABLE:
                         )
                     except Exception as e:
                         error_str = str(e).lower()
+
+                        # Check for Jan/LM Studio template errors (common with reasoning models)
+                        if 'value is not callable' in error_str and ('split' in error_str or 'rstrip' in error_str or 'lstrip' in error_str):
+                            raise Exception(
+                                f"LLM Model Template Error: The model '{llm_model_name}' has a broken chat template in Jan/LM Studio. "
+                                f"This is a known issue with some models. Solutions:\n"
+                                f"1. Try a different model (e.g., llama-3, qwen2.5-7b-instruct, mistral)\n"
+                                f"2. Update Jan to the latest version\n"
+                                f"3. Check model settings in Jan for template configuration\n"
+                                f"Technical error: {str(e)[:200]}"
+                            )
+
+                        # Check for authentication errors
                         if 'api key' in error_str or 'unauthorized' in error_str or 'authentication' in error_str:
                             if is_local_llm_endpoint or is_clara_core_llm:
                                 # For local endpoints, provide more helpful error message
@@ -1519,15 +1548,21 @@ if LIGHTRAG_AVAILABLE:
                 chunk_token_size = min(chunk_token_size, 200)  # Ultra-conservative for 0.6B model server limitations
                 chunk_overlap_token_size = 20  # 10% overlap
                 logger.info(f"Using ultra-small chunk size {chunk_token_size} for Qwen3-0.6B model (server batch limitations)")
+            # Special handling for MixedBread AI models (very sensitive to batch size and token limits)
+            elif 'mxbai-embed' in embedding_model_name.lower():
+                chunk_token_size = min(chunk_token_size, 150)  # Ultra-conservative - mxbai has strict physical batch size limits
+                chunk_overlap_token_size = 15  # 10% overlap
+                logger.warning(f"⚠️ MixedBread AI models have strict batch size limits. Using ultra-small chunk size {chunk_token_size}")
+                logger.warning(f"💡 TIP: For better reliability, consider switching to 'qwen3-embedding-06b-0.6b' or 'nomic-embed-text'")
             # Special handling for Jina v4 models (high dimension 2048, very batch size sensitive on local servers)
             elif 'jina-embeddings-v4' in embedding_model_name.lower():
                 chunk_token_size = min(chunk_token_size, 200)  # Very conservative for v4's 2048 dimensions + local server batch limits
                 chunk_overlap_token_size = 20  # 10% overlap
                 logger.info(f"Using ultra-small chunk size {chunk_token_size} for Jina v4 model (high-dimension + local server batch limitations)")
-            # Special handling for models with very low token limits (mxbai, nomic, e5, etc.)
+            # Special handling for models with very low token limits (nomic, e5, etc.)
             elif embedding_max_tokens <= 512:
-                chunk_token_size = min(chunk_token_size, 250)  # Very safe limit for 512 token models (reduced from 400)
-                chunk_overlap_token_size = 25  # 10% overlap
+                chunk_token_size = min(chunk_token_size, 200)  # Very safe limit for 512 token models (reduced from 250)
+                chunk_overlap_token_size = 20  # 10% overlap
                 logger.info(f"Using reduced chunk size {chunk_token_size} for low-context embedding model ({embedding_model_name})")
             elif embedding_max_tokens <= 1024:
                 chunk_token_size = min(chunk_token_size, 600)  # Safer limit for 1024 token models (reduced from 800)
@@ -2040,6 +2075,30 @@ if LIGHTRAG_AVAILABLE:
                             continue
                         # Exhausted retries - re-raise to be handled below
                         raise
+                    except (ValueError, IndexError) as dim_error:
+                        # Check for dimension mismatch or empty vector store errors
+                        err_str = str(dim_error)
+                        if 'dimension' in err_str.lower() or 'size' in err_str.lower() or 'index' in err_str.lower():
+                            logger.error(f"❌ CRITICAL: Vector dimension mismatch detected!")
+                            logger.error(f"Error: {err_str}")
+                            logger.error(f"This notebook was created with a different embedding model.")
+                            logger.error(f"Solution: Delete and recreate the notebook, or use /rebuild endpoint with force=true")
+
+                            # Mark document as failed with helpful error message
+                            if document_id in lightrag_documents_db:
+                                lightrag_documents_db[document_id]["status"] = "failed"
+                                lightrag_documents_db[document_id]["error"] = (
+                                    f"Embedding dimension mismatch: This notebook uses a different embedding model. "
+                                    f"Please rebuild the notebook or create a new one with the correct embedding model. "
+                                    f"Technical details: {err_str}"
+                                )
+                                save_documents_db()
+                            raise ValueError(
+                                f"Embedding dimension mismatch: This notebook was created with a different embedding model. "
+                                f"Please rebuild the notebook or create a new one. Technical error: {err_str}"
+                            )
+                        # Other ValueError/IndexError - re-raise
+                        raise
                     except Exception as transient_e:
                         err = str(transient_e).lower()
                         is_transient = any(k in err for k in [
@@ -2054,10 +2113,10 @@ if LIGHTRAG_AVAILABLE:
                         raise
                 
                 # Verify that document was actually processed
-                # LightRAG doesn't raise exceptions for extraction failures
+                # LightRAG doesn't raise exceptions for extraction failures - it logs them internally
                 doc_was_indexed = False
                 verification_details = []
-                
+
                 # Check 1: doc_status increased
                 if hasattr(rag, 'doc_status'):
                     try:
@@ -2068,8 +2127,8 @@ if LIGHTRAG_AVAILABLE:
                             logger.info(f"✓ Document added to LightRAG (doc_status: {initial_doc_count} → {current_doc_count})")
                     except Exception as e:
                         logger.debug(f"Could not check doc_status: {e}")
-                
-                # Check 2: chunks were created  
+
+                # Check 2: chunks were created
                 if not doc_was_indexed and hasattr(rag, 'chunks_vdb'):
                     try:
                         if hasattr(rag.chunks_vdb, '_data') and len(rag.chunks_vdb._data) > 0:
@@ -2078,7 +2137,7 @@ if LIGHTRAG_AVAILABLE:
                             logger.info(f"✓ Document created chunks in vector database")
                     except Exception as e:
                         logger.debug(f"Could not check chunks_vdb: {e}")
-                
+
                 # Check 3: Graph was updated (entities/relationships created)
                 if not doc_was_indexed and hasattr(rag, 'graph_storage'):
                     try:
@@ -2091,7 +2150,7 @@ if LIGHTRAG_AVAILABLE:
                             logger.info(f"✓ Document created graph data ({os.path.getsize(graph_file)} bytes)")
                     except Exception as e:
                         logger.debug(f"Could not check graph file: {e}")
-                
+
                 # Check 4: Entity VDB was updated
                 if not doc_was_indexed and hasattr(rag, 'entities_vdb'):
                     try:
@@ -2101,15 +2160,31 @@ if LIGHTRAG_AVAILABLE:
                             logger.info(f"✓ Document created entities in vector database")
                     except Exception as e:
                         logger.debug(f"Could not check entities_vdb: {e}")
-                
+
+                # CRITICAL: Do NOT assume success if verification failed
+                # LightRAG logs errors internally without raising exceptions
                 if not doc_was_indexed:
-                    # Last resort: If insertion completed without exceptions, assume success
-                    # This handles cases where verification checks can't access internal state
-                    logger.warning(f"⚠ Could not verify document indexing through standard checks, assuming success based on no errors")
-                    logger.warning(f"Verification attempts: {verification_details if verification_details else 'none successful'}")
-                    doc_was_indexed = True  # Assume success if no errors were raised
-                
-                logger.info(f"✓ Successfully inserted and verified document {document_id} into LightRAG ({', '.join(verification_details) if verification_details else 'completed without errors'})")
+                    error_msg = (
+                        f"❌ CRITICAL: Document processing completed without errors, but no data was indexed! "
+                        f"This usually indicates a silent failure in LightRAG (dimension mismatch, embedding errors, etc.). "
+                        f"Verification checks: {verification_details if verification_details else 'all checks failed'}. "
+                        f"Check the logs above for ERROR messages from LightRAG."
+                    )
+                    logger.error(error_msg)
+
+                    # Mark document as failed
+                    if document_id in lightrag_documents_db:
+                        lightrag_documents_db[document_id]["status"] = "failed"
+                        lightrag_documents_db[document_id]["error"] = (
+                            "Document processing failed silently - no data was indexed. "
+                            "This may be due to embedding dimension mismatch or other LightRAG errors. "
+                            "Check server logs for details. You may need to rebuild or recreate the notebook."
+                        )
+                        save_documents_db()
+
+                    raise Exception(error_msg)
+
+                logger.info(f"✓ Successfully inserted and verified document {document_id} into LightRAG ({', '.join(verification_details)})")
                 
             except asyncio.TimeoutError:
                 timeout_minutes = int(processing_timeout / 60)
@@ -2179,6 +2254,10 @@ if LIGHTRAG_AVAILABLE:
                 lightrag_documents_db[document_id]["status"] = "failed"
                 lightrag_documents_db[document_id]["error"] = error_msg
                 lightrag_documents_db[document_id]["failed_at"] = datetime.now()
+                # CRITICAL: Save lightrag_id even on failure so document can be properly deleted
+                # If we don't save this, the document becomes a "ghost" in LightRAG that can't be removed
+                lightrag_documents_db[document_id]["lightrag_id"] = prefixed_doc_id
+                logger.warning(f"Saved lightrag_id for failed document {document_id} to enable proper cleanup")
                 # Save changes to disk even on failure
                 save_documents_db()
 
@@ -2303,15 +2382,27 @@ if LIGHTRAG_AVAILABLE:
     def normalize_url_for_local_dev(url: str) -> str:
         """
         Normalize URLs for local development
-        Converts host.docker.internal to localhost when not in Docker
+        - When IN Docker: Converts localhost/127.0.0.1 to host.docker.internal
+        - When NOT in Docker: Converts host.docker.internal to localhost
         """
-        if url and 'host.docker.internal' in url:
-            # Check if we're likely running in Docker
-            import os
-            if not os.path.exists('/.dockerenv'):
-                # Not in Docker, use localhost
+        if not url:
+            return url
+
+        import os
+        in_docker = os.path.exists('/.dockerenv')
+
+        if in_docker:
+            # Running in Docker - convert localhost to host.docker.internal
+            if 'localhost' in url or '127.0.0.1' in url:
+                url = url.replace('localhost', 'host.docker.internal')
+                url = url.replace('127.0.0.1', 'host.docker.internal')
+                logger.info(f"Normalized localhost URL for Docker: {url}")
+        else:
+            # Not in Docker - convert host.docker.internal to localhost
+            if 'host.docker.internal' in url:
                 url = url.replace('host.docker.internal', 'localhost')
                 logger.info(f"Normalized Docker URL to localhost: {url}")
+
         return url
     
     @app.post("/notebooks/validate-models")
@@ -2509,6 +2600,213 @@ if LIGHTRAG_AVAILABLE:
                 "overall_status": "error"
             }
 
+    # ============================================================================
+    # Document Queue Setup - Startup and Shutdown
+    # ============================================================================
+
+    def cleanup_stale_lightrag_docs():
+        """
+        Clean up stale document IDs from LightRAG storage on startup.
+        
+        This prevents failed document retries from trying to process old document IDs
+        that are stuck in LightRAG's doc_status storage.
+        """
+        try:
+            storage_path = LIGHTRAG_METADATA_PATH / "documents.json"
+            if not storage_path.exists():
+                logger.info("No documents.json found, skipping stale doc cleanup")
+                return
+            
+            # Load all documents to find failed ones
+            with open(storage_path, 'r', encoding='utf-8') as f:
+                all_docs = json.load(f)
+            
+            cleaned_count = 0
+            for doc_id, doc_data in all_docs.items():
+                # If document is failed and has a lightrag_id, we should clear it
+                # so retries get a fresh ID
+                if doc_data.get("status") == "failed" and "lightrag_id" in doc_data:
+                    notebook_id = doc_data.get("notebook_id")
+                    old_id = doc_data["lightrag_id"]
+                    
+                    # Clean up the stale ID from LightRAG's doc_status storage
+                    doc_status_path = LIGHTRAG_STORAGE_PATH / notebook_id / "kv_store_doc_status.json"
+                    if doc_status_path.exists():
+                        try:
+                            with open(doc_status_path, 'r', encoding='utf-8') as f:
+                                doc_status = json.load(f)
+                            
+                            # Remove all old document IDs for this document
+                            # (there might be multiple failed attempts)
+                            doc_prefix = f"doc_{notebook_id}_{doc_id}"
+                            to_remove = [k for k in doc_status.keys() if k.startswith(doc_prefix)]
+                            
+                            if to_remove:
+                                for key in to_remove:
+                                    del doc_status[key]
+                                    cleaned_count += 1
+                                
+                                # Save cleaned doc_status
+                                with open(doc_status_path, 'w', encoding='utf-8') as f:
+                                    json.dump(doc_status, f, ensure_ascii=False, indent=2)
+                                
+                                logger.info(f"Cleaned {len(to_remove)} stale doc IDs for document {doc_id}")
+                        except Exception as e:
+                            logger.warning(f"Could not clean doc_status for notebook {notebook_id}: {e}")
+                    
+                    # Clear the lightrag_id from our metadata too
+                    del doc_data["lightrag_id"]
+                    all_docs[doc_id] = doc_data
+            
+            # Save cleaned documents.json if we made changes
+            if cleaned_count > 0:
+                with open(storage_path, 'w', encoding='utf-8') as f:
+                    json.dump(all_docs, f, ensure_ascii=False, indent=2)
+                logger.info(f"✅ Cleaned up {cleaned_count} stale LightRAG document IDs on startup")
+                
+                # Reload the in-memory database to reflect changes
+                load_documents_db()
+            else:
+                logger.info("No stale LightRAG document IDs found")
+                
+        except Exception as e:
+            logger.error(f"Error during stale doc cleanup: {e}")
+
+    def cleanup_stuck_documents():
+        """Fix documents stuck in 'processing' state on startup"""
+        try:
+            storage_path = LIGHTRAG_METADATA_PATH / "documents.json"
+            if not storage_path.exists():
+                return
+            
+            # Load all documents
+            with open(storage_path, 'r', encoding='utf-8') as f:
+                all_docs = json.load(f)
+            
+            # Find documents stuck in "processing" state
+            stuck_docs = [(doc_id, doc_data) for doc_id, doc_data in all_docs.items() 
+                         if doc_data.get("status") == "processing"]
+            
+            if not stuck_docs:
+                logger.info("No stuck documents found")
+                return
+            
+            logger.warning(f"Found {len(stuck_docs)} documents stuck in 'processing' state")
+            
+            # Check queue database to see if these jobs actually completed/failed
+            import sqlite3
+            queue_db_path = LIGHTRAG_METADATA_PATH / "document_queue.db"
+            
+            if not queue_db_path.exists():
+                logger.warning("Queue database not found, cannot determine job status")
+                return
+            
+            conn = sqlite3.connect(str(queue_db_path))
+            conn.row_factory = sqlite3.Row
+            
+            fixed_count = 0
+            for doc_id, doc_data in stuck_docs:
+                # Check if there's a completed/failed job for this document
+                cursor = conn.execute("""
+                    SELECT status, error FROM jobs 
+                    WHERE document_id = ? 
+                    ORDER BY created_at DESC LIMIT 1
+                """, (doc_id,))
+                job = cursor.fetchone()
+                
+                if job:
+                    if job['status'] == 'completed':
+                        # Job completed but document status wasn't updated (silent error)
+                        logger.info(f"Marking document {doc_id} ({doc_data.get('filename')}) as failed - queue job completed but status wasn't updated")
+                        all_docs[doc_id]["status"] = "failed"
+                        all_docs[doc_id]["error"] = "Processing completed but document status wasn't updated (possible silent error). Please retry."
+                        all_docs[doc_id]["failed_at"] = datetime.now().isoformat()
+                        fixed_count += 1
+                    elif job['status'] == 'failed':
+                        # Job failed, update document status
+                        logger.info(f"Marking document {doc_id} ({doc_data.get('filename')}) as failed - queue job failed")
+                        all_docs[doc_id]["status"] = "failed"
+                        all_docs[doc_id]["error"] = job['error'] or "Unknown error"
+                        all_docs[doc_id]["failed_at"] = datetime.now().isoformat()
+                        fixed_count += 1
+                else:
+                    # No job found, mark as failed
+                    logger.info(f"Marking document {doc_id} ({doc_data.get('filename')}) as failed - no queue job found")
+                    all_docs[doc_id]["status"] = "failed"
+                    all_docs[doc_id]["error"] = "No queue job found - server may have crashed during upload"
+                    all_docs[doc_id]["failed_at"] = datetime.now().isoformat()
+                    fixed_count += 1
+            
+            conn.close()
+            
+            # Save updated documents
+            if fixed_count > 0:
+                with open(storage_path, 'w', encoding='utf-8') as f:
+                    json.dump(all_docs, f, ensure_ascii=False, indent=2)
+                logger.info(f"✅ Fixed {fixed_count} stuck documents")
+                
+                # Reload the in-memory database to reflect changes
+                load_documents_db()
+                
+        except Exception as e:
+            logger.error(f"Error fixing stuck documents: {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
+
+    @app.on_event("startup")
+    async def startup_event():
+        """Initialize the document processing queue on server startup"""
+        logger.info("=== Starting Document Queue Worker ===")
+
+        # Fix documents stuck in "processing" state
+        cleanup_stuck_documents()
+
+        # Clean up stale LightRAG document IDs from failed documents
+        cleanup_stale_lightrag_docs()
+
+        # Register the document processor function
+        document_queue.set_processor(process_notebook_document)
+
+        # Register status checker to verify processing results
+        def check_document_status(document_id: str) -> tuple:
+            """
+            Check the actual status of a document after processing
+
+            Returns:
+                tuple: (status, error_message) where status is "completed", "failed", or "processing"
+            """
+            if document_id not in lightrag_documents_db:
+                return ("unknown", "Document not found in database")
+
+            doc_data = lightrag_documents_db[document_id]
+            status = doc_data.get("status", "unknown")
+            error = doc_data.get("error", "")
+
+            return (status, error)
+
+        document_queue.set_status_checker(check_document_status)
+        logger.info("Document status checker registered")
+
+        # Recover any stuck jobs from previous crash/restart
+        # Pass None to recover ALL processing jobs on startup
+        recovered = document_queue.recover_stuck_jobs(timeout_seconds=None)
+        if recovered > 0:
+            logger.warning(f"Recovered {recovered} stuck jobs from previous session")
+
+        # Start the background worker thread
+        document_queue.start_worker()
+        logger.info("Document queue worker started successfully")
+
+    @app.on_event("shutdown")
+    async def shutdown_event():
+        """Stop the document processing queue on server shutdown"""
+        logger.info("Stopping document queue worker...")
+        document_queue.stop_worker()
+        logger.info("Document queue worker stopped")
+
+    # ============================================================================
+    # API Routes
+    # ============================================================================
+
     @app.get("/notebooks/validate-embedding-dimensions")
     async def validate_embedding_dimensions(
         model_name: str = Query(..., description="Embedding model name to validate"),
@@ -2572,7 +2870,13 @@ if LIGHTRAG_AVAILABLE:
         # Auto-detect provider types before saving
         corrected_llm_provider = auto_detect_provider_type(notebook.llm_provider)
         corrected_embedding_provider = auto_detect_provider_type(notebook.embedding_provider)
-        
+
+        # Normalize URLs for Docker/local development
+        if corrected_llm_provider.get('baseUrl'):
+            corrected_llm_provider['baseUrl'] = normalize_url_for_local_dev(corrected_llm_provider['baseUrl'])
+        if corrected_embedding_provider.get('baseUrl'):
+            corrected_embedding_provider['baseUrl'] = normalize_url_for_local_dev(corrected_embedding_provider['baseUrl'])
+
         logger.info(f"Corrected LLM Provider: {corrected_llm_provider}")
         logger.info(f"Corrected Embedding Provider: {corrected_embedding_provider}")
         
@@ -2772,18 +3076,17 @@ if LIGHTRAG_AVAILABLE:
                 failed_no_content.append(doc.get('filename', doc_id))
                 continue
             
-            # Queue for background processing with delay
-            delay_seconds = reprocessed_count * 2
-            background_tasks.add_task(
-                process_notebook_document_with_delay,
-                notebook_id,
-                doc_id,
-                content,
-                delay_seconds
+            # Queue for persistent processing (crash-safe)
+            # Use the persistent queue instead of background_tasks for reliability
+            document_queue.enqueue(
+                notebook_id=notebook_id,
+                document_id=doc_id,
+                content=content,
+                priority=0  # Normal priority
             )
-            
+
             reprocessed_count += 1
-            logger.info(f"Queued document {doc_id} for reprocessing (delay: {delay_seconds}s)")
+            logger.info(f"Queued document {doc_id} for reprocessing via persistent queue")
         
         # Clear notebook summary cache and fingerprint
         if "summary" in lightrag_notebooks_db[notebook_id]:
@@ -2922,10 +3225,16 @@ if LIGHTRAG_AVAILABLE:
         validate_notebook_exists(notebook_id)
         
         logger.info(f"Updating configuration for notebook {notebook_id}")
-        
+
         # Auto-detect provider types
         llm_provider = auto_detect_provider_type(request.llm_provider)
         embedding_provider = auto_detect_provider_type(request.embedding_provider)
+
+        # Normalize URLs for Docker/local development
+        if llm_provider.get('baseUrl'):
+            llm_provider['baseUrl'] = normalize_url_for_local_dev(llm_provider['baseUrl'])
+        if embedding_provider.get('baseUrl'):
+            embedding_provider['baseUrl'] = normalize_url_for_local_dev(embedding_provider['baseUrl'])
         
         # Check if embedding model is changing (dimension mismatch detection)
         old_embedding_model = lightrag_notebooks_db[notebook_id]["embedding_provider"].get("model", "")
@@ -3119,18 +3428,17 @@ if LIGHTRAG_AVAILABLE:
                 else:
                     continue
                 
-                # Queue for background processing with a small delay between documents
-                delay_seconds = reprocessed_count * 2  # 2 second delay between each document
-                background_tasks.add_task(
-                    process_notebook_document_with_delay,
-                    notebook_id,
-                    doc_id,
-                    content,
-                    delay_seconds
+                # Queue for persistent processing (crash-safe)
+                # Use the persistent queue instead of background_tasks for reliability
+                document_queue.enqueue(
+                    notebook_id=notebook_id,
+                    document_id=doc_id,
+                    content=content,
+                    priority=0  # Normal priority
                 )
                 
                 reprocessed_count += 1
-                logger.info(f"Queued document {doc_id} for reprocessing (delay: {delay_seconds}s)")
+                logger.info(f"Queued document {doc_id} for reprocessing via persistent queue")
             else:
                 logger.warning(f"Document {doc_id} has no content available for reprocessing")
         
@@ -3149,7 +3457,6 @@ if LIGHTRAG_AVAILABLE:
     @app.post("/notebooks/{notebook_id}/documents", response_model=List[NotebookDocumentResponse])
     async def upload_notebook_documents(
         notebook_id: str,
-        background_tasks: BackgroundTasks,
         files: List[UploadFile] = File(...)
     ):
         """Upload multiple documents to a notebook"""
@@ -3183,15 +3490,15 @@ if LIGHTRAG_AVAILABLE:
                 # Create file path for citation tracking
                 file_path = f"notebooks/{notebook_id}/{file.filename}"
                 
-                # Create document record with content stored for potential retry
+                # Create document record - HONEST STATUS: "queued" not "processing"
                 document_data = {
                     "id": document_id,
                     "filename": file.filename,
                     "notebook_id": notebook_id,
                     "uploaded_at": datetime.now(),
-                    "status": "processing",
+                    "status": "queued",  # Honest: Document is queued, not processing yet
                     "file_path": file_path,
-                    "content": text_content  # Store content for retry functionality
+                    # Don't store content in memory - only file path (scales to 1000+ docs)
                 }
                 
                 # Debug: Log that content is being stored
@@ -3214,17 +3521,27 @@ if LIGHTRAG_AVAILABLE:
                     logger.warning(f"Failed to create content backup file: {e}")
                 
                 lightrag_documents_db[document_id] = document_data
-                
-                # Add background task for document processing with a slight delay to avoid conflicts
-                # Increase delay for larger documents or more concurrent uploads
-                delay_seconds = min(i * 3, 30)  # 3 second delay between docs, max 30 seconds
-                background_tasks.add_task(
-                    process_notebook_document_with_delay, 
-                    notebook_id, 
-                    document_id, 
-                    text_content,
-                    delay_seconds
+
+                # Add document to persistent queue
+                # SQLite queue ensures documents are processed even after server crashes
+                # Priority system: higher priority = processed first
+                priority = 0  # Can be increased for urgent documents
+
+                job_id = document_queue.enqueue(
+                    notebook_id=notebook_id,
+                    document_id=document_id,
+                    content=text_content,
+                    priority=priority
                 )
+
+                # Save job_id to track processing
+                lightrag_documents_db[document_id]["job_id"] = job_id
+
+                if i == 0:
+                    logger.info(f"📄 Uploading {len(files)} documents to persistent queue")
+                    logger.info(f"✅ Queue survives crashes - your documents won't be lost!")
+
+                logger.info(f"📋 Queued document {i+1}/{len(files)}: {file.filename} (job_id: {job_id})")
                 
                 # Update notebook document count
                 lightrag_notebooks_db[notebook_id]["document_count"] += 1
@@ -3257,6 +3574,43 @@ if LIGHTRAG_AVAILABLE:
         ]
         
         return notebook_documents
+
+    @app.get("/notebooks/{notebook_id}/queue/status")
+    async def get_notebook_queue_status(notebook_id: str):
+        """Get queue statistics for a specific notebook"""
+        validate_notebook_exists(notebook_id)
+
+        stats = document_queue.get_queue_stats(notebook_id)
+
+        return {
+            "notebook_id": notebook_id,
+            "queue_stats": stats,
+            "message": f"{stats['queued']} queued, {stats['processing']} processing, "
+                      f"{stats['completed']} completed, {stats['failed']} failed"
+        }
+
+    @app.get("/queue/status")
+    async def get_global_queue_status():
+        """Get global queue statistics across all notebooks"""
+        stats = document_queue.get_queue_stats()
+
+        return {
+            "global_stats": stats,
+            "message": f"Total: {stats['total']} jobs "
+                      f"({stats['queued']} queued, {stats['processing']} processing, "
+                      f"{stats['completed']} completed, {stats['failed']} failed)"
+        }
+
+    @app.post("/queue/recover-stuck")
+    async def recover_stuck_jobs(timeout_seconds: int = 600):
+        """Manually recover jobs stuck in processing state"""
+        recovered = document_queue.recover_stuck_jobs(timeout_seconds)
+
+        return {
+            "recovered_jobs": recovered,
+            "message": f"Recovered {recovered} stuck jobs" if recovered > 0
+                      else "No stuck jobs found"
+        }
 
     @app.delete("/notebooks/{notebook_id}/documents/{document_id}")
     async def delete_notebook_document(notebook_id: str, document_id: str):
@@ -3430,30 +3784,40 @@ if LIGHTRAG_AVAILABLE:
                     detail="Original document content not available for retry. Please re-upload the document."
                 )
             
-            # Reset document status to processing
-            document_data["status"] = "processing"
-            document_data["processed_at"] = datetime.now()
+            # Clear old lightrag_id to force generation of a fresh ID on retry
+            # This prevents conflicts with stale document IDs in LightRAG storage
+            if "lightrag_id" in document_data:
+                old_lightrag_id = document_data["lightrag_id"]
+                del document_data["lightrag_id"]
+                logger.info(f"Cleared old lightrag_id ({old_lightrag_id[:50]}...) for clean retry")
             
+            # Reset document status to pending (will be set to processing by queue worker)
+            document_data["status"] = "pending"
+            document_data["queued_at"] = datetime.now()
+
             # Clear previous error information
             if "failed_at" in document_data:
                 del document_data["failed_at"]
+            if "error" in document_data:
+                del document_data["error"]
             if "error_message" in document_data:
                 del document_data["error_message"]
             if "error_details" in document_data:
                 del document_data["error_details"]
-            
+
             # Update the document in database
             lightrag_documents_db[document_id] = document_data
             save_documents_db()
-            
-            # Add background task to retry processing
-            # The LightRAG cache will automatically skip chunks that were already processed
-            background_tasks.add_task(
-                process_notebook_document, 
-                notebook_id, 
-                document_id, 
-                text_content
+
+            # Queue for persistent processing (crash-safe)
+            # Use the persistent queue for reliability and proper status tracking
+            document_queue.enqueue(
+                notebook_id=notebook_id,
+                document_id=document_id,
+                content=text_content,
+                priority=0  # Normal priority
             )
+            logger.info(f"Queued document {document_id} for retry via persistent queue")
             
             logger.info(f"Retry initiated for document {document_id}")
             return DocumentRetryResponse(

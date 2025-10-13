@@ -463,32 +463,50 @@ const CreateNotebookModal: React.FC<CreateNotebookModalProps> = ({ onClose, onCr
     }
   };
 
+  const selectedLLMProviderInfo = providers.find(provider => provider.id === selectedLLMProvider);
+  const selectedEmbeddingProviderInfo = providers.find(provider => provider.id === selectedEmbeddingProvider);
+  const selectedLLMModelInfo = models.find(model => model.id === selectedLLMModel);
+  const selectedEmbeddingModelInfo = models.find(model => model.id === selectedEmbeddingModel);
+  const isClaraCoreNotebook = usesClaraCore(selectedLLMProvider, providers) || usesClaraCore(selectedEmbeddingProvider, providers);
+  const formId = 'create-notebook-form';
+  const isCreateDisabled = isSubmitting || !name.trim() || isLoadingModels;
+
   return (
     <div 
       className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
       onClick={handleBackdropClick}
     >
-      <div className="bg-white dark:bg-black rounded-lg shadow-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-        {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700 bg-sakura-50 dark:bg-sakura-900/10">
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-sakura-500 rounded-lg text-white">
-              <BookOpen className="w-5 h-5" />
+      <div className="bg-white/95 dark:bg-[#0B0F19]/95 rounded-3xl shadow-2xl w-full max-w-[1100px] h-[85vh] overflow-hidden border border-white/10 dark:border-white/5 flex flex-col">
+        <div className="flex flex-col lg:flex-row flex-1 min-h-0">
+          <div className="flex-1 flex flex-col min-w-0 min-h-0">
+            {/* Header */}
+            <div className="flex-shrink-0 flex items-center justify-between px-6 py-5 lg:px-8 border-b border-white/10 dark:border-white/5 bg-gradient-to-r from-white/80 to-sakura-50/80 dark:from-[#101726] dark:to-[#1A2133]">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-sakura-500/90 rounded-xl text-white shadow-md shadow-sakura-500/40">
+                  <BookOpen className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
+                    Create New Notebook
+                  </h2>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">Set your notebook up in seconds—streamlined for fast launches.</p>
+                </div>
+              </div>
+              <button
+                onClick={onClose}
+                className="p-2 hover:bg-white/30 dark:hover:bg-white/10 rounded-full transition-colors"
+              >
+                <X className="w-4 h-4 text-gray-500 dark:text-gray-300" />
+              </button>
             </div>
-            <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-              Create New Notebook
-            </h2>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-2 hover:bg-white/20 rounded-lg transition-colors"
-          >
-            <X className="w-4 h-4 text-gray-500" />
-          </button>
-        </div>
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="p-6 space-y-6">
+            {/* Form */}
+            <form
+              id={formId}
+              onSubmit={handleSubmit}
+              className="flex-1 min-h-0 flex flex-col"
+            >
+              <div className="flex-1 min-h-0 overflow-y-auto px-6 py-6 lg:px-8 lg:py-7 space-y-5 [scrollbar-width:thin] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-gray-300/70 dark:[&::-webkit-scrollbar-thumb]:bg-white/20">
           {/* API Error */}
           {errors.api && (
             <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
@@ -960,32 +978,105 @@ const CreateNotebookModal: React.FC<CreateNotebookModalProps> = ({ onClose, onCr
               </div>
             )}
           </div>
+              </div>
 
-          {/* Buttons */}
-          <div className="flex gap-3 pt-4">
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={isSubmitting || !name.trim() || isLoadingModels}
-              className="flex-1 px-4 py-2 bg-gray-600 hover:bg-gray-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white rounded-lg transition-colors flex items-center justify-center gap-2"
-            >
-              {isSubmitting ? (
-                <>
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                  Creating...
-                </>
-              ) : (
-                'Create Notebook'
-              )}
-            </button>
+              <div className="flex-shrink-0 px-6 pb-6 lg:px-8 lg:pb-7 border-t border-gray-200 dark:border-gray-700 bg-white/50 dark:bg-gray-800/30">
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="inline-flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+                >
+                  Cancel and close
+                </button>
+              </div>
+            </form>
           </div>
-        </form>
+
+          {/* Companion Pane */}
+          <aside className="lg:w-[360px] xl:w-[380px] hidden lg:flex flex-col gap-6 bg-gradient-to-b from-[#111728] via-[#121C32] to-[#0B101F] text-white px-7 py-8 border-l border-white/5">
+            <div>
+              <span className="uppercase tracking-wider text-xs text-white/60">Notebook Tips</span>
+              <h3 className="mt-2 text-xl font-semibold">Getting the best start</h3>
+              <p className="mt-3 text-sm text-white/70 leading-relaxed">
+                Keep names short, describe your focus, and choose models that match your documents. You can always refine these settings after the notebook is created.
+              </p>
+            </div>
+
+            <div className="rounded-2xl bg-white/5 backdrop-blur p-4 border border-white/10 space-y-3">
+              <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                <Bot className="w-4 h-4 text-sakura-300" />
+                Current AI stack
+              </div>
+              <div className="space-y-2 text-xs text-white/70">
+                <div>
+                  <p className="text-white/60 uppercase tracking-wide">LLM Provider</p>
+                  <p className="text-sm text-white">{selectedLLMProviderInfo?.name || 'Select a provider'}</p>
+                  <p className="text-[11px] text-white/50">{selectedLLMModelInfo?.name || 'Choose a model to preview capabilities.'}</p>
+                </div>
+                <div className="pt-2 border-t border-white/10">
+                  <p className="text-white/60 uppercase tracking-wide">Embedding Provider</p>
+                  <p className="text-sm text-white">{selectedEmbeddingProviderInfo?.name || 'Select a provider'}</p>
+                  <p className="text-[11px] text-white/50">{selectedEmbeddingModelInfo?.name || 'Pick an embedding model for semantic search.'}</p>
+                </div>
+                {embeddingValidation && (
+                  <div className="pt-2 border-t border-white/10 text-[11px]">
+                    <p className="text-white/60 uppercase tracking-wide">Embedding profile</p>
+                    <p className="text-white/80">{(manualDimensions || embeddingValidation.dimensions) ? `${manualDimensions || embeddingValidation.dimensions}d • ${(manualMaxTokens || embeddingValidation.max_tokens) ?? '—'} tokens` : 'Awaiting detection'}</p>
+                    <p className="text-white/50">Confidence {(Math.round((embeddingValidation.confidence || 0) * 100))}% · Pattern {embeddingValidation.detected_pattern || '—'}</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-2xl bg-white/5 backdrop-blur p-4 border border-white/10 space-y-3 overflow-hidden">
+              <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                <AlertCircle className="w-4 h-4 text-amber-300" />
+                First-time guidance
+              </div>
+              <ul className="space-y-2 text-xs text-white/70 leading-relaxed">
+                <li>• Keep Clara Core running if you rely on local models for faster indexing.</li>
+                <li>• Large PDFs? Enable higher token limits in Advanced settings before import.</li>
+                <li>• Upload docs in chunks under 10k lines—huge files can take ~30 minutes each.</li>
+                <li>• Prefer smaller, non-"thinking" models for llama.cpp or Clara Core to avoid template mismatches.</li>
+                <li>• Break massive uploads into smaller batches; queue them rather than one giant drop.</li>
+              </ul>
+              {isClaraCoreNotebook && (
+                <div className="text-[11px] text-sakura-200 bg-sakura-500/10 border border-sakura-500/30 rounded-xl px-3 py-2">
+                  Clara Core will auto-launch with this notebook. Check GPU availability for peak performance.
+                </div>
+              )}
+            </div>
+
+            <div className="mt-auto space-y-4">
+              <div className="rounded-2xl bg-gradient-to-br from-sakura-500/60 via-sakura-500/40 to-sakura-500/20 border border-sakura-400/40 p-4 text-white/90 shadow-lg shadow-sakura-500/20">
+                <p className="text-sm font-semibold">Before you launch</p>
+                <p className="mt-2 text-xs leading-relaxed">
+                  Processing uses streaming chunking. Watching the queue? Avoid stacking &gt;4 large docs at once for best throughput.
+                </p>
+              </div>
+
+              <button
+                type="submit"
+                form={formId}
+                disabled={isCreateDisabled}
+                className="w-full inline-flex items-center justify-center gap-2 rounded-2xl bg-white text-[#101726] font-semibold py-3 shadow-lg shadow-black/20 hover:shadow-xl hover:-translate-y-0.5 transition disabled:bg-white/40 disabled:text-white/70 disabled:cursor-not-allowed"
+              >
+                {isSubmitting ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
+                    Creating...
+                  </>
+                ) : (
+                  'Create Notebook'
+                )}
+              </button>
+
+              <div className="text-[11px] text-white/40 leading-relaxed">
+                Notebook settings mirror Clara Assistant styling for a cohesive workspace. Need a custom preset? Save this configuration once created.
+              </div>
+            </div>
+          </aside>
+        </div>
       </div>
     </div>
   );
