@@ -359,6 +359,7 @@ class SmoothAutoScroller {
   private userScrollTimeout: NodeJS.Timeout | null = null;
   private lastScrollHeight = 0;
   private rafId: number | null = null;
+  private wasAtBottomWhenStreamStarted = false; // Track if user was at bottom when streaming started
   private scrollHandler: ((e: Event) => void) | null = null;
 
   constructor(container: HTMLElement | null, target: HTMLElement | null) {
@@ -384,20 +385,33 @@ class SmoothAutoScroller {
       const isAtBottom = this.isNearBottom();
 
       if (!isAtBottom) {
+        // User has scrolled away from bottom - IMMEDIATELY respect their position
+        // Set flag synchronously (no debounce) to prevent race conditions with streaming updates
         this.isUserScrolling = true;
+
+        // If streaming is active, remember they scrolled away
+        if (this.wasAtBottomWhenStreamStarted) {
+          // User was following along but now scrolled up - stop auto-scroll
+          this.wasAtBottomWhenStreamStarted = false;
+        }
 
         // Clear existing timeout
         if (this.userScrollTimeout) {
           clearTimeout(this.userScrollTimeout);
+          this.userScrollTimeout = null;
         }
 
-        // Reset flag after user stops scrolling for 1 second
-        this.userScrollTimeout = setTimeout(() => {
-          this.isUserScrolling = false;
-        }, 1000);
+        // Don't auto-reset - keep user in control until they scroll back to bottom
+        // This prevents forced scrolling when user is reading older content
       } else {
-        // User scrolled back to bottom
+        // User is at bottom - allow auto-scroll again
         this.isUserScrolling = false;
+
+        // Clear timeout since we're at bottom
+        if (this.userScrollTimeout) {
+          clearTimeout(this.userScrollTimeout);
+          this.userScrollTimeout = null;
+        }
       }
     };
 
@@ -462,11 +476,18 @@ class SmoothAutoScroller {
    * This is how ChatGPT/Claude keep you locked to bottom during streaming
    */
   startStreamingScroll(): void {
-    // Don't interrupt if user scrolled away
+    // Check if this is the first call for this streaming session
+    // If so, record whether user is at bottom
+    if (!this.wasAtBottomWhenStreamStarted) {
+      this.wasAtBottomWhenStreamStarted = this.isNearBottom();
+    }
+
+    // Don't scroll if user has scrolled away during streaming
     if (this.isUserScrolling) return;
 
-    // Only scroll if near bottom
-    if (!this.isNearBottom()) return;
+    // Only auto-scroll if user was at bottom when streaming started
+    // This prevents forcing scroll when user is reading older messages
+    if (!this.wasAtBottomWhenStreamStarted) return;
 
     // Instant scroll - will be called on every content update
     this.scrollToBottomInstant();
@@ -479,6 +500,9 @@ class SmoothAutoScroller {
       cancelAnimationFrame(this.rafId);
       this.rafId = null;
     }
+
+    // Reset the flag for the next streaming session
+    this.wasAtBottomWhenStreamStarted = false;
   }
 
   /**
@@ -487,6 +511,7 @@ class SmoothAutoScroller {
    */
   forceScrollToBottom(): void {
     this.isUserScrolling = false; // Override user scroll state
+    this.wasAtBottomWhenStreamStarted = true; // Re-enable auto-scroll for streaming
     this.scrollToBottomInstant();
   }
 

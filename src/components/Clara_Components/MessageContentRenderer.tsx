@@ -881,40 +881,48 @@ const CodeBlock: React.FC<{
   const [copied, setCopied] = useState(false);
   const [showCode, setShowCode] = useState(false);
   const [isHighlighterReady, setIsHighlighterReady] = useState(false);
-  
+
   const code = String(children).replace(/\n$/, '');
-  
+
+  // Check if this is actually a code block (not just text rendered incorrectly)
+  // A code block should either have a language specified OR be wrapped in triple backticks
+  const isActualCodeBlock = Boolean(
+    language || // Has explicit language
+    className?.includes('language-') || // Has language class
+    code.includes('\n') // Multi-line (likely from triple backticks)
+  );
+
   // Check if this should be rendered as a visual element instead of code
-  const shouldRenderAsVisual = !isInline && code.length > 20;
-  
+  const shouldRenderAsVisual = !isInline && code.length > 20 && isActualCodeBlock;
+
   // Detect Mermaid diagrams
   const isMermaidDiagram = shouldRenderAsVisual && (
     language === 'mermaid' ||
     code.trim().match(/^(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram|erDiagram|journey|gantt|pie|gitgraph|mindmap|timeline|requirement|c4context)/i)
   );
-  
+
   // Detect Chart.js JSON
   const isChartJSON = shouldRenderAsVisual && (
     language === 'json' && (
-      code.includes('"type":') && 
-      code.includes('"data":') && 
+      code.includes('"type":') &&
+      code.includes('"data":') &&
       (code.includes('"bar"') || code.includes('"line"') || code.includes('"pie"') || code.includes('"doughnut"'))
     )
   );
-  
+
   // Detect HTML content
   const isHTML = shouldRenderAsVisual && (
     language === 'html' ||
     (code.includes('<') && code.includes('>') && (
-      code.includes('<html') || 
-      code.includes('<div') || 
-      code.includes('<p') || 
-      code.includes('<h1') || 
-      code.includes('<h2') || 
-      code.includes('<h3') || 
-      code.includes('<section') || 
-      code.includes('<article') || 
-      code.includes('<header') || 
+      code.includes('<html') ||
+      code.includes('<div') ||
+      code.includes('<p') ||
+      code.includes('<h1') ||
+      code.includes('<h2') ||
+      code.includes('<h3') ||
+      code.includes('<section') ||
+      code.includes('<article') ||
+      code.includes('<header') ||
       code.includes('<footer') ||
       code.includes('<main') ||
       code.includes('<nav') ||
@@ -931,6 +939,29 @@ const CodeBlock: React.FC<{
     ))
   );
 
+  // Lazy load syntax highlighter for better performance - but skip during streaming
+  // MUST be called before any conditional returns
+  useEffect(() => {
+    // If streaming or not an actual code block, don't load highlighter
+    if (isStreaming || !isActualCodeBlock) {
+      return;
+    }
+
+    // Delay syntax highlighting to prevent blocking UI on history load
+    const hasIdleCallback = typeof window !== 'undefined' && 'requestIdleCallback' in window;
+    const timer = hasIdleCallback ?
+      window.requestIdleCallback(() => setIsHighlighterReady(true), { timeout: 500 }) :
+      setTimeout(() => setIsHighlighterReady(true), 100);
+
+    return () => {
+      if (hasIdleCallback && typeof timer === 'number') {
+        window.cancelIdleCallback(timer);
+      } else if (typeof timer === 'number') {
+        clearTimeout(timer);
+      }
+    };
+  }, [isStreaming, isActualCodeBlock]);
+
   const handleCopy = async () => {
     const success = await copyToClipboard(code);
     if (success) {
@@ -942,13 +973,19 @@ const CodeBlock: React.FC<{
   // If inline code, render normally
   if (isInline) {
     return (
-      <code 
+      <code
         className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 rounded text-sm font-mono"
         {...props}
       >
         {children}
       </code>
     );
+  }
+
+  // If this is not an actual code block (no language, no multi-line), render as plain text
+  // This prevents regular text from being incorrectly rendered as code
+  if (!isActualCodeBlock) {
+    return <span {...props}>{children}</span>;
   }
 
   // Mermaid diagrams are now shown in the artifact pane only - just show code here
@@ -959,22 +996,6 @@ const CodeBlock: React.FC<{
 
   // HTML content is now shown in the artifact pane only - just show code here
   // (The artifact preview button will allow users to open the rendered HTML)
-
-  // Lazy load syntax highlighter for better performance
-  useEffect(() => {
-    // Delay syntax highlighting to prevent blocking UI on history load
-    const timer = requestIdleCallback ?
-      requestIdleCallback(() => setIsHighlighterReady(true), { timeout: 500 }) :
-      setTimeout(() => setIsHighlighterReady(true), 100);
-
-    return () => {
-      if (requestIdleCallback && typeof timer === 'number') {
-        cancelIdleCallback(timer);
-      } else if (typeof timer !== 'number') {
-        clearTimeout(timer);
-      }
-    };
-  }, []);
 
   // Regular code block rendering with beautiful styling
   return (
@@ -1005,8 +1026,8 @@ const CodeBlock: React.FC<{
 
       {/* Code content */}
       <div className="rounded-b-lg overflow-hidden shadow-sm">
-        {!isHighlighterReady ? (
-          // Show plain pre while waiting for syntax highlighter
+        {(!isHighlighterReady || isStreaming) ? (
+          // Show plain pre while streaming or waiting for syntax highlighter
           <pre className={`text-sm p-4 overflow-x-auto ${
             isDark ? 'bg-[#1e1e1e] text-gray-100' : 'bg-[#fafafa] text-gray-900'
           } font-mono leading-relaxed`}>

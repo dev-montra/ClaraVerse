@@ -58,7 +58,8 @@ import MessageContentRenderer from './MessageContentRenderer';
 import ToolExecutionBlock from './ToolExecutionBlock';
 
 import { copyToClipboard } from '../../utils/clipboard';
-import { useSmoothScroll } from '../../hooks/useSmoothScroll';
+// REMOVED: import { useSmoothScroll } from '../../hooks/useSmoothScroll';
+// No longer needed - scroll is handled by parent chat window component
 
 // Import TTS service
 import { claraTTSService, AudioControlState } from '../../services/claraTTSService';
@@ -1164,13 +1165,9 @@ const ClaraMessageBubble: React.FC<ClaraMessageBubbleProps> = ({
   const showTTSControls = isThisMessagePlaying && (audioState?.isPlaying || audioState?.isPaused);
   const isTTSPlaying = isThisMessagePlaying && audioState?.isPlaying;
 
-  // Use the smooth scroll hook for better streaming behavior
-  const { scrollToElementDebounced, scrollToElementImmediate } = useSmoothScroll({
-    debounceMs: 150,
-    behavior: 'smooth',
-    block: 'end',
-    adaptiveScrolling: true
-  });
+  // REMOVED: useSmoothScroll hook
+  // No longer needed - all scrolling is handled by the parent chat window component
+  // This eliminates the "twitching" issue and allows users to scroll freely
 
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
@@ -1346,30 +1343,18 @@ const ClaraMessageBubble: React.FC<ClaraMessageBubbleProps> = ({
     setShowExecutionDetails(false);
   };
 
-  // Improved auto-scroll effect for streaming messages with better responsiveness
-  useEffect(() => {
-    if (!messageRef.current || message.role !== 'assistant') return;
-    
-    const isStreaming = message.metadata?.isStreaming;
-    const contentLength = message.content.length;
-    
-    if (isStreaming) {
-      if (contentLength < 20) {
-        // Scroll immediately when streaming starts
-        scrollToElementImmediate(messageRef.current);
-      } else {
-        // Use adaptive debounced scroll during streaming
-        scrollToElementDebounced(messageRef.current, 150);
-      }
-    } else if (contentLength > 0) {
-      // Scroll immediately when streaming completes
-      setTimeout(() => {
-        if (messageRef.current) {
-          scrollToElementImmediate(messageRef.current);
-        }
-      }, 50);
-    }
-  }, [message.metadata?.isStreaming, message.content.length, message.role, scrollToElementDebounced, scrollToElementImmediate]);
+  // REMOVED: Individual message auto-scroll effect
+  // This was causing the "twitching" and fighting with user scroll attempts
+  // The chat window component (clara_assistant_chat_window.tsx) now handles ALL scrolling
+  // via the SmoothAutoScroller class with proper user intent detection
+  //
+  // Problem: This useEffect was triggering on EVERY content change during streaming,
+  // causing the message bubble to constantly scroll into view, which:
+  // 1. Made the UI "twitch" as elements repositioned
+  // 2. Prevented users from scrolling up (scroll kept resetting)
+  // 3. Created a poor UX where users had to fight the auto-scroll
+  //
+  // Solution: Let the parent chat window handle scrolling with proper user detection
 
 
 
