@@ -1,0 +1,501 @@
+{
+  "id": "content-summarizer",
+  "name": "Content Summarizer",
+  "description": "Fetch web content and generate concise summaries using AI. Perfect for news articles, blog posts, and documentation.",
+  "category": "content",
+  "difficulty": "beginner",
+  "tags": ["web", "summarization", "api", "content"],
+  "author": "ClaraVerse",
+  "downloads": 2100,
+  "rating": 4.7,
+   "flow": {
+    "id": "flow-1760359540915",
+    "name": "Content Summarizer",
+    "description": "Fetch and summarize web content",
+    "nodes": [
+      {
+        "id": "1760359554509-34d4brqev",
+        "type": "llm",
+        "name": "LLM Chat",
+        "position": {
+          "x": 1182.9705961297486,
+          "y": -461.9469610295894
+        },
+        "data": {
+          "label": "LLM Chat",
+          "inputs": [
+            {
+              "id": "system",
+              "name": "System Message",
+              "type": "input",
+              "dataType": "string",
+              "required": false,
+              "description": "System prompt for the LLM"
+            },
+            {
+              "id": "user",
+              "name": "User Message",
+              "type": "input",
+              "dataType": "string",
+              "required": true,
+              "description": "User message/prompt"
+            },
+            {
+              "id": "context",
+              "name": "Pre-context",
+              "type": "input",
+              "dataType": "string",
+              "required": false,
+              "description": "Additional context to prepend"
+            },
+            {
+              "id": "memory",
+              "name": "Memory",
+              "type": "input",
+              "dataType": "array",
+              "required": false,
+              "description": "Conversation history array (messages with role and content)"
+            },
+            {
+              "id": "image",
+              "name": "Image",
+              "type": "input",
+              "dataType": "string",
+              "required": false,
+              "description": "Base64 encoded image data"
+            }
+          ],
+          "outputs": [
+            {
+              "id": "response",
+              "name": "Response",
+              "type": "output",
+              "dataType": "string",
+              "description": "LLM response text"
+            },
+            {
+              "id": "usage",
+              "name": "Usage Stats",
+              "type": "output",
+              "dataType": "object",
+              "description": "Token usage and cost information"
+            }
+          ],
+          "model": "gpt-oss-20b-20b",
+          "apiKey": "sdadsa",
+          "apiBaseUrl": "http://localhost:8091/v1",
+          "temperature": 0.7,
+          "maxTokens": 1000
+        },
+        "inputs": [
+          {
+            "id": "system",
+            "name": "System Message",
+            "type": "input",
+            "dataType": "string",
+            "required": false,
+            "description": "System prompt for the LLM"
+          },
+          {
+            "id": "user",
+            "name": "User Message",
+            "type": "input",
+            "dataType": "string",
+            "required": true,
+            "description": "User message/prompt"
+          },
+          {
+            "id": "context",
+            "name": "Pre-context",
+            "type": "input",
+            "dataType": "string",
+            "required": false,
+            "description": "Additional context to prepend"
+          },
+          {
+            "id": "memory",
+            "name": "Memory",
+            "type": "input",
+            "dataType": "array",
+            "required": false,
+            "description": "Conversation history array (messages with role and content)"
+          },
+          {
+            "id": "image",
+            "name": "Image",
+            "type": "input",
+            "dataType": "string",
+            "required": false,
+            "description": "Base64 encoded image data"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "response",
+            "name": "Response",
+            "type": "output",
+            "dataType": "string",
+            "description": "LLM response text"
+          },
+          {
+            "id": "usage",
+            "name": "Usage Stats",
+            "type": "output",
+            "dataType": "object",
+            "description": "Token usage and cost information"
+          }
+        ],
+        "metadata": {
+          "tags": [
+            "ai",
+            "llm",
+            "chat",
+            "openai"
+          ],
+          "documentation": "Interfaces with OpenAI-compatible APIs for text and vision tasks."
+        }
+      },
+      {
+        "id": "1760359560051-yuawfvr4l",
+        "type": "static-text",
+        "name": "Static Text",
+        "position": {
+          "x": 309.17634309488244,
+          "y": -616.3439794549912
+        },
+        "data": {
+          "label": "Static Text",
+          "inputs": [],
+          "outputs": [
+            {
+              "id": "text",
+              "name": "Text Output",
+              "type": "output",
+              "dataType": "string",
+              "required": true,
+              "description": "The static text content"
+            }
+          ],
+          "text": "You are a content summarizer                                                             "
+        },
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "text",
+            "name": "Text Output",
+            "type": "output",
+            "dataType": "string",
+            "required": true,
+            "description": "The static text content"
+          }
+        ],
+        "metadata": {
+          "examples": [
+            {
+              "name": "System Prompt",
+              "description": "Static system prompt for AI models",
+              "config": {
+                "text": "You are a helpful AI assistant. Please respond in a friendly and professional manner.",
+                "label": "System Prompt",
+                "textFormat": "plain",
+                "multiline": true
+              }
+            },
+            {
+              "name": "API Instructions",
+              "description": "Fixed instructions for API requests",
+              "config": {
+                "text": "Please analyze the following data and provide insights:\n\n",
+                "label": "API Instructions",
+                "textFormat": "template",
+                "multiline": true
+              }
+            },
+            {
+              "name": "JSON Template",
+              "description": "Static JSON structure template",
+              "config": {
+                "text": "{\"role\": \"system\", \"content\": \"You are a helpful assistant\"}",
+                "label": "JSON Template",
+                "textFormat": "json",
+                "multiline": false
+              }
+            }
+          ],
+          "tags": [
+            "text",
+            "static",
+            "prompt",
+            "template",
+            "content",
+            "fixed",
+            "constant"
+          ]
+        }
+      },
+      {
+        "id": "1760359594704-b9fysrwp7",
+        "type": "static-text",
+        "name": "Static Text",
+        "position": {
+          "x": 240.3389908544891,
+          "y": 523.6382794168152
+        },
+        "data": {
+          "label": "Static Text",
+          "inputs": [],
+          "outputs": [
+            {
+              "id": "text",
+              "name": "Text Output",
+              "type": "output",
+              "dataType": "string",
+              "required": true,
+              "description": "The static text content"
+            }
+          ],
+          "text": "Summarize the provided content in a better way so its easy to read"
+        },
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "text",
+            "name": "Text Output",
+            "type": "output",
+            "dataType": "string",
+            "required": true,
+            "description": "The static text content"
+          }
+        ],
+        "metadata": {
+          "examples": [
+            {
+              "name": "System Prompt",
+              "description": "Static system prompt for AI models",
+              "config": {
+                "text": "You are a helpful AI assistant. Please respond in a friendly and professional manner.",
+                "label": "System Prompt",
+                "textFormat": "plain",
+                "multiline": true
+              }
+            },
+            {
+              "name": "API Instructions",
+              "description": "Fixed instructions for API requests",
+              "config": {
+                "text": "Please analyze the following data and provide insights:\n\n",
+                "label": "API Instructions",
+                "textFormat": "template",
+                "multiline": true
+              }
+            },
+            {
+              "name": "JSON Template",
+              "description": "Static JSON structure template",
+              "config": {
+                "text": "{\"role\": \"system\", \"content\": \"You are a helpful assistant\"}",
+                "label": "JSON Template",
+                "textFormat": "json",
+                "multiline": false
+              }
+            }
+          ],
+          "tags": [
+            "text",
+            "static",
+            "prompt",
+            "template",
+            "content",
+            "fixed",
+            "constant"
+          ]
+        }
+      },
+      {
+        "id": "1760359638866-wn0iwuuhz",
+        "type": "output",
+        "name": "Output",
+        "position": {
+          "x": 1823.4716317370735,
+          "y": 174.01349071906293
+        },
+        "data": {},
+        "inputs": [
+          {
+            "id": "input",
+            "name": "Value",
+            "type": "input",
+            "dataType": "any",
+            "required": true,
+            "description": "Value to output"
+          }
+        ],
+        "outputs": [],
+        "metadata": {
+          "tags": [
+            "output",
+            "basic",
+            "sink"
+          ],
+          "documentation": "Displays the final result with various formatting options."
+        }
+      },
+      {
+        "id": "1760359805123-ezrw767fi",
+        "type": "combine-text",
+        "name": "Combine Text",
+        "position": {
+          "x": 755.1471016374662,
+          "y": -4.90998708129581
+        },
+        "data": {},
+        "inputs": [
+          {
+            "id": "text1",
+            "name": "Text 1",
+            "type": "input",
+            "dataType": "string",
+            "required": true,
+            "description": "First text input"
+          },
+          {
+            "id": "text2",
+            "name": "Text 2",
+            "type": "input",
+            "dataType": "string",
+            "required": true,
+            "description": "Second text input"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "combined",
+            "name": "Combined Text",
+            "type": "output",
+            "dataType": "string",
+            "required": true,
+            "description": "Combined text result"
+          },
+          {
+            "id": "metadata",
+            "name": "Metadata",
+            "type": "output",
+            "dataType": "object",
+            "required": false,
+            "description": "Combination metadata (mode, separator, lengths, etc.)"
+          }
+        ],
+        "metadata": {
+          "examples": [
+            {
+              "name": "Simple Prompt Building",
+              "description": "Combine system prompt with user input",
+              "config": {
+                "combineMode": "concat",
+                "addSpaces": true
+              }
+            },
+            {
+              "name": "Prompt with Separator",
+              "description": "Add context with clear separation",
+              "config": {
+                "combineMode": "separator",
+                "separator": "\\n\\n---\\n\\n",
+                "addSpaces": false
+              }
+            },
+            {
+              "name": "Prefix Instructions",
+              "description": "Add instructions before main content",
+              "config": {
+                "combineMode": "prefix",
+                "addSpaces": true
+              }
+            }
+          ],
+          "tags": [
+            "text",
+            "combine",
+            "prompt",
+            "concatenate",
+            "string",
+            "merge"
+          ]
+        }
+      },
+      {
+        "id": "1760359856179-gch4upiuh",
+        "type": "input",
+        "name": "Input",
+        "position": {
+          "x": 295.49640421711354,
+          "y": -78.03623439817022
+        },
+        "data": {},
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "output",
+            "name": "Value",
+            "type": "output",
+            "dataType": "any",
+            "description": "Input value"
+          }
+        ],
+        "metadata": {
+          "tags": [
+            "input",
+            "basic",
+            "source"
+          ],
+          "documentation": "Provides input values to start or feed the workflow. Supports text, numbers, and JSON objects."
+        }
+      }
+    ],
+    "connections": [
+      {
+        "id": "1760359568655-viuxuvmtt",
+        "sourceNodeId": "1760359560051-yuawfvr4l",
+        "sourcePortId": "text",
+        "targetNodeId": "1760359554509-34d4brqev",
+        "targetPortId": "system"
+      },
+      {
+        "id": "1760359641484-471xwamuk",
+        "sourceNodeId": "1760359554509-34d4brqev",
+        "sourcePortId": "response",
+        "targetNodeId": "1760359638866-wn0iwuuhz",
+        "targetPortId": "input"
+      },
+      {
+        "id": "1760359809674-0udif9eq4",
+        "sourceNodeId": "1760359594704-b9fysrwp7",
+        "sourcePortId": "text",
+        "targetNodeId": "1760359805123-ezrw767fi",
+        "targetPortId": "text2"
+      },
+      {
+        "id": "1760359819671-ysox3ewhh",
+        "sourceNodeId": "1760359805123-ezrw767fi",
+        "sourcePortId": "combined",
+        "targetNodeId": "1760359554509-34d4brqev",
+        "targetPortId": "user"
+      },
+      {
+        "id": "1760359859709-4mjf064y9",
+        "sourceNodeId": "1760359856179-gch4upiuh",
+        "sourcePortId": "output",
+        "targetNodeId": "1760359805123-ezrw767fi",
+        "targetPortId": "text1"
+      }
+    ],
+    "variables": [],
+    "settings": {
+      "name": "Content Summarizer",
+      "version": "1.0.0"
+    },
+    "createdAt": "2025-10-13T12:47:00.151Z",
+    "updatedAt": "2025-10-13T12:51:13.354Z",
+    "version": "1.0.0"
+  }
+}

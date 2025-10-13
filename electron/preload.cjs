@@ -464,6 +464,20 @@ contextBridge.exposeInMainWorld('electronScreenShare', {
   requestScreenAccess: () => ipcRenderer.invoke('request-screen-access')
 });
 
+// Add remote server management API
+contextBridge.exposeInMainWorld('remoteServer', {
+  testConnection: (config) => ipcRenderer.invoke('remote-server:test-connection', config),
+  deploy: (config) => ipcRenderer.invoke('remote-server:deploy', config),
+  stopService: (config, serviceName) => ipcRenderer.invoke('remote-server:stop-service', { config, serviceName }),
+
+  // Listen for deployment logs
+  onLog: (callback) => {
+    const subscription = (event, data) => callback(data);
+    ipcRenderer.on('remote-server:log', subscription);
+    return () => ipcRenderer.removeListener('remote-server:log', subscription);
+  }
+});
+
 // Notify main process when preload script has loaded
 window.addEventListener('DOMContentLoaded', () => {
   ipcRenderer.send('app-ready', 'Preload script has loaded');

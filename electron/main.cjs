@@ -3117,6 +3117,101 @@ function registerHandlers() {
     }
   });
 
+  // Remote Docker connection IPC handlers
+  ipcMain.handle('docker-get-connection-info', async () => {
+    try {
+      if (!dockerSetup) {
+        return { mode: 'local', config: null, activeTunnels: [], isRemote: false };
+      }
+      return dockerSetup.getConnectionInfo();
+    } catch (error) {
+      log.error('Error getting Docker connection info:', error);
+      return { error: error.message };
+    }
+  });
+
+  ipcMain.handle('docker-test-remote-connection', async (event, config) => {
+    try {
+      if (!dockerSetup) {
+        throw new Error('Docker setup not initialized');
+      }
+      return await dockerSetup.testRemoteConnection(config);
+    } catch (error) {
+      log.error('Error testing remote Docker connection:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('docker-switch-connection', async (event, config) => {
+    try {
+      if (!dockerSetup) {
+        throw new Error('Docker setup not initialized');
+      }
+      const result = await dockerSetup.switchConnection(config);
+
+      // If switching to remote and successful, set up SSH tunnels for services
+      if (result.success && config.mode === 'remote') {
+        // Create tunnels for each service that will be used
+        const services = [
+          { name: 'python', localPort: 5001, remotePort: 5001 },
+          { name: 'n8n', localPort: 5678, remotePort: 5678 },
+          { name: 'comfyui', localPort: 8188, remotePort: 8188 }
+        ];
+
+        for (const service of services) {
+          try {
+            await dockerSetup.createSSHTunnel(service.localPort, service.remotePort, service.name);
+          } catch (tunnelError) {
+            log.warn(`Failed to create SSH tunnel for ${service.name}:`, tunnelError);
+          }
+        }
+      }
+
+      return result;
+    } catch (error) {
+      log.error('Error switching Docker connection:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('docker-create-ssh-tunnel', async (event, { localPort, remotePort, serviceName }) => {
+    try {
+      if (!dockerSetup) {
+        throw new Error('Docker setup not initialized');
+      }
+      await dockerSetup.createSSHTunnel(localPort, remotePort, serviceName);
+      return { success: true };
+    } catch (error) {
+      log.error(`Error creating SSH tunnel for ${serviceName}:`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('docker-close-ssh-tunnel', async (event, serviceName) => {
+    try {
+      if (!dockerSetup) {
+        throw new Error('Docker setup not initialized');
+      }
+      await dockerSetup.closeSSHTunnel(serviceName);
+      return { success: true };
+    } catch (error) {
+      log.error(`Error closing SSH tunnel for ${serviceName}:`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('docker-get-active-tunnels', async () => {
+    try {
+      if (!dockerSetup) {
+        return [];
+      }
+      return dockerSetup.getActiveTunnels();
+    } catch (error) {
+      log.error('Error getting active SSH tunnels:', error);
+      return [];
+    }
+  });
+
   // Screen sharing IPC handlers for Electron
   ipcMain.handle('get-desktop-sources', async () => {
     try {

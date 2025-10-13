@@ -1,6 +1,7 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { X, Search, Download, Star, Sparkles, Globe, FileText, Image as ImageIcon, Brain, Wrench } from 'lucide-react';
 import { FlowTemplate } from '../../types/agent/types';
+import { loadTemplates } from './templates/templateLoader';
 
 interface TemplateBrowserProps {
   isOpen: boolean;
@@ -8,133 +9,12 @@ interface TemplateBrowserProps {
   onSelectTemplate: (template: FlowTemplate) => void;
 }
 
-// Mock templates for now - will be replaced with actual template system
-const mockTemplates: FlowTemplate[] = [
-  {
-    id: 'simple-chat',
-    name: 'Simple Chat Assistant',
-    description: 'A basic conversational AI that can answer questions using LLM',
-    category: 'ai',
-    difficulty: 'beginner' as const,
-    tags: ['chat', 'llm', 'conversational'],
-    author: 'ClaraVerse',
-    downloads: 1250,
-    rating: 4.8,
-    flow: {
-      name: 'Simple Chat Assistant',
-      icon: '🤖',
-      nodes: [],
-      connections: [],
-      variables: [],
-      settings: { name: 'Simple Chat Assistant', version: '1.0.0' },
-      version: '1.0.0'
-    }
-  },
-  {
-    id: 'research-agent',
-    name: 'Autonomous Research Agent',
-    description: 'An autonomous AI agent that can research topics with multi-step reasoning',
-    category: 'ai',
-    difficulty: 'intermediate' as const,
-    tags: ['autonomous', 'research', 'mcp-tools'],
-    author: 'ClaraVerse',
-    downloads: 850,
-    rating: 4.9,
-    flow: {
-      name: 'Autonomous Research Agent',
-      icon: '🔬',
-      nodes: [],
-      connections: [],
-      variables: [],
-      settings: { name: 'Autonomous Research Agent', version: '1.0.0' },
-      version: '1.0.0'
-    }
-  },
-  {
-    id: 'content-summarizer',
-    name: 'Content Summarizer',
-    description: 'Fetch web content and generate concise summaries using AI',
-    category: 'content',
-    difficulty: 'beginner' as const,
-    tags: ['web', 'summarization', 'api'],
-    author: 'ClaraVerse',
-    downloads: 2100,
-    rating: 4.7,
-    flow: {
-      name: 'Content Summarizer',
-      icon: '📄',
-      nodes: [],
-      connections: [],
-      variables: [],
-      settings: { name: 'Content Summarizer', version: '1.0.0' },
-      version: '1.0.0'
-    }
-  },
-  {
-    id: 'image-analyzer',
-    name: 'Image Analyzer',
-    description: 'Analyze images and generate detailed descriptions using vision AI',
-    category: 'vision',
-    difficulty: 'intermediate' as const,
-    tags: ['vision', 'image-analysis', 'multimodal'],
-    author: 'ClaraVerse',
-    downloads: 1650,
-    rating: 4.6,
-    flow: {
-      name: 'Image Analyzer',
-      icon: '🖼️',
-      nodes: [],
-      connections: [],
-      variables: [],
-      settings: { name: 'Image Analyzer', version: '1.0.0' },
-      version: '1.0.0'
-    }
-  },
-  {
-    id: 'data-extractor',
-    name: 'Structured Data Extractor',
-    description: 'Extract structured JSON data from unstructured text',
-    category: 'automation',
-    difficulty: 'intermediate' as const,
-    tags: ['json', 'structured-output', 'automation'],
-    author: 'ClaraVerse',
-    downloads: 1420,
-    rating: 4.8,
-    flow: {
-      name: 'Structured Data Extractor',
-      icon: '📊',
-      nodes: [],
-      connections: [],
-      variables: [],
-      settings: { name: 'Structured Data Extractor', version: '1.0.0' },
-      version: '1.0.0'
-    }
-  },
-  {
-    id: 'audio-transcription',
-    name: 'Audio Transcription Pipeline',
-    description: 'Transcribe audio files with Whisper AI and generate summaries',
-    category: 'automation',
-    difficulty: 'beginner' as const,
-    tags: ['audio', 'transcription', 'whisper'],
-    author: 'ClaraVerse',
-    downloads: 980,
-    rating: 4.5,
-    flow: {
-      name: 'Audio Transcription Pipeline',
-      icon: '🎤',
-      nodes: [],
-      connections: [],
-      variables: [],
-      settings: { name: 'Audio Transcription Pipeline', version: '1.0.0' },
-      version: '1.0.0'
-    }
-  }
-];
-
 const TemplateBrowser: React.FC<TemplateBrowserProps> = ({ isOpen, onClose, onSelectTemplate }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+
+  // Load templates from JSON files
+  const allTemplates = useMemo(() => loadTemplates(), []);
 
   if (!isOpen) return null;
 
@@ -153,7 +33,7 @@ const TemplateBrowser: React.FC<TemplateBrowserProps> = ({ isOpen, onClose, onSe
     advanced: 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
   };
 
-  const filteredTemplates = mockTemplates.filter((template: FlowTemplate) => {
+  const filteredTemplates = allTemplates.filter((template: FlowTemplate) => {
     const matchesSearch = template.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          template.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
                          template.tags.some((tag: string) => tag.toLowerCase().includes(searchQuery.toLowerCase()));

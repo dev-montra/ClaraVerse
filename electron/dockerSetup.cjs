@@ -12,16 +12,24 @@ const { promisify } = require('util');
 const execAsync = promisify(exec);
 
 class DockerSetup extends EventEmitter {
-  constructor() {
+  constructor(connectionConfig = null) {
     super();
     this.isDevMode = process.env.NODE_ENV === 'development';
     this.appDataPath = path.join(os.homedir(), '.clara');
-    
+
     // Docker binary paths - using Docker CLI path for both docker and compose commands
     this.dockerPath = '/usr/local/bin/docker';
-    
-    // Initialize Docker client with the first working socket
+
+    // Store connection configuration
+    this.connectionConfig = connectionConfig || this.loadConnectionConfig();
+    this.connectionMode = this.connectionConfig?.mode || 'local'; // 'local' or 'remote'
+
+    // Initialize Docker client with the first working socket or remote connection
     this.docker = this.initializeDockerClient();
+
+    // SSH tunnel management for remote connections
+    this.sshTunnels = {};
+    this.activeTunnels = [];
 
     // Path for storing pull timestamps
     this.pullTimestampsPath = path.join(this.appDataPath, 'pull_timestamps.json');
@@ -1761,9 +1769,16 @@ class DockerSetup extends EventEmitter {
 
   initializeDockerClient() {
     try {
+      // Check if we're using remote Docker connection
+      if (this.connectionMode === 'remote' && this.connectionConfig) {
+        console.log('🌐 Initializing remote Docker connection...');
+        return this.createRemoteDockerClient(this.connectionConfig);
+      }
+
+      // Local Docker connection logic (existing)
       // Try enhanced detection first (but don't await since this is sync)
       // We'll use the enhanced detection in isDockerRunning() instead
-      
+
       // For Windows, always use the named pipe as default
       if (process.platform === 'win32') {
         return new Docker({ socketPath: '//./pipe/docker_engine' });
@@ -1803,6 +1818,48 @@ class DockerSetup extends EventEmitter {
       console.error('Error initializing Docker client:', error);
       // Return a default client - the isDockerRunning check will handle the error case
       return new Docker({ socketPath: '/var/run/docker.sock' });
+    }
+  }
+
+  /**
+   * Create a Docker client for remote connections
+   * Supports both direct TCP and SSH-based connections
+   */
+  createRemoteDockerClient(config) {
+    try {
+      if (config.protocol === 'ssh') {
+        // SSH-based connection using docker context
+        // This requires SSH key authentication
+        console.log(`🔐 Creating SSH Docker connection to ${config.username}@${config.host}`);
+
+        // For SSH, we use DOCKER_HOST environment variable approach
+        // Set up SSH tunnel to forward Docker socket
+        const dockerHost = `ssh://${config.username}@${config.host}`;
+
+        // Create Docker client that will use SSH
+        return new Docker({
+          host: config.host,
+          port: config.port || 22,
+          protocol: 'ssh',
+          username: config.username,
+          // Note: For proper SSH support, we'll need to set up SSH tunnel separately
+          // or use docker context CLI commands
+        });
+      } else if (config.protocol === 'tcp') {
+        // Direct TCP connection (Docker daemon exposed on TCP port)
+        console.log(`🌐 Creating TCP Docker connection to ${config.host}:${config.port}`);
+
+        return new Docker({
+          host: config.host,
+          port: config.port || 2375,
+          protocol: 'http'
+        });
+      } else {
+        throw new Error(`Unsupported remote protocol: ${config.protocol}`);
+      }
+    } catch (error) {
+      console.error('Failed to create remote Docker client:', error);
+      throw error;
     }
   }
 
@@ -3159,6 +3216,236 @@ class DockerSetup extends EventEmitter {
         }, 5000);
       });
     });
+  }
+
+  /**
+   * Load connection configuration from disk
+   * Returns stored remote Docker configuration or null for local
+   */
+  loadConnectionConfig() {
+    try {
+      const configPath = path.join(this.appDataPath, 'docker-connection.json');
+      if (fs.existsSync(configPath)) {
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        console.log(`📁 Loaded Docker connection config: ${config.mode} mode`);
+        return config;
+      }
+    } catch (error) {
+      console.error('Error loading connection config:', error);
+    }
+    return null;
+  }
+
+  /**
+   * Save connection configuration to disk
+   */
+  saveConnectionConfig(config) {
+    try {
+      const configPath = path.join(this.appDataPath, 'docker-connection.json');
+      fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+      console.log(`💾 Saved Docker connection config: ${config.mode} mode`);
+      return true;
+    } catch (error) {
+      console.error('Error saving connection config:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Switch between local and remote Docker connections
+   */
+  async switchConnection(newConfig) {
+    try {
+      console.log(`🔄 Switching Docker connection to ${newConfig.mode} mode...`);
+
+      // Close existing SSH tunnels if switching from remote
+      if (this.connectionMode === 'remote') {
+        await this.closeAllSSHTunnels();
+      }
+
+      // Update configuration
+      this.connectionConfig = newConfig;
+      this.connectionMode = newConfig.mode;
+
+      // Reinitialize Docker client
+      this.docker = this.initializeDockerClient();
+
+      // Test connection
+      const isRunning = await this.isDockerRunning();
+      if (!isRunning) {
+        throw new Error('Failed to connect to Docker with new configuration');
+      }
+
+      // Save configuration
+      this.saveConnectionConfig(newConfig);
+
+      console.log(`✅ Successfully switched to ${newConfig.mode} mode`);
+      return { success: true, mode: newConfig.mode };
+    } catch (error) {
+      console.error('Error switching Docker connection:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Create SSH tunnel for a specific port
+   * This allows remote services to be accessed as if they were local
+   */
+  async createSSHTunnel(localPort, remotePort, serviceName) {
+    if (this.connectionMode !== 'remote' || !this.connectionConfig) {
+      console.log('SSH tunnels only needed for remote mode');
+      return;
+    }
+
+    return new Promise((resolve, reject) => {
+      try {
+        const { host, username, sshKeyPath, port: sshPort = 22 } = this.connectionConfig;
+
+        console.log(`🔗 Creating SSH tunnel for ${serviceName}: localhost:${localPort} -> ${host}:${remotePort}`);
+
+        // Build SSH command for port forwarding
+        const sshArgs = [
+          '-N', // No remote command
+          '-L', `${localPort}:localhost:${remotePort}`, // Local port forwarding
+          '-p', sshPort.toString(),
+          '-o', 'StrictHostKeyChecking=no',
+          '-o', 'ServerAliveInterval=60',
+          '-o', 'ServerAliveCountMax=3'
+        ];
+
+        // Add SSH key if provided
+        if (sshKeyPath && fs.existsSync(sshKeyPath)) {
+          sshArgs.push('-i', sshKeyPath);
+        }
+
+        sshArgs.push(`${username}@${host}`);
+
+        // Spawn SSH tunnel process
+        const tunnel = spawn('ssh', sshArgs);
+
+        tunnel.stdout.on('data', (data) => {
+          console.log(`SSH tunnel ${serviceName} stdout:`, data.toString());
+        });
+
+        tunnel.stderr.on('data', (data) => {
+          const message = data.toString();
+          // SSH outputs connection info to stderr, not always errors
+          if (!message.includes('Warning') && !message.includes('Authenticated')) {
+            console.error(`SSH tunnel ${serviceName} stderr:`, message);
+          }
+        });
+
+        tunnel.on('error', (error) => {
+          console.error(`SSH tunnel ${serviceName} error:`, error);
+          reject(error);
+        });
+
+        tunnel.on('close', (code) => {
+          console.log(`SSH tunnel ${serviceName} closed with code ${code}`);
+          delete this.sshTunnels[serviceName];
+          this.activeTunnels = this.activeTunnels.filter(t => t.service !== serviceName);
+        });
+
+        // Store tunnel reference
+        this.sshTunnels[serviceName] = tunnel;
+        this.activeTunnels.push({
+          service: serviceName,
+          localPort,
+          remotePort,
+          process: tunnel
+        });
+
+        // Give SSH a moment to establish the tunnel
+        setTimeout(() => {
+          console.log(`✅ SSH tunnel for ${serviceName} established`);
+          resolve(tunnel);
+        }, 2000);
+
+      } catch (error) {
+        console.error(`Failed to create SSH tunnel for ${serviceName}:`, error);
+        reject(error);
+      }
+    });
+  }
+
+  /**
+   * Close a specific SSH tunnel
+   */
+  async closeSSHTunnel(serviceName) {
+    const tunnel = this.sshTunnels[serviceName];
+    if (tunnel) {
+      console.log(`🔌 Closing SSH tunnel for ${serviceName}...`);
+      tunnel.kill();
+      delete this.sshTunnels[serviceName];
+      this.activeTunnels = this.activeTunnels.filter(t => t.service !== serviceName);
+    }
+  }
+
+  /**
+   * Close all SSH tunnels
+   */
+  async closeAllSSHTunnels() {
+    console.log('🔌 Closing all SSH tunnels...');
+    for (const serviceName of Object.keys(this.sshTunnels)) {
+      await this.closeSSHTunnel(serviceName);
+    }
+  }
+
+  /**
+   * Get list of active SSH tunnels
+   */
+  getActiveTunnels() {
+    return this.activeTunnels.map(t => ({
+      service: t.service,
+      localPort: t.localPort,
+      remotePort: t.remotePort,
+      isActive: !t.process.killed
+    }));
+  }
+
+  /**
+   * Test remote Docker connection
+   * Useful for validating configuration before saving
+   */
+  async testRemoteConnection(config) {
+    try {
+      console.log(`🧪 Testing remote Docker connection to ${config.host}...`);
+
+      // Create a temporary Docker client
+      const testClient = this.createRemoteDockerClient(config);
+
+      // Try to ping the Docker daemon
+      await testClient.ping();
+
+      // Get Docker version info
+      const version = await testClient.version();
+
+      console.log(`✅ Remote Docker connection successful! Version: ${version.Version}`);
+      return {
+        success: true,
+        version: version.Version,
+        apiVersion: version.ApiVersion,
+        platform: version.Platform?.Name || 'Unknown'
+      };
+    } catch (error) {
+      console.error('❌ Remote Docker connection test failed:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Get connection info (for UI display)
+   */
+  getConnectionInfo() {
+    return {
+      mode: this.connectionMode,
+      config: this.connectionConfig,
+      activeTunnels: this.getActiveTunnels(),
+      isRemote: this.connectionMode === 'remote'
+    };
   }
 }
 

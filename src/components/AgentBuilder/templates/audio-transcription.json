@@ -1,0 +1,703 @@
+{
+  "id": "audio-transcription",
+  "name": "Audio Transcription Pipeline for sales call audit",
+  "description": "Transcribe audio files and generate summaries for sales call audits using LLM, file upload and speech-to-text nodes.",
+  "category": "automation",
+  "difficulty": "beginner",
+  "tags": ["audio", "transcription", "whisper", "speech-to-text"],
+  "author": "ClaraVerse",
+  "downloads": 980,
+  "rating": 4.5,
+    "flow": {
+    "id": "flow-1760363895392",
+    "name": "Audio Transcription Pipeline",
+    "description": "Transcribe and process audio",
+    "nodes": [
+      {
+        "id": "1760364828847-l4ji0df8u",
+        "type": "speech-to-text",
+        "name": "Speech to Text (Base64)",
+        "position": {
+          "x": 910.0835032867496,
+          "y": 177.79941850703165
+        },
+        "data": {},
+        "inputs": [
+          {
+            "id": "audioBase64",
+            "name": "Audio (Base64)",
+            "type": "input",
+            "dataType": "string",
+            "required": true,
+            "description": "Base64 or data URL encoded audio payload"
+          },
+          {
+            "id": "languageOverride",
+            "name": "Language Override",
+            "type": "input",
+            "dataType": "string",
+            "required": false,
+            "description": "Optional ISO language code to override configuration"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "transcription",
+            "name": "Transcription",
+            "type": "output",
+            "dataType": "string",
+            "required": true,
+            "description": "Primary transcription text returned by the service"
+          },
+          {
+            "id": "segments",
+            "name": "Segments",
+            "type": "output",
+            "dataType": "array",
+            "required": false,
+            "description": "Array of segment metadata from the service response"
+          },
+          {
+            "id": "rawResponse",
+            "name": "Raw Response",
+            "type": "output",
+            "dataType": "object",
+            "required": false,
+            "description": "Unmodified JSON payload returned by the transcription server"
+          }
+        ],
+        "metadata": {
+          "examples": [
+            {
+              "name": "Local Whisper Gateway",
+              "description": "Send base64 audio to a local FastAPI Whisper gateway running at http://localhost:5001/transcribe",
+              "config": {
+                "baseUrl": "http://localhost:5001/transcribe",
+                "language": "en",
+                "beamSize": 5
+              }
+            },
+            {
+              "name": "Custom Cloud Endpoint",
+              "description": "Use a hosted speech-to-text service that expects prompts and language hints",
+              "config": {
+                "baseUrl": "https://my-api.company.com/v1/transcribe",
+                "language": "auto",
+                "beamSize": 3,
+                "initialPrompt": "Transcribe clearly and include punctuation."
+              }
+            }
+          ],
+          "tags": [
+            "ai",
+            "audio",
+            "transcription",
+            "base64",
+            "speech-to-text",
+            "http"
+          ]
+        }
+      },
+      {
+        "id": "1760364895245-wps8sdwpg",
+        "type": "output",
+        "name": "Output",
+        "position": {
+          "x": 1560.2636095278942,
+          "y": 89.2013152990213
+        },
+        "data": {},
+        "inputs": [
+          {
+            "id": "input",
+            "name": "Value",
+            "type": "input",
+            "dataType": "any",
+            "required": true,
+            "description": "Value to output"
+          }
+        ],
+        "outputs": [],
+        "metadata": {
+          "tags": [
+            "output",
+            "basic",
+            "sink"
+          ],
+          "documentation": "Displays the final result with various formatting options."
+        }
+      },
+      {
+        "id": "1760364937803-z5mrcps9z",
+        "type": "output",
+        "name": "Output",
+        "position": {
+          "x": 1529.1031902281522,
+          "y": 988.289415808679
+        },
+        "data": {},
+        "inputs": [
+          {
+            "id": "input",
+            "name": "Value",
+            "type": "input",
+            "dataType": "any",
+            "required": true,
+            "description": "Value to output"
+          }
+        ],
+        "outputs": [],
+        "metadata": {
+          "tags": [
+            "output",
+            "basic",
+            "sink"
+          ],
+          "documentation": "Displays the final result with various formatting options."
+        }
+      },
+      {
+        "id": "1760364981127-lwmmmvd12",
+        "type": "llm",
+        "name": "LLM Chat",
+        "position": {
+          "x": 2897.9222910629373,
+          "y": 270.6955697974836
+        },
+        "data": {
+          "label": "LLM Chat",
+          "inputs": [
+            {
+              "id": "system",
+              "name": "System Message",
+              "type": "input",
+              "dataType": "string",
+              "required": false,
+              "description": "System prompt for the LLM"
+            },
+            {
+              "id": "user",
+              "name": "User Message",
+              "type": "input",
+              "dataType": "string",
+              "required": true,
+              "description": "User message/prompt"
+            },
+            {
+              "id": "context",
+              "name": "Pre-context",
+              "type": "input",
+              "dataType": "string",
+              "required": false,
+              "description": "Additional context to prepend"
+            },
+            {
+              "id": "memory",
+              "name": "Memory",
+              "type": "input",
+              "dataType": "array",
+              "required": false,
+              "description": "Conversation history array (messages with role and content)"
+            },
+            {
+              "id": "image",
+              "name": "Image",
+              "type": "input",
+              "dataType": "string",
+              "required": false,
+              "description": "Base64 encoded image data"
+            }
+          ],
+          "outputs": [
+            {
+              "id": "response",
+              "name": "Response",
+              "type": "output",
+              "dataType": "string",
+              "description": "LLM response text"
+            },
+            {
+              "id": "usage",
+              "name": "Usage Stats",
+              "type": "output",
+              "dataType": "object",
+              "description": "Token usage and cost information"
+            }
+          ],
+          "model": "qwen3-4b-thinking-2507-4b",
+          "maxTokens": 10000
+        },
+        "inputs": [
+          {
+            "id": "system",
+            "name": "System Message",
+            "type": "input",
+            "dataType": "string",
+            "required": false,
+            "description": "System prompt for the LLM"
+          },
+          {
+            "id": "user",
+            "name": "User Message",
+            "type": "input",
+            "dataType": "string",
+            "required": true,
+            "description": "User message/prompt"
+          },
+          {
+            "id": "context",
+            "name": "Pre-context",
+            "type": "input",
+            "dataType": "string",
+            "required": false,
+            "description": "Additional context to prepend"
+          },
+          {
+            "id": "memory",
+            "name": "Memory",
+            "type": "input",
+            "dataType": "array",
+            "required": false,
+            "description": "Conversation history array (messages with role and content)"
+          },
+          {
+            "id": "image",
+            "name": "Image",
+            "type": "input",
+            "dataType": "string",
+            "required": false,
+            "description": "Base64 encoded image data"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "response",
+            "name": "Response",
+            "type": "output",
+            "dataType": "string",
+            "description": "LLM response text"
+          },
+          {
+            "id": "usage",
+            "name": "Usage Stats",
+            "type": "output",
+            "dataType": "object",
+            "description": "Token usage and cost information"
+          }
+        ],
+        "metadata": {
+          "tags": [
+            "ai",
+            "llm",
+            "chat",
+            "openai"
+          ],
+          "documentation": "Interfaces with OpenAI-compatible APIs for text and vision tasks."
+        }
+      },
+      {
+        "id": "1760364997758-oni48rx0m",
+        "type": "static-text",
+        "name": "Static Text",
+        "position": {
+          "x": 2054.89262879587,
+          "y": -130.3768602360215
+        },
+        "data": {
+          "label": "Static Text",
+          "inputs": [],
+          "outputs": [
+            {
+              "id": "text",
+              "name": "Text Output",
+              "type": "output",
+              "dataType": "string",
+              "required": true,
+              "description": "The static text content"
+            }
+          ],
+          "text": "You are a transcritpion auditor and you will be given the transcript and you will understand tell me what is good and what is missing for the stuff user \n\nAn audit report for calls and product reports should be a structured document that provides a comprehensive overview of findings, supported by evidence, along with recommendations for improvement. It must be clear, concise, and tailored to the audience, such as team leaders, product managers, and executives. \nExecutive summary\nPurpose: A concise overview of the audit's main findings, conclusions, and recommendations.\nContent:\nScope: The time period and specific areas covered by the audit (e.g., call center interactions, specific product feature reports).\nOverall Findings: A high-level summary of the most significant issues and positive observations.\nKey Metrics: Snapshot of crucial performance indicators (KPIs) and quality scores from both call and product reports.\nConclusion: The final verdict on overall performance and compliance. \nIntroduction and methodology\nPurpose: To provide context and transparency for the audit process.\nContent:\nObjectives: Reiterate the specific goals of the audit (e.g., improve customer satisfaction, ensure compliance, validate product data accuracy).\nMethodology: Explain the process used, including how samples were selected, the evaluation criteria applied (scorecards, checklists), and the tools used (e.g., call recording software, business intelligence platforms). \nAudit findings (Call analysis)\nPurpose: To present detailed results from the call quality audit.\nContent:\nOverall Call Quality Score: Present the average quality score against a benchmark.\nCompliance Adherence: Report on adherence to scripts, legal requirements, and internal policies.\nCommunication Skills: Assess soft skills like empathy, active listening, and tone, referencing specific examples.\nIssue Resolution: Evaluate the agent's ability to effectively and efficiently solve customer problems.\nRoot Cause Analysis: Identify patterns in call center issues that may point to broader problems with products, processes, or training. \nAudit findings (Product report analysis)\nPurpose: To present detailed results from the product report validation.\nContent:\nData Accuracy and Integrity: Confirm the reliability of the report's data sources and calculations.\nKPI Alignment: Verify that the reported KPIs accurately reflect and measure the defined business objectives.\nReport Validity: Assess if the report format and content are clear, logical, and effectively communicate key insights.\nUser Feedback Integration: Cross-reference customer feedback from call audits with product reports to ensure customer-reported issues are being captured and reflected in the data.\nIdentification of Issues: Document any discovered discrepancies, misinterpretations, or potential problems within the product reports. \nRecommendations and corrective actions\nPurpose: To provide a clear path forward for resolving identified issues.\nContent:\nCall Action Plan: List specific, actionable recommendations for the call center, such as targeted agent coaching, script revisions, and training program enhancements.\nProduct Action Plan: Outline steps for the product team, such as correcting data errors, refining reporting methodologies, or addressing product issues highlighted by customer feedback.\nPrioritization: Assign a priority level to each recommended action (e.g., High, Medium, Low).\nResponsible Parties: Assign ownership for each corrective action to a specific person or team. \nConclusion\nPurpose: A final summary that reaffirms the audit's purpose and looks toward future improvements.\nContent:\nSummary Statement: Briefly reiterate the most important takeaway from the audit.\nForward-Looking Outlook: Provide a positive statement about the company's commitment to continuous improvement based on the audit findings. \nAppendices (Optional)\nPurpose: To provide supporting evidence without cluttering the main body of the report.\nContent:\nRaw Data: Include the complete scorecard data, call logs, or raw report findings.\nVisuals: Add graphs, charts, and tables that illustrate key trends or data points.\nEvidence: Attach specific call transcripts, audio clips, or screenshots of the product reports that demonstrate a finding\n\n\nthis is what you do take in a transcript and give out report"
+        },
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "text",
+            "name": "Text Output",
+            "type": "output",
+            "dataType": "string",
+            "required": true,
+            "description": "The static text content"
+          }
+        ],
+        "metadata": {
+          "examples": [
+            {
+              "name": "System Prompt",
+              "description": "Static system prompt for AI models",
+              "config": {
+                "text": "You are a helpful AI assistant. Please respond in a friendly and professional manner.",
+                "label": "System Prompt",
+                "textFormat": "plain",
+                "multiline": true
+              }
+            },
+            {
+              "name": "API Instructions",
+              "description": "Fixed instructions for API requests",
+              "config": {
+                "text": "Please analyze the following data and provide insights:\n\n",
+                "label": "API Instructions",
+                "textFormat": "template",
+                "multiline": true
+              }
+            },
+            {
+              "name": "JSON Template",
+              "description": "Static JSON structure template",
+              "config": {
+                "text": "{\"role\": \"system\", \"content\": \"You are a helpful assistant\"}",
+                "label": "JSON Template",
+                "textFormat": "json",
+                "multiline": false
+              }
+            }
+          ],
+          "tags": [
+            "text",
+            "static",
+            "prompt",
+            "template",
+            "content",
+            "fixed",
+            "constant"
+          ]
+        }
+      },
+      {
+        "id": "1760365016557-8jb8syk7i",
+        "type": "static-text",
+        "name": "Static Text",
+        "position": {
+          "x": 1970.1719115495698,
+          "y": 926.5986382357694
+        },
+        "data": {
+          "label": "Static Text",
+          "inputs": [],
+          "outputs": [
+            {
+              "id": "text",
+              "name": "Text Output",
+              "type": "output",
+              "dataType": "string",
+              "required": true,
+              "description": "The static text content"
+            }
+          ],
+          "text": "Here is the transcription content of a call i want you rate the person's performance how the call has gone like a report if it doesn't look like transcription call then tell its not, and be rude like dont waste my time, im a call audiot\n\nyou have to provide report no need to say al;l the call transcript just \n\nreport and mark the places where marketing person made mistate and use some framework and give me right report no need to provide or say the same transcript i already have it"
+        },
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "text",
+            "name": "Text Output",
+            "type": "output",
+            "dataType": "string",
+            "required": true,
+            "description": "The static text content"
+          }
+        ],
+        "metadata": {
+          "examples": [
+            {
+              "name": "System Prompt",
+              "description": "Static system prompt for AI models",
+              "config": {
+                "text": "You are a helpful AI assistant. Please respond in a friendly and professional manner.",
+                "label": "System Prompt",
+                "textFormat": "plain",
+                "multiline": true
+              }
+            },
+            {
+              "name": "API Instructions",
+              "description": "Fixed instructions for API requests",
+              "config": {
+                "text": "Please analyze the following data and provide insights:\n\n",
+                "label": "API Instructions",
+                "textFormat": "template",
+                "multiline": true
+              }
+            },
+            {
+              "name": "JSON Template",
+              "description": "Static JSON structure template",
+              "config": {
+                "text": "{\"role\": \"system\", \"content\": \"You are a helpful assistant\"}",
+                "label": "JSON Template",
+                "textFormat": "json",
+                "multiline": false
+              }
+            }
+          ],
+          "tags": [
+            "text",
+            "static",
+            "prompt",
+            "template",
+            "content",
+            "fixed",
+            "constant"
+          ]
+        }
+      },
+      {
+        "id": "1760365337408-a8d82ozf0",
+        "type": "combine-text",
+        "name": "Combine Text",
+        "position": {
+          "x": 2048.5123103922033,
+          "y": 474.2147004550143
+        },
+        "data": {},
+        "inputs": [
+          {
+            "id": "text1",
+            "name": "Text 1",
+            "type": "input",
+            "dataType": "string",
+            "required": true,
+            "description": "First text input"
+          },
+          {
+            "id": "text2",
+            "name": "Text 2",
+            "type": "input",
+            "dataType": "string",
+            "required": true,
+            "description": "Second text input"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "combined",
+            "name": "Combined Text",
+            "type": "output",
+            "dataType": "string",
+            "required": true,
+            "description": "Combined text result"
+          },
+          {
+            "id": "metadata",
+            "name": "Metadata",
+            "type": "output",
+            "dataType": "object",
+            "required": false,
+            "description": "Combination metadata (mode, separator, lengths, etc.)"
+          }
+        ],
+        "metadata": {
+          "examples": [
+            {
+              "name": "Simple Prompt Building",
+              "description": "Combine system prompt with user input",
+              "config": {
+                "combineMode": "concat",
+                "addSpaces": true
+              }
+            },
+            {
+              "name": "Prompt with Separator",
+              "description": "Add context with clear separation",
+              "config": {
+                "combineMode": "separator",
+                "separator": "\\n\\n---\\n\\n",
+                "addSpaces": false
+              }
+            },
+            {
+              "name": "Prefix Instructions",
+              "description": "Add instructions before main content",
+              "config": {
+                "combineMode": "prefix",
+                "addSpaces": true
+              }
+            }
+          ],
+          "tags": [
+            "text",
+            "combine",
+            "prompt",
+            "concatenate",
+            "string",
+            "merge"
+          ]
+        }
+      },
+      {
+        "id": "1760365351468-62co2wyp6",
+        "type": "output",
+        "name": "Output",
+        "position": {
+          "x": 3511.4382793666555,
+          "y": 402.8703763891233
+        },
+        "data": {},
+        "inputs": [
+          {
+            "id": "input",
+            "name": "Value",
+            "type": "input",
+            "dataType": "any",
+            "required": true,
+            "description": "Value to output"
+          }
+        ],
+        "outputs": [],
+        "metadata": {
+          "tags": [
+            "output",
+            "basic",
+            "sink"
+          ],
+          "documentation": "Displays the final result with various formatting options."
+        }
+      },
+      {
+        "id": "1760368346780-f2rqjzv5y",
+        "type": "file-upload",
+        "name": "File Upload",
+        "position": {
+          "x": 267.55380106410496,
+          "y": 336.98157725285324
+        },
+        "data": {},
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "content",
+            "name": "File Content",
+            "type": "output",
+            "dataType": "any",
+            "required": true,
+            "description": "File content in the specified format"
+          },
+          {
+            "id": "metadata",
+            "name": "File Metadata",
+            "type": "output",
+            "dataType": "object",
+            "required": false,
+            "description": "File metadata (name, size, type, format, etc.)"
+          }
+        ],
+        "metadata": {
+          "examples": [
+            {
+              "name": "Image Upload as Base64",
+              "description": "Upload image files and output as base64 for AI processing",
+              "config": {
+                "outputFormat": "base64",
+                "acceptedTypes": "image/*",
+                "maxSize": 5
+              }
+            },
+            {
+              "name": "Document Upload as Text",
+              "description": "Upload text documents and output content as plain text",
+              "config": {
+                "outputFormat": "text",
+                "acceptedTypes": ".txt,.md,.csv,.doc,.docx,.pdf,.rtf,.html,.htm,.xml,.json",
+                "maxSize": 2
+              }
+            },
+            {
+              "name": "Any File Upload",
+              "description": "Upload any file type and get file object with metadata",
+              "config": {
+                "outputFormat": "file",
+                "acceptedTypes": "*/*",
+                "maxSize": 10
+              }
+            }
+          ],
+          "tags": [
+            "file",
+            "upload",
+            "input",
+            "base64",
+            "binary",
+            "text",
+            "universal"
+          ]
+        }
+      }
+    ],
+    "connections": [
+      {
+        "id": "1760364898182-lvb5f0ke5",
+        "sourceNodeId": "1760364828847-l4ji0df8u",
+        "sourcePortId": "transcription",
+        "targetNodeId": "1760364895245-wps8sdwpg",
+        "targetPortId": "input"
+      },
+      {
+        "id": "1760364940193-1ksmsmd3q",
+        "sourceNodeId": "1760364828847-l4ji0df8u",
+        "sourcePortId": "segments",
+        "targetNodeId": "1760364937803-z5mrcps9z",
+        "targetPortId": "input"
+      },
+      {
+        "id": "1760365008168-folqxqgce",
+        "sourceNodeId": "1760364997758-oni48rx0m",
+        "sourcePortId": "text",
+        "targetNodeId": "1760364981127-lwmmmvd12",
+        "targetPortId": "system"
+      },
+      {
+        "id": "1760365342036-fvlo4p0o4",
+        "sourceNodeId": "1760365016557-8jb8syk7i",
+        "sourcePortId": "text",
+        "targetNodeId": "1760365337408-a8d82ozf0",
+        "targetPortId": "text2"
+      },
+      {
+        "id": "1760365347505-vvwswhplx",
+        "sourceNodeId": "1760365337408-a8d82ozf0",
+        "sourcePortId": "combined",
+        "targetNodeId": "1760364981127-lwmmmvd12",
+        "targetPortId": "user"
+      },
+      {
+        "id": "1760365353696-65t0ea5sm",
+        "sourceNodeId": "1760364981127-lwmmmvd12",
+        "sourcePortId": "response",
+        "targetNodeId": "1760365351468-62co2wyp6",
+        "targetPortId": "input"
+      },
+      {
+        "id": "1760366903268-szheyyjus",
+        "sourceNodeId": "1760364828847-l4ji0df8u",
+        "sourcePortId": "transcription",
+        "targetNodeId": "1760365337408-a8d82ozf0",
+        "targetPortId": "text1"
+      },
+      {
+        "id": "1760368349188-httv2cwub",
+        "sourceNodeId": "1760368346780-f2rqjzv5y",
+        "sourcePortId": "content",
+        "targetNodeId": "1760364828847-l4ji0df8u",
+        "targetPortId": "audioBase64"
+      }
+    ],
+    "variables": [],
+    "settings": {
+      "name": "Audio Transcription Pipeline",
+      "version": "1.0.0"
+    },
+    "createdAt": "2025-10-13T14:14:59.095Z",
+    "updatedAt": "2025-10-13T15:12:30.708Z",
+    "version": "1.0.0"
+  }
+}

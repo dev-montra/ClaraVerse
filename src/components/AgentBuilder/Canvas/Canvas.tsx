@@ -40,6 +40,7 @@ import WhisperTranscriptionNode from '../Nodes/WhisperTranscriptionNode';
 import CombineTextNode from '../Nodes/CombineTextNode';
 import APIRequestNode from '../Nodes/APIRequestNode';
 import TextToSpeechNode from '../Nodes/TextToSpeechNode';
+import SpeechToTextNode from '../Nodes/SpeechToTextNode';
 import StaticTextNode from '../Nodes/StaticTextNode';
 import AgentExecutorNode from '../Nodes/AgentExecutorNode';
 import { ComfyUIImageGenNode } from '../Nodes/ComfyUIImageGenNode';
@@ -67,6 +68,7 @@ console.log('Node imports loaded:', {
   AgentExecutorNode: !!AgentExecutorNode,
   NotebookWriterNode: !!NotebookWriterNode,
   NotebookChatNode: !!NotebookChatNode,
+  SpeechToTextNode: !!SpeechToTextNode,
 });
 
 // Define base node types with proper imports - moved outside component to ensure immediate availability
@@ -90,6 +92,7 @@ const baseNodeTypes: NodeTypes = {
   'agent-executor': AgentExecutorNode,
   'comfyui-image-gen': ComfyUIImageGenNode,
   'text-to-speech': TextToSpeechNode,
+  'speech-to-text': SpeechToTextNode,
   'notebook-writer': NotebookWriterNode,
   'notebook-chat': NotebookChatNode,
 };

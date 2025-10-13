@@ -62,6 +62,16 @@ const Onboarding = ({onComplete}: OnboardingProps) => {
     const [providers, setProviders] = useState<Provider[]>([]);
     const [showAddProviderModal, setShowAddProviderModal] = useState(false);
     const [setupMethod, setSetupMethod] = useState<'clara-core' | 'external-provider'>('clara-core');
+    const [dockerMode, setDockerMode] = useState<'local' | 'remote'>('local');
+    const [remoteDockerConfig, setRemoteDockerConfig] = useState({
+        host: '',
+        username: '',
+        sshKeyPath: '',
+        port: 22,
+        protocol: 'ssh' as 'ssh' | 'tcp'
+    });
+    const [testingConnection, setTestingConnection] = useState(false);
+    const [connectionTestResult, setConnectionTestResult] = useState<{success: boolean; message?: string; version?: string} | null>(null);
     const [newProviderForm, setNewProviderForm] = useState({
         name: '',
         type: 'openai' as Provider['type'],
@@ -685,11 +695,36 @@ const Onboarding = ({onComplete}: OnboardingProps) => {
             }
         }
 
+        // Save Docker connection configuration if using remote mode
+        if (dockerMode === 'remote' && (window as any).electronAPI?.invoke) {
+            try {
+                console.log('Saving remote Docker configuration...');
+                const dockerConnectionConfig = {
+                    mode: 'remote',
+                    protocol: remoteDockerConfig.protocol,
+                    host: remoteDockerConfig.host,
+                    username: remoteDockerConfig.username,
+                    port: remoteDockerConfig.port,
+                    sshKeyPath: remoteDockerConfig.sshKeyPath
+                };
+
+                const switchResult = await (window as any).electronAPI.invoke('docker-switch-connection', dockerConnectionConfig);
+
+                if (switchResult.success) {
+                    console.log('Remote Docker connection configured successfully');
+                } else {
+                    console.error('Failed to configure remote Docker connection:', switchResult.error);
+                }
+            } catch (error) {
+                console.error('Error saving remote Docker configuration:', error);
+            }
+        }
+
         // Save service configuration URLs for selected services
         if ((window as any).electronAPI?.invoke) {
             try {
                 const configResults = [];
-                
+
                 for (const [serviceName, enabled] of Object.entries(selectedServices)) {
                     if (enabled) {
                         // Skip TTS service during onboarding to prevent automatic Python backend startup
@@ -1382,7 +1417,180 @@ const Onboarding = ({onComplete}: OnboardingProps) => {
                                     {setupMethod === 'external-provider' && <Check className="w-4 h-4 text-sakura-500"/>}
                                 </button>
                             </div>
-                            
+
+                            {/* Docker Mode Selection (Only for Clara Core) */}
+                            {setupMethod === 'clara-core' && (
+                                <div className="mt-4 space-y-3">
+                                    <div className="flex items-center gap-2 mb-2">
+                                        <Server className="w-4 h-4 text-gray-500"/>
+                                        <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                                            Where should Docker run?
+                                        </p>
+                                    </div>
+
+                                    <div className="grid grid-cols-2 gap-2">
+                                        <button
+                                            onClick={() => setDockerMode('local')}
+                                            className={`flex flex-col items-center gap-2 p-3 rounded-lg border transition-all ${
+                                                dockerMode === 'local'
+                                                    ? 'border-sakura-500 bg-sakura-50 dark:bg-sakura-900/20'
+                                                    : 'border-gray-200 dark:border-gray-700 hover:border-sakura-300'
+                                            }`}
+                                        >
+                                            <HardDrive className={`w-5 h-5 ${dockerMode === 'local' ? 'text-sakura-500' : 'text-gray-500'}`}/>
+                                            <div className="text-center">
+                                                <p className="text-sm font-medium text-gray-900 dark:text-white">Local</p>
+                                                <p className="text-xs text-gray-600 dark:text-gray-400">This computer</p>
+                                            </div>
+                                            {dockerMode === 'local' && <Check className="w-4 h-4 text-sakura-500"/>}
+                                        </button>
+
+                                        <button
+                                            onClick={() => setDockerMode('remote')}
+                                            className={`flex flex-col items-center gap-2 p-3 rounded-lg border transition-all ${
+                                                dockerMode === 'remote'
+                                                    ? 'border-sakura-500 bg-sakura-50 dark:bg-sakura-900/20'
+                                                    : 'border-gray-200 dark:border-gray-700 hover:border-sakura-300'
+                                            }`}
+                                        >
+                                            <Router className={`w-5 h-5 ${dockerMode === 'remote' ? 'text-sakura-500' : 'text-gray-500'}`}/>
+                                            <div className="text-center">
+                                                <p className="text-sm font-medium text-gray-900 dark:text-white">Remote</p>
+                                                <p className="text-xs text-gray-600 dark:text-gray-400">SSH server</p>
+                                            </div>
+                                            {dockerMode === 'remote' && <Check className="w-4 h-4 text-sakura-500"/>}
+                                        </button>
+                                    </div>
+
+                                    {/* Remote Docker Configuration */}
+                                    {dockerMode === 'remote' && (
+                                        <div className="mt-3 p-4 bg-gray-50 dark:bg-gray-800/50 rounded-lg space-y-3">
+                                            <div className="flex items-start gap-2 text-xs text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 p-3 rounded">
+                                                <span>ℹ️</span>
+                                                <div>
+                                                    <p className="font-medium mb-1">Remote Docker Setup</p>
+                                                    <p>Connect to Docker running on a remote server via SSH. Perfect for using a powerful server while working from your laptop.</p>
+                                                </div>
+                                            </div>
+
+                                            <div className="space-y-2">
+                                                <div>
+                                                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                                        SSH Host
+                                                    </label>
+                                                    <input
+                                                        type="text"
+                                                        value={remoteDockerConfig.host}
+                                                        onChange={(e) => setRemoteDockerConfig({...remoteDockerConfig, host: e.target.value})}
+                                                        placeholder="192.168.1.100 or server.example.com"
+                                                        className="w-full px-3 py-2 rounded border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
+                                                    />
+                                                </div>
+
+                                                <div className="grid grid-cols-2 gap-2">
+                                                    <div>
+                                                        <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                                            Username
+                                                        </label>
+                                                        <input
+                                                            type="text"
+                                                            value={remoteDockerConfig.username}
+                                                            onChange={(e) => setRemoteDockerConfig({...remoteDockerConfig, username: e.target.value})}
+                                                            placeholder="user"
+                                                            className="w-full px-3 py-2 rounded border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
+                                                        />
+                                                    </div>
+
+                                                    <div>
+                                                        <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                                            SSH Port
+                                                        </label>
+                                                        <input
+                                                            type="number"
+                                                            value={remoteDockerConfig.port}
+                                                            onChange={(e) => setRemoteDockerConfig({...remoteDockerConfig, port: parseInt(e.target.value) || 22})}
+                                                            placeholder="22"
+                                                            className="w-full px-3 py-2 rounded border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
+                                                        />
+                                                    </div>
+                                                </div>
+
+                                                <div>
+                                                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                                        SSH Key Path (optional)
+                                                    </label>
+                                                    <input
+                                                        type="text"
+                                                        value={remoteDockerConfig.sshKeyPath}
+                                                        onChange={(e) => setRemoteDockerConfig({...remoteDockerConfig, sshKeyPath: e.target.value})}
+                                                        placeholder="~/.ssh/id_rsa"
+                                                        className="w-full px-3 py-2 rounded border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            <button
+                                                onClick={async () => {
+                                                    setTestingConnection(true);
+                                                    setConnectionTestResult(null);
+                                                    try {
+                                                        const result = await (window as any).electronAPI.invoke('docker-test-remote-connection', {
+                                                            mode: 'remote',
+                                                            protocol: remoteDockerConfig.protocol,
+                                                            host: remoteDockerConfig.host,
+                                                            username: remoteDockerConfig.username,
+                                                            port: remoteDockerConfig.port,
+                                                            sshKeyPath: remoteDockerConfig.sshKeyPath
+                                                        });
+                                                        setConnectionTestResult(result);
+                                                    } catch (error: any) {
+                                                        setConnectionTestResult({success: false, message: error.message});
+                                                    } finally {
+                                                        setTestingConnection(false);
+                                                    }
+                                                }}
+                                                disabled={testingConnection || !remoteDockerConfig.host || !remoteDockerConfig.username}
+                                                className="w-full px-4 py-2 bg-sakura-500 text-white rounded hover:bg-sakura-600 disabled:bg-gray-400 disabled:cursor-not-allowed text-sm flex items-center justify-center gap-2"
+                                            >
+                                                {testingConnection ? (
+                                                    <>
+                                                        <Loader className="w-4 h-4 animate-spin"/>
+                                                        Testing Connection...
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <Check className="w-4 h-4"/>
+                                                        Test Connection
+                                                    </>
+                                                )}
+                                            </button>
+
+                                            {connectionTestResult && (
+                                                <div className={`p-3 rounded text-sm ${
+                                                    connectionTestResult.success
+                                                        ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300'
+                                                        : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300'
+                                                }`}>
+                                                    {connectionTestResult.success ? (
+                                                        <>
+                                                            <p className="font-medium">Connection Successful!</p>
+                                                            {connectionTestResult.version && (
+                                                                <p className="text-xs mt-1">Docker version: {connectionTestResult.version}</p>
+                                                            )}
+                                                        </>
+                                                    ) : (
+                                                        <>
+                                                            <p className="font-medium">Connection Failed</p>
+                                                            <p className="text-xs mt-1">{connectionTestResult.message}</p>
+                                                        </>
+                                                    )}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
                             {/* Clara Core Setup - Condensed */}
                             {setupMethod === 'clara-core' && (
                                 <div className="mt-4 space-y-3">

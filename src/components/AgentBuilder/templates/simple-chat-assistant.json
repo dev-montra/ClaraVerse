@@ -1,0 +1,337 @@
+{
+  "id": "simple-chat-assistant",
+  "name": "Simple Chat Assistant",
+  "description": "A basic conversational AI assistant that can answer questions and have natural conversations using LLM.",
+  "category": "ai",
+  "difficulty": "beginner",
+  "tags": ["chat", "llm", "conversational", "beginner-friendly"],
+  "author": "ClaraVerse",
+  "downloads": 1250,
+  "rating": 4.8,
+  "flow": {
+    "name": "Simple Chat Assistant",
+    "description": "A basic conversational AI that can answer questions using LLM",
+    "icon": "🤖",
+    "nodes": [
+      {
+        "id": "1760355364381-prig9d0n0",
+        "type": "input",
+        "name": "Input",
+        "position": {
+          "x": 89.17417690593106,
+          "y": 224.2851837048554
+        },
+        "data": {
+          "label": "How can i help you",
+          "inputs": [],
+          "outputs": [
+            {
+              "id": "output",
+              "name": "Value",
+              "type": "output",
+              "dataType": "any",
+              "description": "Input value"
+            }
+          ]
+        },
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "output",
+            "name": "Value",
+            "type": "output",
+            "dataType": "any",
+            "description": "Input value"
+          }
+        ],
+        "metadata": {
+          "tags": [
+            "input",
+            "basic",
+            "source"
+          ],
+          "documentation": "Provides input values to start or feed the workflow. Supports text, numbers, and JSON objects."
+        }
+      },
+      {
+        "id": "1760355386815-b0top3c83",
+        "type": "llm",
+        "name": "LLM Chat",
+        "position": {
+          "x": 1040.2931468663046,
+          "y": 79.26855758239253
+        },
+        "data": {
+          "label": "LLM Chat",
+          "inputs": [
+            {
+              "id": "system",
+              "name": "System Message",
+              "type": "input",
+              "dataType": "string",
+              "required": false,
+              "description": "System prompt for the LLM"
+            },
+            {
+              "id": "user",
+              "name": "User Message",
+              "type": "input",
+              "dataType": "string",
+              "required": true,
+              "description": "User message/prompt"
+            },
+            {
+              "id": "context",
+              "name": "Pre-context",
+              "type": "input",
+              "dataType": "string",
+              "required": false,
+              "description": "Additional context to prepend"
+            },
+            {
+              "id": "memory",
+              "name": "Memory",
+              "type": "input",
+              "dataType": "array",
+              "required": false,
+              "description": "Conversation history array (messages with role and content)"
+            },
+            {
+              "id": "image",
+              "name": "Image",
+              "type": "input",
+              "dataType": "string",
+              "required": false,
+              "description": "Base64 encoded image data"
+            }
+          ],
+          "outputs": [
+            {
+              "id": "response",
+              "name": "Response",
+              "type": "output",
+              "dataType": "string",
+              "description": "LLM response text"
+            },
+            {
+              "id": "usage",
+              "name": "Usage Stats",
+              "type": "output",
+              "dataType": "object",
+              "description": "Token usage and cost information"
+            }
+          ],
+          "model": "gpt-oss-20b-20b",
+          "apiKey": "dddd",
+          "apiBaseUrl": "http://localhost:8091/v1",
+          "temperature": 0.7,
+          "maxTokens": 1000
+        },
+        "inputs": [
+          {
+            "id": "system",
+            "name": "System Message",
+            "type": "input",
+            "dataType": "string",
+            "required": false,
+            "description": "System prompt for the LLM"
+          },
+          {
+            "id": "user",
+            "name": "User Message",
+            "type": "input",
+            "dataType": "string",
+            "required": true,
+            "description": "User message/prompt"
+          },
+          {
+            "id": "context",
+            "name": "Pre-context",
+            "type": "input",
+            "dataType": "string",
+            "required": false,
+            "description": "Additional context to prepend"
+          },
+          {
+            "id": "memory",
+            "name": "Memory",
+            "type": "input",
+            "dataType": "array",
+            "required": false,
+            "description": "Conversation history array (messages with role and content)"
+          },
+          {
+            "id": "image",
+            "name": "Image",
+            "type": "input",
+            "dataType": "string",
+            "required": false,
+            "description": "Base64 encoded image data"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "response",
+            "name": "Response",
+            "type": "output",
+            "dataType": "string",
+            "description": "LLM response text"
+          },
+          {
+            "id": "usage",
+            "name": "Usage Stats",
+            "type": "output",
+            "dataType": "object",
+            "description": "Token usage and cost information"
+          }
+        ],
+        "metadata": {
+          "tags": [
+            "ai",
+            "llm",
+            "chat",
+            "openai"
+          ],
+          "documentation": "Interfaces with OpenAI-compatible APIs for text and vision tasks."
+        }
+      },
+      {
+        "id": "1760355412859-norbuub7f",
+        "type": "static-text",
+        "name": "Static Text",
+        "position": {
+          "x": -9.752548890179696,
+          "y": -261.60842011083093
+        },
+        "data": {
+          "label": "Static Text",
+          "inputs": [],
+          "outputs": [
+            {
+              "id": "text",
+              "name": "Text Output",
+              "type": "output",
+              "dataType": "string",
+              "required": true,
+              "description": "The static text content"
+            }
+          ],
+          "text": "You are a chatbot named clara and you will help user with any request he makes and you will make sure the reply is as good as possible and if needed to express something"
+        },
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "text",
+            "name": "Text Output",
+            "type": "output",
+            "dataType": "string",
+            "required": true,
+            "description": "The static text content"
+          }
+        ],
+        "metadata": {
+          "examples": [
+            {
+              "name": "System Prompt",
+              "description": "Static system prompt for AI models",
+              "config": {
+                "text": "You are a helpful AI assistant. Please respond in a friendly and professional manner.",
+                "label": "System Prompt",
+                "textFormat": "plain",
+                "multiline": true
+              }
+            },
+            {
+              "name": "API Instructions",
+              "description": "Fixed instructions for API requests",
+              "config": {
+                "text": "Please analyze the following data and provide insights:\n\n",
+                "label": "API Instructions",
+                "textFormat": "template",
+                "multiline": true
+              }
+            },
+            {
+              "name": "JSON Template",
+              "description": "Static JSON structure template",
+              "config": {
+                "text": "{\"role\": \"system\", \"content\": \"You are a helpful assistant\"}",
+                "label": "JSON Template",
+                "textFormat": "json",
+                "multiline": false
+              }
+            }
+          ],
+          "tags": [
+            "text",
+            "static",
+            "prompt",
+            "template",
+            "content",
+            "fixed",
+            "constant"
+          ]
+        }
+      },
+      {
+        "id": "1760355474282-4yoh17mrw",
+        "type": "output",
+        "name": "Output",
+        "position": {
+          "x": 1863.6660831885908,
+          "y": 64.75397056389073
+        },
+        "data": {},
+        "inputs": [
+          {
+            "id": "input",
+            "name": "Value",
+            "type": "input",
+            "dataType": "any",
+            "required": true,
+            "description": "Value to output"
+          }
+        ],
+        "outputs": [],
+        "metadata": {
+          "tags": [
+            "output",
+            "basic",
+            "sink"
+          ],
+          "documentation": "Displays the final result with various formatting options."
+        }
+      }
+    ],
+    "connections": [
+      {
+        "id": "1760355408599-1xk3i4240",
+        "sourceNodeId": "1760355364381-prig9d0n0",
+        "sourcePortId": "output",
+        "targetNodeId": "1760355386815-b0top3c83",
+        "targetPortId": "user"
+      },
+      {
+        "id": "1760355417111-sdo6agojj",
+        "sourceNodeId": "1760355412859-norbuub7f",
+        "sourcePortId": "text",
+        "targetNodeId": "1760355386815-b0top3c83",
+        "targetPortId": "system"
+      },
+      {
+        "id": "1760355476726-ksfd3aib5",
+        "sourceNodeId": "1760355386815-b0top3c83",
+        "sourcePortId": "response",
+        "targetNodeId": "1760355474282-4yoh17mrw",
+        "targetPortId": "input"
+      }
+    ],
+    "variables": [],
+    "settings": {
+      "name": "Simple Chat Assistant",
+      "description": "A basic conversational AI that can answer questions using LLM",
+      "version": "1.0.0"
+    },
+    "version": "1.0.0"
+  }
+}

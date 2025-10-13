@@ -1,0 +1,329 @@
+{
+  "id": "api-weather-dashboard",
+  "name": "Weather Dashboard (API Integration)",
+  "description": "Fetch real-time weather data from external API, process it, and generate a formatted report. Perfect example of API integration with data transformation and structured output.",
+  "category": "automation",
+  "difficulty": "beginner",
+  "tags": ["api", "rest", "weather", "data-processing", "integration"],
+  "author": "ClaraVerse",
+  "downloads": 850,
+  "rating": 4.6,
+  "flow": {
+    "id": "flow-api-weather-1",
+    "name": "Weather Dashboard API",
+    "description": "Fetch and process weather data from API",
+    "nodes": [
+      {
+        "id": "input-city",
+        "type": "input",
+        "name": "City Input",
+        "position": {
+          "x": -400,
+          "y": 0
+        },
+        "data": {
+          "label": "City Name",
+          "value": "London"
+        },
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "output",
+            "name": "Value",
+            "type": "output",
+            "dataType": "string",
+            "description": "City name for weather lookup"
+          }
+        ]
+      },
+      {
+        "id": "static-api-key",
+        "type": "static-text",
+        "name": "API Config",
+        "position": {
+          "x": -400,
+          "y": 150
+        },
+        "data": {
+          "label": "API Key",
+          "text": "demo_api_key_12345"
+        },
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "text",
+            "name": "Text Output",
+            "type": "output",
+            "dataType": "string"
+          }
+        ]
+      },
+      {
+        "id": "combine-url",
+        "type": "combine-text",
+        "name": "Build API URL",
+        "position": {
+          "x": -50,
+          "y": 50
+        },
+        "data": {
+          "label": "Build URL",
+          "combineMode": "separator",
+          "separator": "",
+          "addSpaces": false,
+          "inputs": [
+            {
+              "id": "text1",
+              "name": "Text 1",
+              "type": "input",
+              "dataType": "string"
+            },
+            {
+              "id": "text2",
+              "name": "Text 2",
+              "type": "input",
+              "dataType": "string"
+            }
+          ],
+          "outputs": [
+            {
+              "id": "combined",
+              "name": "Combined Text",
+              "type": "output",
+              "dataType": "string"
+            }
+          ]
+        }
+      },
+      {
+        "id": "static-base-url",
+        "type": "static-text",
+        "name": "Base URL",
+        "position": {
+          "x": -400,
+          "y": -150
+        },
+        "data": {
+          "label": "API Base URL",
+          "text": "https://api.openweathermap.org/data/2.5/weather?q=",
+          "outputs": [
+            {
+              "id": "text",
+              "name": "Text Output",
+              "type": "output",
+              "dataType": "string"
+            }
+          ]
+        }
+      },
+      {
+        "id": "api-request",
+        "type": "api-request",
+        "name": "Fetch Weather",
+        "position": {
+          "x": 300,
+          "y": 0
+        },
+        "data": {
+          "label": "Weather API",
+          "method": "GET",
+          "timeout": 10000,
+          "retryCount": 3,
+          "inputs": [
+            {
+              "id": "url",
+              "name": "URL",
+              "type": "input",
+              "dataType": "string",
+              "required": true
+            }
+          ],
+          "outputs": [
+            {
+              "id": "response",
+              "name": "Response",
+              "type": "output",
+              "dataType": "object"
+            },
+            {
+              "id": "status",
+              "name": "Status Code",
+              "type": "output",
+              "dataType": "number"
+            }
+          ]
+        }
+      },
+      {
+        "id": "json-parse",
+        "type": "json-parse",
+        "name": "Extract Data",
+        "position": {
+          "x": 650,
+          "y": 0
+        },
+        "data": {
+          "label": "Parse JSON",
+          "extractField": "main.temp",
+          "failOnError": false,
+          "inputs": [
+            {
+              "id": "input",
+              "name": "JSON Input",
+              "type": "input",
+              "dataType": "string"
+            }
+          ],
+          "outputs": [
+            {
+              "id": "output",
+              "name": "Parsed Data",
+              "type": "output",
+              "dataType": "object"
+            }
+          ]
+        }
+      },
+      {
+        "id": "format-report",
+        "type": "llm",
+        "name": "Format Report",
+        "position": {
+          "x": 1000,
+          "y": 0
+        },
+        "data": {
+          "label": "Weather Report",
+          "apiBaseUrl": "http://localhost:8091/v1",
+          "model": "gpt-3.5-turbo",
+          "temperature": 0.7,
+          "maxTokens": 500,
+          "inputs": [
+            {
+              "id": "user",
+              "name": "User Message",
+              "type": "input",
+              "dataType": "string"
+            },
+            {
+              "id": "system",
+              "name": "System Message",
+              "type": "input",
+              "dataType": "string"
+            }
+          ],
+          "outputs": [
+            {
+              "id": "response",
+              "name": "Response",
+              "type": "output",
+              "dataType": "string"
+            }
+          ]
+        }
+      },
+      {
+        "id": "system-prompt",
+        "type": "static-text",
+        "name": "System Prompt",
+        "position": {
+          "x": 650,
+          "y": 200
+        },
+        "data": {
+          "label": "Formatting Instructions",
+          "text": "You are a weather report formatter. Create a friendly, readable weather summary from the JSON data provided. Include temperature, conditions, humidity, and wind speed. Keep it concise and user-friendly.",
+          "outputs": [
+            {
+              "id": "text",
+              "name": "Text Output",
+              "type": "output",
+              "dataType": "string"
+            }
+          ]
+        }
+      },
+      {
+        "id": "output-report",
+        "type": "output",
+        "name": "Weather Report",
+        "position": {
+          "x": 1350,
+          "y": 0
+        },
+        "data": {
+          "label": "Final Report",
+          "format": "text",
+          "inputs": [
+            {
+              "id": "input",
+              "name": "Value",
+              "type": "input",
+              "dataType": "any"
+            }
+          ],
+          "outputs": []
+        }
+      }
+    ],
+    "connections": [
+      {
+        "id": "conn-1",
+        "sourceNodeId": "static-base-url",
+        "sourcePortId": "text",
+        "targetNodeId": "combine-url",
+        "targetPortId": "text1"
+      },
+      {
+        "id": "conn-2",
+        "sourceNodeId": "input-city",
+        "sourcePortId": "output",
+        "targetNodeId": "combine-url",
+        "targetPortId": "text2"
+      },
+      {
+        "id": "conn-3",
+        "sourceNodeId": "combine-url",
+        "sourcePortId": "combined",
+        "targetNodeId": "api-request",
+        "targetPortId": "url"
+      },
+      {
+        "id": "conn-4",
+        "sourceNodeId": "api-request",
+        "sourcePortId": "response",
+        "targetNodeId": "json-parse",
+        "targetPortId": "input"
+      },
+      {
+        "id": "conn-5",
+        "sourceNodeId": "json-parse",
+        "sourcePortId": "output",
+        "targetNodeId": "format-report",
+        "targetPortId": "user"
+      },
+      {
+        "id": "conn-6",
+        "sourceNodeId": "system-prompt",
+        "sourcePortId": "text",
+        "targetNodeId": "format-report",
+        "targetPortId": "system"
+      },
+      {
+        "id": "conn-7",
+        "sourceNodeId": "format-report",
+        "sourcePortId": "response",
+        "targetNodeId": "output-report",
+        "targetPortId": "input"
+      }
+    ],
+    "variables": [],
+    "settings": {
+      "name": "Weather Dashboard API",
+      "version": "1.0.0"
+    },
+    "createdAt": "2025-10-13T14:00:00.000Z",
+    "updatedAt": "2025-10-13T14:00:00.000Z",
+    "version": "1.0.0"
+  }
+}

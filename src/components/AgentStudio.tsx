@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Play, Save, Download, Upload, Settings, X, Terminal, Clock, CheckCircle, AlertCircle, Info, Folder, Zap, Check, Edit, FileInput, FileOutput, Image, FileText, FolderOpen, BookOpen, MessageSquare, Palette, Brain, BarChart3, Mic, Volume2, Type, Link, Wrench, Globe, GitBranch } from 'lucide-react';
+import { Plus, Play, Save, Download, Upload, Settings, X, Terminal, Clock, CheckCircle, AlertCircle, Info, Folder, Zap, Check, Edit, FileInput, FileOutput, Image, FileText, FolderOpen, BookOpen, MessageSquare, Palette, Brain, BarChart3, Mic, Volume2, Type, Link, Wrench, Globe, GitBranch, Sparkles } from 'lucide-react';
 import { AgentBuilderProvider, useAgentBuilder } from '../contexts/AgentBuilder/AgentBuilderContext';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
@@ -371,18 +371,22 @@ const AgentStudioContent: React.FC<{ onPageChange: (page: string) => void; userN
   };
 
   const handleSelectTemplate = (template: FlowTemplate) => {
-    // Create a new flow from the template
-    createNewFlow(
-      template.flow.name,
-      template.description,
-      template.flow.icon
-    );
+    // Create a new flow from the template with all its data
+    const newFlow = {
+      ...template.flow,
+      id: `flow-${Date.now()}`,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    
+    // Load the complete flow including nodes and connections
+    loadFlow(newFlow);
     
     // Close the template browser
     setIsTemplateBrowserOpen(false);
     
     // Show success message
-    console.log('Created flow from template:', template.name);
+    console.log('Created flow from template:', template.name, 'with', template.flow.nodes.length, 'nodes');
   };
 
   const handleSaveCustomNode = (nodeDefinition: CustomNodeDefinition) => {
@@ -534,6 +538,14 @@ const AgentStudioContent: React.FC<{ onPageChange: (page: string) => void; userN
                 >
                   <Folder className="w-4 h-4" />
                   Workflows
+                </button>
+                <button 
+                  onClick={() => setIsTemplateBrowserOpen(true)}
+                  className="px-3 py-2 bg-gradient-to-r from-sakura-500 to-pink-500 hover:from-sakura-600 hover:to-pink-600 text-white rounded-lg flex items-center gap-2 text-sm font-medium transition-colors shadow-md hover:shadow-lg"
+                  title="Browse Templates"
+                >
+                  <Sparkles className="w-4 h-4" />
+                  Templates
                 </button>
                 <button 
                   onClick={handleCreateCustomNode}
@@ -933,6 +945,14 @@ const AgentStudioContent: React.FC<{ onPageChange: (page: string) => void; userN
                             description: 'Transcribe binary audio data using OpenAI Whisper', 
                             color: 'bg-gradient-to-r from-teal-500 to-cyan-500',
                             features: ['Binary input', 'Multi-format', 'High accuracy', 'Language detection']
+                          },
+                          { 
+                            name: 'Speech to Text (Base64)', 
+                            type: 'speech-to-text', 
+                            icon: <Mic className="w-4 h-4" />, 
+                            description: 'Send base64 audio to any transcription API endpoint and return the JSON response', 
+                            color: 'bg-gradient-to-r from-cyan-500 to-blue-500',
+                            features: ['Base64 input', 'Custom endpoint', 'Beam search', 'Prompt hints']
                           },
                           { 
                             name: 'Text to Speech', 

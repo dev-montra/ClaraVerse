@@ -478,8 +478,24 @@ class ClaraFlowRunner {
         
       case 'json-parse':
         try {
-          const jsonText = inputs.input || inputs.json || '{}';
-          const parsed = JSON.parse(jsonText);
+          let jsonInput = inputs.input || inputs.json || '{}';
+          let parsed;
+          
+          // Handle API response format { data: {...}, status: 200, ... }
+          if (jsonInput && typeof jsonInput === 'object' && 'data' in jsonInput && 'status' in jsonInput) {
+            // Extract the actual data from API response wrapper
+            parsed = jsonInput.data;
+          } else if (typeof jsonInput === 'string') {
+            // Parse JSON string
+            parsed = JSON.parse(jsonInput);
+          } else if (typeof jsonInput === 'object') {
+            // Already an object, use as-is
+            parsed = jsonInput;
+          } else {
+            // Try to parse as string
+            parsed = JSON.parse(String(jsonInput));
+          }
+          
           const field = node.data?.field || node.data?.path;
           if (field) {
             // Support dot notation for nested fields
@@ -566,13 +582,9 @@ class ClaraFlowRunner {
 
   async executeLLMNode(node, inputs) {
     // Basic LLM node implementation
-    const apiKey = node.data?.apiKey || process.env.OPENAI_API_KEY;
+    const apiKey = node.data?.apiKey || process.env.OPENAI_API_KEY || '';
     const model = node.data?.model || 'gpt-3.5-turbo';
-    const apiBaseUrl = node.data?.apiBaseUrl || 'https://api.openai.com/v1';
-    
-    if (!apiKey) {
-      throw new Error('LLM node requires API key');
-    }
+  const apiBaseUrl = (node.data?.apiBaseUrl && node.data?.apiBaseUrl.trim()) || process.env.OPENAI_API_BASE_URL || 'http://localhost:8091/v1';
     
     const systemMessage = inputs.system || node.data?.systemMessage || '';
     const userMessage = inputs.user || inputs.input || inputs.message || '';
@@ -588,12 +600,19 @@ class ClaraFlowRunner {
       }
       messages.push({ role: 'user', content: userMessage });
       
+      const headers = {
+        'Content-Type': 'application/json'
+      };
+
+      if (apiKey && apiKey.trim()) {
+        headers['Authorization'] = `Bearer ${apiKey}`;
+      } else {
+        this.log('LLM node executing without API key. Ensure your API permits unauthenticated requests.', 'warn');
+      }
+
       const response = await fetch(`${apiBaseUrl}/chat/completions`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`
-        },
+        headers,
         body: JSON.stringify({
           model,
           messages,
@@ -603,6 +622,11 @@ class ClaraFlowRunner {
       });
       
       if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error('Authentication failed - API key may be required or invalid');
+        } else if (response.status === 403) {
+          throw new Error('Access forbidden - check API key permissions');
+        }
         throw new Error(`LLM API error: ${response.status} ${response.statusText}`);
       }
       
