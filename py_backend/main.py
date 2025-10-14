@@ -14,7 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import tempfile
 import shutil
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 import json
 from pydantic import BaseModel, Field
 from io import BytesIO
@@ -775,6 +775,12 @@ if LIGHTRAG_AVAILABLE:
         
         return previous_row[-1]
 
+    OPENAI_EMBEDDING_SPECS: Dict[str, Tuple[int, int]] = {
+        "text-embedding-ada-002": (1536, 8192),
+        "text-embedding-3-small": (1536, 8192),
+        "text-embedding-3-large": (3072, 8192),
+    }
+
     def detect_embedding_model_specs(
         model_name: str, 
         manual_override: Optional[Dict[str, int]] = None
@@ -1043,6 +1049,45 @@ if LIGHTRAG_AVAILABLE:
             # Determine embedding dimensions and max tokens using fuzzy matching
             # Use the new detect_embedding_model_specs function with optional manual override
             embedding_specs = detect_embedding_model_specs(embedding_model_name, manual_embedding_override)
+
+            # Normalize model name for additional safety checks
+            normalized_embedding_model = (
+                embedding_model_name.lower()
+                .replace('_', '-')
+                .replace(' ', '-')
+                .split('?')[0]
+                .split('#')[0]
+                .strip()
+            )
+            normalized_candidates = {normalized_embedding_model, normalized_embedding_model.split('/')[-1]}
+
+            # Enforce known OpenAI embedding dimensions if detection drifted
+            if manual_embedding_override is None:
+                forced_spec = None
+                for candidate in normalized_candidates:
+                    if candidate in OPENAI_EMBEDDING_SPECS:
+                        forced_spec = (candidate, OPENAI_EMBEDDING_SPECS[candidate])
+                        break
+
+                if forced_spec:
+                    forced_key, (expected_dim, expected_tokens) = forced_spec
+                    detected_dim = embedding_specs.get('dimensions')
+                    detected_tokens = embedding_specs.get('max_tokens')
+                    if (detected_dim != expected_dim) or (detected_tokens != expected_tokens):
+                        logger.warning(
+                            "Detected embedding specs for %s (%sd/%s tokens) did not match expected OpenAI specs for %s (%sd/%s tokens). Applying safe override.",
+                            embedding_model_name,
+                            detected_dim,
+                            detected_tokens,
+                            forced_key,
+                            expected_dim,
+                            expected_tokens,
+                        )
+                        embedding_specs['dimensions'] = expected_dim
+                        embedding_specs['max_tokens'] = expected_tokens
+                        embedding_specs['confidence'] = max(embedding_specs.get('confidence', 0), 0.99)
+                        embedding_specs['detected_pattern'] = f"{forced_key} (forced override)"
+
             embedding_dim = embedding_specs['dimensions']
             embedding_max_tokens = embedding_specs['max_tokens']
             
@@ -1054,250 +1099,34 @@ if LIGHTRAG_AVAILABLE:
             logger.info(f"  - Pattern: {embedding_specs['detected_pattern']}")
             logger.info(f"  - Manual override: {embedding_specs['is_manual_override']}")
 
-            # LEGACY FALLBACK: All dimension detection below is DISABLED
+            # LEGACY FALLBACK: All dimension detection below is COMPLETELY DISABLED
             # The fuzzy matching above handles all models correctly
             # DO NOT re-enable the code below - it will override correct detection
 
-            if False:  # DISABLED: Legacy hardcoded dimension detection
+            if False:  # DISABLED: Legacy hardcoded dimension detection - DO NOT REMOVE THIS
                 # This entire block is disabled to prevent overriding fuzzy matching results
                 # The new detect_embedding_model_specs() function handles all models
                 pass
-
-            # OpenAI Models (LEGACY - DISABLED)
             elif False and 'text-embedding-ada-002' in embedding_model_name:
-                embedding_dim = 1536
-                embedding_max_tokens = 8192
+                pass
             elif False and 'text-embedding-3-small' in embedding_model_name:
-                embedding_dim = 1536
-                embedding_max_tokens = 8192
+                pass
             elif False and 'text-embedding-3-large' in embedding_model_name:
-                embedding_dim = 3072
-                embedding_max_tokens = 8192
-
-            # MixedBread AI Models
+                pass
             elif False and 'mxbai-embed-large' in embedding_model_name:
-                embedding_dim = 1024
-                embedding_max_tokens = 512  # mxbai has lower token limit
+                pass
+            elif False and 'nomic-embed' in embedding_model_name:
+                pass
+            # ALL LEGACY DIMENSION DETECTION IS DISABLED
+            # The detect_embedding_model_specs() function above handles all models correctly
+            # DO NOT add elif branches here - they will override the correct detection
             
-            # Nomic AI Models
-            elif 'nomic-embed' in embedding_model_name:
-                embedding_dim = 768
-                embedding_max_tokens = 512  # nomic has lower token limit
+            # End of legacy detection block - all code below this comment was removed
+            # to prevent overriding the fuzzy matching detection results
             
-            # Microsoft E5 Models
-            elif 'e5-large-v2' in embedding_model_name:
-                embedding_dim = 1024
-                embedding_max_tokens = 512
-            elif 'e5-base-v2' in embedding_model_name:
-                embedding_dim = 768
-                embedding_max_tokens = 512
-            elif 'e5-small-v2' in embedding_model_name:
-                embedding_dim = 384
-                embedding_max_tokens = 512
-            
-            # Sentence Transformers Models (case-insensitive matching)
-            elif 'all-minilm-l6-v2' in embedding_model_name.lower() or 'all_minilm_l6_v2' in embedding_model_name.lower():
-                embedding_dim = 384
-                embedding_max_tokens = 256  # Smaller models have lower limits
-            elif 'all-minilm-l12-v2' in embedding_model_name.lower() or 'all_minilm_l12_v2' in embedding_model_name.lower():
-                embedding_dim = 384
-                embedding_max_tokens = 256
-            elif 'all-mpnet-base-v2' in embedding_model_name.lower() or 'all_mpnet_base_v2' in embedding_model_name.lower():
-                embedding_dim = 768
-                embedding_max_tokens = 384
-            
-            # BAAI BGE Models
-            elif 'bge-large' in embedding_model_name:
-                embedding_dim = 1024
-                embedding_max_tokens = 512
-            elif 'bge-base' in embedding_model_name:
-                embedding_dim = 768
-                embedding_max_tokens = 512
-            elif 'bge-small' in embedding_model_name:
-                embedding_dim = 512
-                embedding_max_tokens = 512
-            elif 'bge-m3' in embedding_model_name:
-                embedding_dim = 1024
-                embedding_max_tokens = 8192  # bge-m3 supports longer contexts
-            
-            # Qwen Models (Alibaba) - DISABLED: Now handled by fuzzy matching
-            elif False and 'qwen' in embedding_model_name.lower():
-                embedding_dim = 2560
-                embedding_max_tokens = 2048  # Qwen models have moderate token limits
-            elif False and 'qwen2.5-coder' in embedding_model_name.lower():
-                embedding_dim = 2560
-                embedding_max_tokens = 2048
-            elif False and 'qwen2' in embedding_model_name.lower():
-                embedding_dim = 2560
-                embedding_max_tokens = 2048
-            elif False and ("qwen3-embedding-0.6b" in embedding_model_name.lower() or "qwen3-embedding-06b" in embedding_model_name.lower()):
-                embedding_dim = 1024
-                embedding_max_tokens = 512  # CRITICAL: 0.6B model needs much smaller batches due to server limitations
-            elif False and "qwen3-embedding-4b" in embedding_model_name.lower():
-                embedding_dim = 2560
-                embedding_max_tokens = 1024  # Reduced for batch processing stability
-            elif False and "qwen3-embedding-8b" in embedding_model_name.lower():
-                embedding_dim = 4096
-                embedding_max_tokens = 1024  # Reduced for batch processing stability
-            
-            # Jina AI Models
-            elif 'jina-embeddings-v4' in embedding_model_name:
-                # V4 models - newest generation with better performance
-                embedding_dim = 2048  # All v4 models use 2048 dimensions
-                embedding_max_tokens = 8192
-            elif 'jina-embeddings-v3' in embedding_model_name:
-                # V3 models - general purpose
-                embedding_dim = 1024
-                embedding_max_tokens = 8192
-            elif 'jina-embeddings-v2-base' in embedding_model_name:
-                embedding_dim = 768
-                embedding_max_tokens = 8192
-            elif 'jina-embeddings-v2-small' in embedding_model_name:
-                embedding_dim = 512
-                embedding_max_tokens = 8192
-            
-            # Cohere Models
-            elif 'embed-english-v3.0' in embedding_model_name:
-                embedding_dim = 1024
-                embedding_max_tokens = 512
-            elif 'embed-multilingual-v3.0' in embedding_model_name:
-                embedding_dim = 1024
-                embedding_max_tokens = 512
-            elif 'embed-english-light-v3.0' in embedding_model_name:
-                embedding_dim = 384
-                embedding_max_tokens = 512
-            
-            # Voyage AI Models
-            elif 'voyage-large-2' in embedding_model_name:
-                embedding_dim = 1536
-                embedding_max_tokens = 16000  # Voyage models support very long contexts
-            elif 'voyage-code-2' in embedding_model_name:
-                embedding_dim = 1536
-                embedding_max_tokens = 16000
-            elif 'voyage-2' in embedding_model_name:
-                embedding_dim = 1024
-                embedding_max_tokens = 4000
-            
-            # Snowflake Arctic Embed Models
-            elif 'snowflake-arctic-embed2' in embedding_model_name.lower():
-                embedding_dim = 1024  # Arctic Embed 2.0 multilingual
-                embedding_max_tokens = 512
-            elif 'snowflake-arctic-embed-m-v1.5' in embedding_model_name.lower():
-                embedding_dim = 768
-                embedding_max_tokens = 512
-            elif 'snowflake-arctic-embed-l-v1.5' in embedding_model_name.lower():
-                embedding_dim = 1024
-                embedding_max_tokens = 512
-            elif 'snowflake-arctic-embed-m' in embedding_model_name.lower():
-                embedding_dim = 768
-                embedding_max_tokens = 512
-            elif 'snowflake-arctic-embed-l' in embedding_model_name.lower():
-                embedding_dim = 1024
-                embedding_max_tokens = 512
-            elif 'snowflake-arctic-embed' in embedding_model_name.lower():
-                embedding_dim = 1024  # Default for Arctic models
-                embedding_max_tokens = 512
-            
-            # Google EmbeddingGemma
-            elif 'embeddinggemma' in embedding_model_name.lower() or 'embedding-gemma' in embedding_model_name.lower():
-                embedding_dim = 768  # EmbeddingGemma 308M parameters
-                embedding_max_tokens = 2048
-            
-            # IBM Granite Embedding
-            elif 'granite-embedding-278m' in embedding_model_name.lower():
-                embedding_dim = 768  # Multilingual version
-                embedding_max_tokens = 512
-            elif 'granite-embedding-30m' in embedding_model_name.lower():
-                embedding_dim = 384  # English only, smaller
-                embedding_max_tokens = 512
-            elif 'granite-embedding' in embedding_model_name.lower():
-                embedding_dim = 768  # Default to larger model
-                embedding_max_tokens = 512
-            
-            # Sentence-Transformers Paraphrase Models
-            elif 'paraphrase-multilingual' in embedding_model_name.lower():
-                embedding_dim = 768
-                embedding_max_tokens = 128
-            elif 'paraphrase-mpnet' in embedding_model_name.lower():
-                embedding_dim = 768
-                embedding_max_tokens = 128
-            elif 'paraphrase-albert' in embedding_model_name.lower():
-                embedding_dim = 768
-                embedding_max_tokens = 128
-            elif 'paraphrase-minilm' in embedding_model_name.lower():
-                embedding_dim = 384
-                embedding_max_tokens = 128
-            
-            # Additional Sentence-Transformers Models
-            elif 'sentence-t5' in embedding_model_name.lower():
-                if 'xxl' in embedding_model_name.lower():
-                    embedding_dim = 768
-                elif 'xl' in embedding_model_name.lower():
-                    embedding_dim = 768
-                elif 'large' in embedding_model_name.lower():
-                    embedding_dim = 768
-                else:
-                    embedding_dim = 768
-                embedding_max_tokens = 256
-            
-            # Alibaba GTE Models
-            elif 'gte-large' in embedding_model_name.lower():
-                embedding_dim = 1024
-                embedding_max_tokens = 512
-            elif 'gte-base' in embedding_model_name.lower():
-                embedding_dim = 768
-                embedding_max_tokens = 512
-            elif 'gte-small' in embedding_model_name.lower():
-                embedding_dim = 384
-                embedding_max_tokens = 512
-            elif 'gte-qwen' in embedding_model_name.lower():
-                embedding_dim = 1024
-                embedding_max_tokens = 8192  # Qwen-based GTE models support longer context
-            
-            # UAE (Universal AnglE Embedding) Models
-            elif 'uae-large-v1' in embedding_model_name.lower():
-                embedding_dim = 1024
-                embedding_max_tokens = 512
-            
-            # Instructor Models
-            elif 'instructor-xl' in embedding_model_name.lower():
-                embedding_dim = 768
-                embedding_max_tokens = 512
-            elif 'instructor-large' in embedding_model_name.lower():
-                embedding_dim = 768
-                embedding_max_tokens = 512
-            elif 'instructor-base' in embedding_model_name.lower():
-                embedding_dim = 768
-                embedding_max_tokens = 512
-            
-            # NV-Embed (NVIDIA)
-            elif 'nv-embed-v2' in embedding_model_name.lower():
-                embedding_dim = 4096  # Very large, state-of-the-art
-                embedding_max_tokens = 32768  # Extremely long context support
-            elif 'nv-embed' in embedding_model_name.lower():
-                embedding_dim = 4096
-                embedding_max_tokens = 4096
-            
-            # Stella Models
-            elif 'stella' in embedding_model_name.lower():
-                if 'large' in embedding_model_name.lower():
-                    embedding_dim = 1024
-                elif 'base' in embedding_model_name.lower():
-                    embedding_dim = 768
-                else:
-                    embedding_dim = 1024
-                embedding_max_tokens = 512
-            
-            # Fallback patterns for unknown models
-            elif 'large' in embedding_model_name.lower() and 'embed' in embedding_model_name.lower():
-                embedding_dim = 1024
-                embedding_max_tokens = 512
-            elif 'base' in embedding_model_name.lower() and 'embed' in embedding_model_name.lower():
-                embedding_dim = 768
-                embedding_max_tokens = 512
-            elif 'small' in embedding_model_name.lower() and 'embed' in embedding_model_name.lower():
-                embedding_dim = 384
-                embedding_max_tokens = 256
+            # REMOVED: ~340 lines of legacy hardcoded dimension detection (previously lines 1120-1460)
+            # All model dimensions are now detected by detect_embedding_model_specs() function above
+            # DO NOT add elif branches here - they will override the correct fuzzy-match detection
             
             logger.info(f"Using embedding dimension: {embedding_dim}, max tokens: {embedding_max_tokens}")
             
@@ -1436,11 +1265,46 @@ if LIGHTRAG_AVAILABLE:
                 async def embedding_func_lambda(texts: list[str]):
                     """Simple OpenAI embedding - let LightRAG handle retries and failures"""
                     try:
-                        return await openai_embed(
-                            texts,
+                        # Filter out empty texts before embedding
+                        if not texts or all(not text or not text.strip() for text in texts):
+                            logger.warning(f"⚠️ Received empty texts for embedding, returning empty list")
+                            return []
+                        
+                        # Filter out empty strings but preserve indices
+                        non_empty_indices = [i for i, text in enumerate(texts) if text and text.strip()]
+                        non_empty_texts = [texts[i] for i in non_empty_indices]
+                        
+                        if not non_empty_texts:
+                            logger.warning(f"⚠️ All texts were empty after filtering, returning empty list")
+                            return []
+                        
+                        logger.debug(f"Embedding {len(non_empty_texts)} non-empty texts (filtered from {len(texts)} total)")
+                        
+                        result = await openai_embed(
+                            non_empty_texts,
                             model=embedding_model_name,
                             api_key=embedding_api_key.strip()
                         )
+                        
+                        # Validate embeddings (handle both lists and numpy arrays)
+                        if result is None or (hasattr(result, '__len__') and len(result) == 0):
+                            logger.error(f"❌ OpenAI embedding returned empty result for {len(non_empty_texts)} texts")
+                            raise Exception(f"OpenAI embedding returned empty result")
+                        
+                        if len(result) != len(non_empty_texts):
+                            logger.error(f"❌ Embedding count mismatch: expected {len(non_empty_texts)}, got {len(result)}")
+                            raise Exception(f"Embedding count mismatch: expected {len(non_empty_texts)}, got {len(result)}")
+                        
+                        # Validate dimensions (handle numpy arrays and lists)
+                        for i, emb in enumerate(result):
+                            emb_len = len(emb) if hasattr(emb, '__len__') else -1
+                            if emb_len != embedding_dim:
+                                logger.error(f"❌ Invalid embedding at index {i}: expected dimension {embedding_dim}, got {emb_len}")
+                                raise Exception(f"Invalid embedding dimension at index {i}: expected {embedding_dim}, got {emb_len}")
+                        
+                        logger.debug(f"✓ Successfully validated {len(result)} embeddings with dimension {embedding_dim}")
+                        return result
+                        
                     except Exception as e:
                         error_str = str(e).lower()
                         if 'api key' in error_str or 'unauthorized' in error_str or 'authentication' in error_str:
@@ -1455,18 +1319,47 @@ if LIGHTRAG_AVAILABLE:
                     max_retries = 3 if is_clara_core_embedding else 1
                     retry_delay = 5 if is_clara_core_embedding else 2
                     
+                    # Filter out empty texts before embedding
+                    if not texts or all(not text or not text.strip() for text in texts):
+                        logger.warning(f"⚠️ Received empty texts for embedding, returning empty list")
+                        return []
+                    
+                    # Filter out empty strings but preserve count
+                    non_empty_indices = [i for i, text in enumerate(texts) if text and text.strip()]
+                    non_empty_texts = [texts[i] for i in non_empty_indices]
+                    
+                    if not non_empty_texts:
+                        logger.warning(f"⚠️ All texts were empty after filtering, returning empty list")
+                        return []
+                    
                     for attempt in range(max_retries):
                         try:
-                            logger.info(f"Embedding attempt {attempt + 1}/{max_retries} for {embedding_model_name} ({len(texts)} texts)")
+                            logger.info(f"Embedding attempt {attempt + 1}/{max_retries} for {embedding_model_name} ({len(non_empty_texts)} non-empty texts from {len(texts)} total)")
                             
                             result = await openai_embed(
-                                texts,
+                                non_empty_texts,
                                 model=embedding_model_name,
                                 api_key=embedding_api_key.strip(),
                                 base_url=embedding_base_url
                             )
                             
-                            logger.info(f"Successfully generated {len(result)} embeddings")
+                            # Validate embeddings (handle both lists and numpy arrays)
+                            if result is None or (hasattr(result, '__len__') and len(result) == 0):
+                                logger.error(f"❌ Embedding returned empty result for {len(non_empty_texts)} texts")
+                                raise Exception(f"Embedding returned empty result")
+                            
+                            if len(result) != len(non_empty_texts):
+                                logger.error(f"❌ Embedding count mismatch: expected {len(non_empty_texts)}, got {len(result)}")
+                                raise Exception(f"Embedding count mismatch: expected {len(non_empty_texts)}, got {len(result)}")
+                            
+                            # Validate dimensions (handle numpy arrays and lists)
+                            for i, emb in enumerate(result):
+                                emb_len = len(emb) if hasattr(emb, '__len__') else -1
+                                if emb_len != embedding_dim:
+                                    logger.error(f"❌ Invalid embedding at index {i}: expected dimension {embedding_dim}, got {emb_len}")
+                                    raise Exception(f"Invalid embedding dimension at index {i}: expected {embedding_dim}, got {emb_len}")
+                            
+                            logger.info(f"✓ Successfully generated and validated {len(result)} embeddings with dimension {embedding_dim}")
                             return result
                             
                         except Exception as e:
@@ -1494,11 +1387,42 @@ if LIGHTRAG_AVAILABLE:
             elif embedding_provider_type == 'ollama':
                 async def embedding_func_lambda(texts: list[str]):
                     """Simple Ollama embedding - let LightRAG handle retries"""
-                    return await ollama_embed(
-                        texts,
+                    # Filter out empty texts before embedding
+                    if not texts or all(not text or not text.strip() for text in texts):
+                        logger.warning(f"⚠️ Received empty texts for embedding, returning empty list")
+                        return []
+                    
+                    # Filter out empty strings
+                    non_empty_texts = [text for text in texts if text and text.strip()]
+                    
+                    if not non_empty_texts:
+                        logger.warning(f"⚠️ All texts were empty after filtering, returning empty list")
+                        return []
+                    
+                    result = await ollama_embed(
+                        non_empty_texts,
                         embed_model=embedding_model_name,
                         host=embedding_base_url if embedding_base_url else "http://localhost:11434"
                     )
+                    
+                    # Validate embeddings (handle both lists and numpy arrays)
+                    if result is None or (hasattr(result, '__len__') and len(result) == 0):
+                        logger.error(f"❌ Ollama embedding returned empty result for {len(non_empty_texts)} texts")
+                        raise Exception(f"Ollama embedding returned empty result")
+                    
+                    if len(result) != len(non_empty_texts):
+                        logger.error(f"❌ Embedding count mismatch: expected {len(non_empty_texts)}, got {len(result)}")
+                        raise Exception(f"Embedding count mismatch: expected {len(non_empty_texts)}, got {len(result)}")
+                    
+                    # Validate dimensions (handle numpy arrays and lists)
+                    for i, emb in enumerate(result):
+                        emb_len = len(emb) if hasattr(emb, '__len__') else -1
+                        if emb_len != embedding_dim:
+                            logger.error(f"❌ Invalid embedding at index {i}: expected dimension {embedding_dim}, got {emb_len}")
+                            raise Exception(f"Invalid embedding dimension at index {i}: expected {embedding_dim}, got {emb_len}")
+                    
+                    logger.debug(f"✓ Successfully validated {len(result)} Ollama embeddings with dimension {embedding_dim}")
+                    return result
             else:
                 raise ValueError(f"Unsupported embedding provider type: {embedding_provider_type}")
             

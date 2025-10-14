@@ -2503,6 +2503,12 @@ You can:
     // Clear artifacts when creating new chat to prevent persistence across chats
     clearArtifacts();
 
+    // Switch back to chat tab if we're on brain/memories tab
+    if (activeTab !== 'chat') {
+      console.log('Switching from brain/memories tab to chat tab');
+      setActiveTab('chat');
+    }
+
     // Check if current session is already empty (new chat)
     if (currentSession &&
         (currentSession.title === 'New Chat' || currentSession.title.trim() === '') &&
@@ -2543,7 +2549,7 @@ You can:
         isCreatingNewChatRef.current = false;
       }, 100);
     }
-  }, [createNewSession, autonomousAgentStatus, currentSession, messages, sessions, clearArtifacts]);
+  }, [createNewSession, autonomousAgentStatus, currentSession, messages, sessions, clearArtifacts, activeTab, setActiveTab]);
 
   // Handle session actions
   const handleSessionAction = useCallback(async (sessionId: string, action: 'star' | 'archive' | 'delete') => {
