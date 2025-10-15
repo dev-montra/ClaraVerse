@@ -1,14 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  Server, 
-  Play, 
-  CheckCircle, 
-  XCircle, 
+import {
+  Server,
+  Play,
+  CheckCircle,
+  XCircle,
   RefreshCw,
   Terminal,
   Info,
-  HardDrive
+  HardDrive,
+  Bot,
+  Zap
 } from 'lucide-react';
+import RemoteClaraCoreSetup from './RemoteClaraCoreSetup';
 
 interface RemoteServerConfig {
   host: string;
@@ -16,6 +19,7 @@ interface RemoteServerConfig {
   username: string;
   password: string;
   deployServices: {
+    claracore: boolean;
     comfyui: boolean;
     python: boolean;
     n8n: boolean;
@@ -39,12 +43,16 @@ type DeploymentStep =
   | 'error';
 
 const RemoteServerSetup: React.FC = () => {
+  // Sub-tab selection: 'claracore' or 'other-services'
+  const [activeSubTab, setActiveSubTab] = useState<'claracore' | 'other-services'>('claracore');
+
   const [config, setConfig] = useState<RemoteServerConfig>({
     host: '',
     port: 22,
     username: '',
     password: '',
     deployServices: {
+      claracore: true,
       comfyui: true,
       python: true,
       n8n: true
@@ -310,7 +318,7 @@ const RemoteServerSetup: React.FC = () => {
         </div>
 
         {/* Info Box */}
-        <div className="bg-blue-50/50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+        <div className="bg-blue-50/50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4 mb-6">
           <div className="flex items-start gap-3">
             <Info className="w-5 h-5 text-blue-600 dark:text-blue-400 mt-0.5" />
             <div>
@@ -323,6 +331,38 @@ const RemoteServerSetup: React.FC = () => {
               </ul>
             </div>
           </div>
+        </div>
+
+        {/* Sub-tabs */}
+        <div className="flex gap-2 border-b border-gray-200 dark:border-gray-700">
+          <button
+            onClick={() => setActiveSubTab('claracore')}
+            className={`flex items-center gap-2 px-4 py-3 font-medium transition-all relative ${
+              activeSubTab === 'claracore'
+                ? 'text-blue-600 dark:text-blue-400'
+                : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+            }`}
+          >
+            <Bot className="w-4 h-4" />
+            ClaraCore
+            {activeSubTab === 'claracore' && (
+              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600 dark:bg-blue-400"></div>
+            )}
+          </button>
+          <button
+            onClick={() => setActiveSubTab('other-services')}
+            className={`flex items-center gap-2 px-4 py-3 font-medium transition-all relative ${
+              activeSubTab === 'other-services'
+                ? 'text-blue-600 dark:text-blue-400'
+                : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-200'
+            }`}
+          >
+            <Zap className="w-4 h-4" />
+            Other Services
+            {activeSubTab === 'other-services' && (
+              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600 dark:bg-blue-400"></div>
+            )}
+          </button>
         </div>
       </div>
 
@@ -353,8 +393,16 @@ const RemoteServerSetup: React.FC = () => {
         </div>
       )}
 
-      {/* Configuration Form Card */}
-      <div className="glassmorphic rounded-xl p-6">
+      {/* ClaraCore Tab Content */}
+      {activeSubTab === 'claracore' && (
+        <RemoteClaraCoreSetup />
+      )}
+
+      {/* Other Services Tab Content */}
+      {activeSubTab === 'other-services' && (
+        <>
+          {/* Configuration Form Card */}
+          <div className="glassmorphic rounded-xl p-6">
         <div className="flex items-center gap-3 mb-6">
           <HardDrive className="w-5 h-5 text-purple-500" />
           <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Server Configuration</h3>
@@ -566,6 +614,8 @@ const RemoteServerSetup: React.FC = () => {
             </div>
           </div>
         </div>
+      )}
+        </>
       )}
     </div>
   );

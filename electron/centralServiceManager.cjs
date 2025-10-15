@@ -142,9 +142,10 @@ class CentralServiceManager extends EventEmitter {
       log.info(`🔄 Starting service: ${serviceName} (mode: ${deploymentMode})`);
       
       // Start service based on deployment mode
-      if (deploymentMode === 'manual') {
+      if (deploymentMode === 'manual' || deploymentMode === 'remote') {
         service.instance = await this.startManualService(serviceName, service);
-      } else if (deploymentMode === 'native') {
+      } else if (deploymentMode === 'local' || deploymentMode === 'native') {
+        // Local binary service
         service.instance = await this.startNativeService(serviceName, service);
       } else {
         // Default to Docker mode (backward compatibility)
@@ -279,14 +280,14 @@ class CentralServiceManager extends EventEmitter {
     // Define service dependencies
     const dependencies = {
       'docker': [],
-      'llamaswap': ['docker'],
+      'claracore': [], // No dependencies - runs independently
       'python-backend': ['docker'],
       'comfyui': ['docker', 'python-backend'],
       'n8n': ['docker'],
-      'mcp': ['llamaswap'],
-      'watchdog': ['docker', 'llamaswap', 'python-backend']
+      'mcp': ['python-backend', 'claracore'],
+      'watchdog': ['docker', 'python-backend', 'claracore']
     };
-    
+
     // Topological sort to determine startup order
     return this.topologicalSort(dependencies);
   }
@@ -384,7 +385,7 @@ class CentralServiceManager extends EventEmitter {
           'n8n': 5678,
           'python-backend': 5001,
           'comfyui': 8188,
-          'llamaswap': 8091
+          'claracore': 8091
         };
         if (defaultPorts[name]) {
           serviceUrl = `http://localhost:${defaultPorts[name]}`;
@@ -523,14 +524,29 @@ class CentralServiceManager extends EventEmitter {
    * NEW: Get deployment mode for a service
    */
   getDeploymentMode(serviceName) {
-    if (this.configManager) {
-      return this.configManager.getServiceMode(serviceName);
+    // Special case: ClaraCore always defaults to 'local' mode (native binary)
+    // Check this FIRST before config manager to ensure it always runs locally
+    if (serviceName === 'claracore') {
+      // Unless explicitly configured otherwise, always use local mode
+      if (this.configManager) {
+        const mode = this.configManager.getServiceMode(serviceName);
+        // Only allow 'local' or 'remote', never docker for claracore
+        if (mode === 'local' || mode === 'remote') {
+          return mode;
+        }
+      }
+      return 'local';
     }
-    
+
+    if (this.configManager) {
+      const mode = this.configManager.getServiceMode(serviceName);
+      if (mode) return mode;
+    }
+
     // Fallback: check if service supports manual mode
     const { getSupportedDeploymentModes } = require('./serviceDefinitions.cjs');
     const supportedModes = getSupportedDeploymentModes(serviceName, this.platformInfo.platform);
-    
+
     return supportedModes.includes('docker') ? 'docker' : supportedModes[0] || 'docker';
   }
 
@@ -576,18 +592,26 @@ class CentralServiceManager extends EventEmitter {
    */
   async startNativeService(serviceName, service) {
     log.info(`🔧 Starting native service ${serviceName}`);
-    
+
     // Use the service's custom start method if available
     if (service.customStart) {
       const instance = await service.customStart();
-      return {
-        type: 'native',
-        instance: instance,
-        startTime: Date.now(),
-        deploymentMode: 'native'
-      };
+
+      // IMPORTANT: Don't spread the instance! Methods are on the prototype and won't be copied.
+      // Store the instance directly and add metadata properties to it
+      instance.type = 'native';
+      instance.startTime = Date.now();
+      instance.deploymentMode = 'local';
+
+      // Ensure healthCheck is bound properly
+      if (instance.checkHealth && !instance.healthCheck) {
+        instance.healthCheck = instance.checkHealth.bind(instance);
+      }
+
+      // Return the instance with all its methods intact
+      return instance;
     }
-    
+
     // Fallback: generic native service startup
     throw new Error(`Native service ${serviceName} does not define a customStart method`);
   }

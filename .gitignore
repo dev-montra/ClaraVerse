@@ -147,3 +147,6 @@ searxng-config
 clara-mcp/mcp_workspace/*
 llama-swap/*
 dev_docs/*
+config.yaml
+model_folders.json
+settings.json

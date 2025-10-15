@@ -80,6 +80,19 @@ const Topbar = ({
       
       // Get all services that need cleanup
       const services = [
+        // ClaraCore cleanup
+        async () => {
+          const claraCore = (window as any).claraCore;
+          if (claraCore) {
+            try {
+              console.log('Stopping ClaraCore service...');
+              await claraCore.stop();
+              console.log('ClaraCore service stopped successfully');
+            } catch (error) {
+              console.error('Error stopping ClaraCore:', error);
+            }
+          }
+        },
         // WebContainer cleanup
         async () => {
           const webContainerManager = (window as any).webContainerManager;
@@ -104,7 +117,7 @@ const Topbar = ({
 
           // Get all containers
           const containers = await electronAPI.getContainers();
-          
+
           // Stop and remove all Clara containers
           for (const container of containers) {
             if (container.name.startsWith('clara_')) {

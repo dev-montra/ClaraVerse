@@ -120,7 +120,12 @@ class ServiceConfigurationManager {
         return serviceConfig.mode;
       }
     }
-    
+
+    // Special case for ClaraCore - always default to 'local' mode
+    if (serviceName === 'claracore') {
+      return 'local';
+    }
+
     // Return default mode (prefer docker if available)
     const supportedModes = getSupportedDeploymentModes(serviceName, this.platform);
     return supportedModes.includes('docker') ? 'docker' : supportedModes[0] || 'docker';

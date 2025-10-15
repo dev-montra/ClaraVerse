@@ -6,6 +6,7 @@
 
 const path = require('path');
 const os = require('os');
+const log = require('electron-log');
 
 // Get platform info
 const platform = os.platform();
@@ -108,29 +109,42 @@ const SERVICE_DEFINITIONS = {
     }
   },
 
-  // LlamaSwap Service (Clara's AI model manager)
-  llamaswap: {
-    name: "Clara's Core AI Engine",
+  // ClaraCore Service (Core AI Engine)
+  claracore: {
+    name: 'Clara Core AI Engine',
     type: 'binary',
     critical: true,
     autoRestart: true,
     priority: 3,
-    dependencies: ['docker'],
-    
-    // NEW: Deployment mode support - native binary service
-    deploymentModes: ['native'],
+    dependencies: [], // No dependencies - runs independently as a native binary
+
+    // NEW: Deployment mode support
+    deploymentModes: ['local', 'remote', 'docker'],
     platformSupport: {
-      native: ['win32', 'darwin', 'linux'] // Native binary supported on all platforms
+      local: ['win32', 'darwin', 'linux'], // Native binary supported on all platforms
+      remote: ['win32', 'darwin', 'linux'], // Remote server supported on all platforms
+      docker: ['win32', 'darwin', 'linux'] // Docker supported on all platforms
     },
-    
-    binaryPath: platform === 'darwin' 
-      ? './llamacpp-binaries/llamacpp-server-darwin-arm64'
+
+    // Binary paths for each platform
+    binaryPath: platform === 'win32'
+      ? './claracore/claracore-windows-amd64.exe'
+      : platform === 'darwin'
+      ? os.arch() === 'arm64'
+        ? './claracore/claracore-darwin-arm64'
+        : './claracore/claracore-darwin-amd64'
       : platform === 'linux'
-      ? './llamacpp-binaries/llamacpp-server-linux-x64'
-      : './llamacpp-binaries/llamacpp-server-win-x64.exe',
-    
-    ports: { main: 8091, proxy: 9999 },
-    
+      ? os.arch() === 'arm64'
+        ? './claracore/claracore-linux-arm64'
+        : './claracore/claracore-linux-amd64'
+      : './claracore/claracore-linux-amd64',
+
+    // Service arguments
+    args: ['-listen', ':8091'],
+
+    ports: { main: 8091 },
+
+    // Health check
     healthCheck: async () => {
       const http = require('http');
       return new Promise((resolve) => {
@@ -144,18 +158,29 @@ const SERVICE_DEFINITIONS = {
         });
       });
     },
-    
+
+    // Custom start method
     customStart: async () => {
-      const LlamaSwapService = require('./llamaSwapService.cjs');
-      const service = new LlamaSwapService();
+      const ClaraCoreService = require('./claraCoreService.cjs');
+      const service = new ClaraCoreService();
       await service.start();
       return service;
     },
-    
+
+    // Custom stop method
     customStop: async (service) => {
       if (service.instance && service.instance.stop) {
         await service.instance.stop();
       }
+    },
+
+    // Manual/Remote service configuration
+    manual: {
+      urlRequired: true,
+      defaultUrl: 'http://localhost:8091',
+      healthEndpoint: '/health',
+      configKey: 'claracore_url',
+      description: 'Connect to external ClaraCore instance (local, remote, or docker)'
     }
   },
 
@@ -287,7 +312,7 @@ const SERVICE_DEFINITIONS = {
     critical: false,
     autoRestart: true,
     priority: 6,
-    dependencies: ['llamaswap'],
+    dependencies: ['python-backend'],
     
     customStart: async () => {
       const MCPService = require('./mcpService.cjs');
@@ -313,34 +338,9 @@ const SERVICE_DEFINITIONS = {
  * Platform-specific service configurations
  */
 const PLATFORM_OVERRIDES = {
-  darwin: {
-    llamaswap: {
-      binaryPath: './llamacpp-binaries/llamacpp-server-darwin-arm64',
-      environment: [
-        'METAL_PERFORMANCE_SHADERS_ENABLED=1',
-        'GGML_METAL=1'
-      ]
-    }
-  },
-  
-  linux: {
-    llamaswap: {
-      binaryPath: './llamacpp-binaries/llamacpp-server-linux-x64',
-      environment: [
-        'CUDA_VISIBLE_DEVICES=0',
-        'GGML_CUDA=1'
-      ]
-    }
-  },
-  
-  win32: {
-    llamaswap: {
-      binaryPath: './llamacpp-binaries/llamacpp-server-win-x64.exe',
-      environment: [
-        'CUDA_VISIBLE_DEVICES=0'
-      ]
-    }
-  }
+  darwin: {},
+  linux: {},
+  win32: {}
 };
 
 /**
@@ -351,12 +351,7 @@ function getEnabledServices(selectedFeatures = {}) {
   const enabledServices = {};
   
   // Core services (always enabled)
-  const coreServices = ['docker', 'python-backend'];
-  
-  // Clara Core AI (always enabled if selected)
-  if (selectedFeatures.claraCore !== false) {
-    coreServices.push('llamaswap', 'mcp');
-  }
+  const coreServices = ['docker', 'python-backend', 'claracore'];
   
   // Optional services based on user selection
   if (selectedFeatures.comfyUI) {

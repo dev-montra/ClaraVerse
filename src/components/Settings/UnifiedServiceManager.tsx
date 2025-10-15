@@ -40,7 +40,7 @@ interface ConfigurableService {
   description: string;
   icon: React.ComponentType<{ className?: string }>;
   status: 'running' | 'stopped';
-  mode: 'docker' | 'manual' | 'remote';
+  mode: 'docker' | 'manual' | 'remote' | 'local';
   serviceUrl?: string;
   manualUrl?: string;
   remoteUrl?: string;
@@ -48,6 +48,7 @@ interface ConfigurableService {
     docker: boolean;
     manual: boolean;
     remote: boolean;
+    local?: boolean; // For ClaraCore
   };
   isLoading?: boolean;
   error?: string;
@@ -100,12 +101,17 @@ const UnifiedServiceManager: React.FC = () => {
     running: false,
     serviceUrl: 'http://localhost:5001'
   });
+  const [claraCoreStatus, setClaraCoreStatus] = useState<ServiceStatus>({
+    running: false,
+    serviceUrl: 'http://localhost:8091'
+  });
 
   // Loading states
   const [globalLoading, setGlobalLoading] = useState(false);
   const [n8nLoading, setN8nLoading] = useState(false);
   const [comfyuiLoading, setComfyuiLoading] = useState(false);
   const [pythonBackendLoading, setPythonBackendLoading] = useState(false);
+  const [claraCoreLoading, setClaraCoreLoading] = useState(false);
   
   // Feature Configuration State
   const [featureConfig, setFeatureConfig] = useState({
@@ -227,11 +233,12 @@ const UnifiedServiceManager: React.FC = () => {
     fetchN8nStatus();
     fetchComfyuiStatus();
     fetchPythonBackendStatus();
+    fetchClaraCoreStatus();
 
     const interval = setInterval(() => {
       checkDockerServices();
     }, 60000);
-    
+
     return () => clearInterval(interval);
   }, []);
 
@@ -320,6 +327,33 @@ const UnifiedServiceManager: React.FC = () => {
     }
   };
 
+  // Fetch ClaraCore status
+  const fetchClaraCoreStatus = async () => {
+    try {
+      const result = await (window as any).claraCore?.getStatus();
+      if (result && result.success) {
+        setClaraCoreStatus({
+          running: result.status.isRunning || false,
+          serviceUrl: result.status.url || 'http://localhost:8091',
+          error: result.error
+        });
+      } else {
+        setClaraCoreStatus({
+          running: false,
+          serviceUrl: 'http://localhost:8091',
+          error: result?.error || 'Failed to check status'
+        });
+      }
+    } catch (error) {
+      console.error('Error fetching ClaraCore status:', error);
+      setClaraCoreStatus({
+        running: false,
+        serviceUrl: 'http://localhost:8091',
+        error: 'Failed to check status'
+      });
+    }
+  };
+
   // Handle N8N actions (from ServicesTab)
   const handleN8nAction = async (action: 'start' | 'stop' | 'restart') => {
     setN8nLoading(true);
@@ -391,6 +425,30 @@ const UnifiedServiceManager: React.FC = () => {
       console.error('Error performing Python Backend action:', error);
     } finally {
       setPythonBackendLoading(false);
+    }
+  };
+
+  // Handle ClaraCore actions
+  const handleClaraCoreAction = async (action: 'start' | 'stop' | 'restart') => {
+    setClaraCoreLoading(true);
+    try {
+      let result;
+      if (action === 'start' && (window as any).claraCore) {
+        result = await (window as any).claraCore.start();
+      } else if (action === 'stop' && (window as any).claraCore) {
+        result = await (window as any).claraCore.stop();
+      } else if (action === 'restart' && (window as any).claraCore) {
+        result = await (window as any).claraCore.restart();
+      }
+
+      if (result?.success) {
+        setTimeout(() => fetchClaraCoreStatus(), 2000);
+        setTimeout(() => fetchClaraCoreStatus(), 5000);
+      }
+    } catch (error) {
+      console.error('Error performing ClaraCore action:', error);
+    } finally {
+      setClaraCoreLoading(false);
     }
   };
 
@@ -551,7 +609,8 @@ const UnifiedServiceManager: React.FC = () => {
         loadServiceConfigurations(),
         fetchN8nStatus(),
         fetchComfyuiStatus(),
-        fetchPythonBackendStatus()
+        fetchPythonBackendStatus(),
+        fetchClaraCoreStatus()
       ]);
     } catch (error) {
       console.error('Error refreshing services:', error);
@@ -564,25 +623,31 @@ const UnifiedServiceManager: React.FC = () => {
 
   // Core Services
   const coreServices: CoreService[] = [
-    {
-      id: 'clara-core',
-      name: 'Clara Core',
-      description: 'AI engine with local model management and llama.cpp',
-      icon: Bot,
-      status: 'running',
-      serviceUrl: 'http://localhost:8091',
-      port: '8091',
-      deployment: 'Native Binary',
-      engine: 'llama.cpp',
-      autoStart: true,
-      configurable: false,
-      statusColor: 'emerald',
-      actions: ['open']
-    }
+    // ClaraCore is now in Configurable Services section for full control
   ];
 
   // Configurable Services
   const configurableServices: ConfigurableService[] = [
+    {
+      id: 'claracore',
+      name: 'Clara Core AI Engine',
+      description: 'Core AI engine with model management (llama.cpp)',
+      icon: Bot,
+      status: claraCoreStatus.running ? 'running' : 'stopped',
+      mode: serviceConfigs.claracore?.mode || 'local',
+      serviceUrl: claraCoreStatus.serviceUrl,
+      manualUrl: serviceConfigs.claracore?.url,
+      remoteUrl: remoteServerConfig?.services?.claracore?.url,
+      platformSupport: {
+        local: true,  // ClaraCore native binary
+        docker: false, // ClaraCore doesn't support docker mode
+        manual: false, // Use "local" instead of "manual" for Clara Core
+        remote: true
+      },
+      isLoading: claraCoreLoading,
+      error: claraCoreStatus.error,
+      actions: claraCoreStatus.running ? ['open', 'stop', 'restart'] : ['start']
+    },
     {
       id: 'python-backend',
       name: 'Python Backend',
@@ -820,10 +885,10 @@ const UnifiedServiceManager: React.FC = () => {
   };
 
   const renderConfigurableServiceCard = (service: ConfigurableService) => {
-    const config = serviceConfigs[service.id] || { mode: 'docker', url: null };
+    const config = serviceConfigs[service.id] || { mode: service.id === 'claracore' ? 'local' : 'docker', url: null };
     const testResult = serviceTestResults[service.id];
     const isRunning = service.status === 'running';
-    const isManualOnly = service.id === 'comfyui' && currentPlatform !== 'win32';
+    const isManualOnly = (service.id === 'comfyui' && currentPlatform !== 'win32') || service.id === 'claracore';
 
     return (
       <div key={service.id} className="p-6 bg-white/50 dark:bg-gray-800/50 rounded-xl border border-gray-200 dark:border-gray-700">
@@ -868,14 +933,25 @@ const UnifiedServiceManager: React.FC = () => {
           </div>
         </div>
 
-        {/* Platform Warning for ComfyUI */}
-        {isManualOnly && (
+        {/* Platform Warning for ComfyUI and ClaraCore */}
+        {isManualOnly && service.id !== 'claracore' && (
           <div className="mb-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
             <div className="flex items-center gap-2">
               <AlertCircle className="w-4 h-4 text-amber-600 dark:text-amber-400" />
               <p className="text-sm text-amber-700 dark:text-amber-300">
-                <strong>Platform Limitation:</strong> ComfyUI Docker mode is only supported on Windows. 
+                <strong>Platform Limitation:</strong> ComfyUI Docker mode is only supported on Windows.
                 {currentPlatform === 'darwin' ? ' On macOS, please use manual setup.' : ' On Linux, please use manual setup.'}
+              </p>
+            </div>
+          </div>
+        )}
+        {service.id === 'claracore' && (
+          <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+            <div className="flex items-center gap-2">
+              <Bot className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+              <p className="text-sm text-blue-700 dark:text-blue-300">
+                <strong>Local Binary Service:</strong> ClaraCore runs as a native binary on your system for maximum performance.
+                You can also connect to a remote ClaraCore instance if needed.
               </p>
             </div>
           </div>
@@ -888,58 +964,103 @@ const UnifiedServiceManager: React.FC = () => {
               Deployment Mode
             </label>
             <div className="flex gap-3">
-              {/* Docker Mode */}
-              <button
-                onClick={() => {
-                  if (!isManualOnly) {
+              {/* Local Mode (for ClaraCore) */}
+              {service.platformSupport.local && (
+                <button
+                  onClick={() => {
                     // Immediately update local state for instant UI response
                     setServiceConfigs((prev: any) => ({
                       ...prev,
-                      [service.id]: { 
-                        ...prev[service.id], 
-                        mode: 'docker'
+                      [service.id]: {
+                        ...prev[service.id],
+                        mode: 'local'
                       }
                     }));
-                    
+
                     // Update backend config
-                    updateServiceConfig(service.id, 'docker');
-                  }
-                }}
-                disabled={isManualOnly}
-                className={`flex-1 p-3 rounded-lg border-2 transition-all relative ${
-                  config.mode === 'docker'
-                    ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 shadow-md'
-                    : isManualOnly
-                      ? 'border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800/50 text-gray-400 dark:text-gray-600 cursor-not-allowed'
-                      : 'border-gray-200 dark:border-gray-700 hover:border-blue-300 dark:hover:border-blue-500 hover:bg-blue-50/50 dark:hover:bg-blue-900/10 text-gray-700 dark:text-gray-300'
-                }`}
-              >
-                {config.mode === 'docker' && (
-                  <div className="absolute -top-1 -right-1 w-3 h-3 bg-blue-500 rounded-full border-2 border-white dark:border-gray-800"></div>
-                )}
-                <div className="flex items-center gap-2">
-                  <HardDrive className={`w-4 h-4 ${config.mode === 'docker' ? 'text-blue-600 dark:text-blue-400' : ''}`} />
-                  <span className="font-medium">Docker</span>
-                  {config.mode === 'docker' && (
-                    <span className="ml-auto text-xs bg-blue-100 dark:bg-blue-800 px-2 py-0.5 rounded-full">
-                      Active
-                    </span>
+                    updateServiceConfig(service.id, 'local');
+                  }}
+                  className={`flex-1 p-3 rounded-lg border-2 transition-all relative ${
+                    config.mode === 'local'
+                      ? 'border-emerald-500 bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 shadow-md'
+                      : 'border-gray-200 dark:border-gray-700 hover:border-emerald-300 dark:hover:border-emerald-500 hover:bg-emerald-50/50 dark:hover:bg-emerald-900/10 text-gray-700 dark:text-gray-300'
+                  }`}
+                >
+                  {config.mode === 'local' && (
+                    <div className="absolute -top-1 -right-1 w-3 h-3 bg-emerald-500 rounded-full border-2 border-white dark:border-gray-800"></div>
                   )}
-                </div>
-                <p className="text-xs mt-1 text-left">
-                  Managed containers with automatic setup
-                </p>
-              </button>
+                  <div className="flex items-center gap-2">
+                    <Bot className={`w-4 h-4 ${config.mode === 'local' ? 'text-emerald-600 dark:text-emerald-400' : ''}`} />
+                    <span className="font-medium">Local</span>
+                    {config.mode === 'local' && (
+                      <span className="ml-auto text-xs bg-emerald-100 dark:bg-emerald-800 px-2 py-0.5 rounded-full">
+                        Active
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs mt-1 text-left">
+                    Native binary for maximum performance
+                  </p>
+                </button>
+              )}
+
+              {/* Docker Mode */}
+              {service.platformSupport.docker && (
+                <button
+                  onClick={() => {
+                    if (!isManualOnly) {
+                      // Immediately update local state for instant UI response
+                      setServiceConfigs((prev: any) => ({
+                        ...prev,
+                        [service.id]: {
+                          ...prev[service.id],
+                          mode: 'docker'
+                        }
+                      }));
+
+                      // Update backend config
+                      updateServiceConfig(service.id, 'docker');
+                    }
+                  }}
+                  disabled={isManualOnly}
+                  className={`flex-1 p-3 rounded-lg border-2 transition-all relative ${
+                    config.mode === 'docker'
+                      ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 shadow-md'
+                      : isManualOnly
+                        ? 'border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800/50 text-gray-400 dark:text-gray-600 cursor-not-allowed'
+                        : 'border-gray-200 dark:border-gray-700 hover:border-blue-300 dark:hover:border-blue-500 hover:bg-blue-50/50 dark:hover:bg-blue-900/10 text-gray-700 dark:text-gray-300'
+                  }`}
+                >
+                  {config.mode === 'docker' && (
+                    <div className="absolute -top-1 -right-1 w-3 h-3 bg-blue-500 rounded-full border-2 border-white dark:border-gray-800"></div>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <HardDrive className={`w-4 h-4 ${config.mode === 'docker' ? 'text-blue-600 dark:text-blue-400' : ''}`} />
+                    <span className="font-medium">Docker</span>
+                    {config.mode === 'docker' && (
+                      <span className="ml-auto text-xs bg-blue-100 dark:bg-blue-800 px-2 py-0.5 rounded-full">
+                        Active
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs mt-1 text-left">
+                    Managed containers with automatic setup
+                  </p>
+                </button>
+              )}
 
               {/* Manual Mode */}
+              {service.platformSupport.manual && (
               <button
                 onClick={() => {
                   // Pre-populate with default URL if none exists
-                  const defaultUrl = service.id === 'comfyui'
-                    ? 'http://localhost:8188'
-                    : service.id === 'python-backend'
-                      ? 'http://localhost:5001'
-                      : 'http://localhost:5678';
+                  const defaultUrl = service.id === 'claracore'
+                    ? 'http://localhost:8091'
+                    : service.id === 'comfyui'
+                      ? 'http://localhost:8188'
+                      : service.id === 'python-backend'
+                        ? 'http://localhost:5001'
+                        : 'http://localhost:5678';
 
                   const urlToUse = config.url || defaultUrl;
 
@@ -984,6 +1105,7 @@ const UnifiedServiceManager: React.FC = () => {
                   External service with custom URL
                 </p>
               </button>
+              )}
 
               {/* Remote Mode */}
               <button
@@ -1024,7 +1146,8 @@ const UnifiedServiceManager: React.FC = () => {
 
                   // Refresh service status after mode change
                   setTimeout(() => {
-                    if (service.id === 'n8n') fetchN8nStatus();
+                    if (service.id === 'claracore') fetchClaraCoreStatus();
+                    else if (service.id === 'n8n') fetchN8nStatus();
                     else if (service.id === 'comfyui') fetchComfyuiStatus();
                     else if (service.id === 'python-backend') fetchPythonBackendStatus();
                   }, 1000);
@@ -1117,11 +1240,13 @@ const UnifiedServiceManager: React.FC = () => {
                       }
                     }}
                     className="flex-1 px-3 py-2 rounded-lg bg-white/50 border border-gray-200 focus:outline-none focus:border-purple-300 dark:bg-gray-800/50 dark:border-gray-700 dark:text-gray-100"
-                    placeholder={service.id === 'comfyui'
-                      ? 'http://localhost:8188'
-                      : service.id === 'python-backend'
-                        ? 'http://localhost:5001'
-                        : 'http://localhost:5678'
+                    placeholder={service.id === 'claracore'
+                      ? 'http://localhost:8091'
+                      : service.id === 'comfyui'
+                        ? 'http://localhost:8188'
+                        : service.id === 'python-backend'
+                          ? 'http://localhost:5001'
+                          : 'http://localhost:5678'
                     }
                   />
                   
@@ -1294,7 +1419,8 @@ const UnifiedServiceManager: React.FC = () => {
                   {service.actions.includes('start') && !isRunning && (
                     <button
                       onClick={() => {
-                        if (service.id === 'n8n') handleN8nAction('start');
+                        if (service.id === 'claracore') handleClaraCoreAction('start');
+                        else if (service.id === 'n8n') handleN8nAction('start');
                         else if (service.id === 'comfyui') handleComfyuiAction('start');
                         else if (service.id === 'python-backend') handlePythonBackendAction('start');
                       }}
@@ -1308,7 +1434,8 @@ const UnifiedServiceManager: React.FC = () => {
                   {service.actions.includes('stop') && isRunning && (
                     <button
                       onClick={() => {
-                        if (service.id === 'n8n') handleN8nAction('stop');
+                        if (service.id === 'claracore') handleClaraCoreAction('stop');
+                        else if (service.id === 'n8n') handleN8nAction('stop');
                         else if (service.id === 'comfyui') handleComfyuiAction('stop');
                         else if (service.id === 'python-backend') handlePythonBackendAction('stop');
                       }}
@@ -1322,7 +1449,8 @@ const UnifiedServiceManager: React.FC = () => {
                   {service.actions.includes('restart') && (
                     <button
                       onClick={() => {
-                        if (service.id === 'n8n') handleN8nAction('restart');
+                        if (service.id === 'claracore') handleClaraCoreAction('restart');
+                        else if (service.id === 'n8n') handleN8nAction('restart');
                         else if (service.id === 'comfyui') handleComfyuiAction('restart');
                         else if (service.id === 'python-backend') handlePythonBackendAction('restart');
                       }}
@@ -1483,43 +1611,34 @@ const UnifiedServiceManager: React.FC = () => {
           </button>
         </div>
 
-        {/* Platform Info */}
+        {/* System Info */}
         <div className="bg-blue-50/50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
           <div className="flex items-center gap-3">
             <Monitor className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-            <div>
-              <h4 className="font-medium text-blue-900 dark:text-blue-100">
-                Platform: {getPlatformName(currentPlatform)}
+            <div className="flex-1">
+              <h4 className="font-medium text-blue-900 dark:text-blue-100 mb-2">
+                System: {getPlatformName(currentPlatform)}
               </h4>
-              <p className="text-sm text-blue-700 dark:text-blue-300">
-                {currentPlatform === 'win32' 
-                  ? 'All services support both Docker and Manual deployment modes'
-                  : 'ComfyUI requires manual setup on macOS/Linux for optimal performance'
-                }
-              </p>
+              <div className="grid grid-cols-2 gap-4 text-xs text-blue-700 dark:text-blue-300">
+                <div>
+                  <span className="font-medium">ClaraCore:</span> {serviceConfigs.claracore?.mode === 'remote' ? '🌐 Remote Server' : '💻 Local Binary'}
+                </div>
+                <div>
+                  <span className="font-medium">Python Backend:</span> {serviceConfigs['python-backend']?.mode === 'remote' ? '🌐 Remote' : serviceConfigs['python-backend']?.mode === 'manual' ? '⚙️ Manual' : '🐳 Docker'}
+                </div>
+                <div>
+                  <span className="font-medium">ComfyUI:</span> {serviceConfigs.comfyui?.mode === 'remote' ? '🌐 Remote' : serviceConfigs.comfyui?.mode === 'manual' ? '⚙️ Manual' : currentPlatform === 'win32' ? '🐳 Docker' : '⚙️ Manual'}
+                </div>
+                <div>
+                  <span className="font-medium">N8N:</span> {serviceConfigs.n8n?.mode === 'remote' ? '🌐 Remote' : serviceConfigs.n8n?.mode === 'manual' ? '⚙️ Manual' : '🐳 Docker'}
+                </div>
+              </div>
             </div>
           </div>
         </div>
       </div>
 
-      {/* Core Services */}
-      <div className="glassmorphic rounded-xl p-6">
-        <div className="flex items-center gap-3 mb-6">
-          <div className="w-3 h-3 bg-emerald-500 rounded-full"></div>
-          <div>
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
-              Core Services
-            </h3>
-            <p className="text-sm text-gray-600 dark:text-gray-400">
-              Essential services that power Clara's AI capabilities
-            </p>
-          </div>
-        </div>
-
-        <div className="space-y-4">
-          {coreServices.map(renderCoreServiceCard)}
-        </div>
-      </div>
+    
 
       {/* Configurable Services */}
       <div className="glassmorphic rounded-xl p-6">

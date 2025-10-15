@@ -1,0 +1,14 @@
+{
+  "setup_progress": {
+    "status": "completed",
+    "current_step": "Saving configuration file...",
+    "progress": 100,
+    "total_models": 29,
+    "processed_models": 29,
+    "current_model": "Qwen3-Embedding-0.6B-Q8_0",
+    "error": "",
+    "completed": true,
+    "started_at": "2025-10-15T16:04:16.0345859+05:30",
+    "updated_at": "2025-10-15T16:05:57.345366+05:30"
+  }
+}

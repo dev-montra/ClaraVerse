@@ -426,6 +426,14 @@ contextBridge.exposeInMainWorld('modelManager', {
   }
 });
 
+// Add ClaraCore Service API
+contextBridge.exposeInMainWorld('claraCore', {
+  start: () => ipcRenderer.invoke('claracore-start'),
+  stop: () => ipcRenderer.invoke('claracore-stop'),
+  restart: () => ipcRenderer.invoke('claracore-restart'),
+  getStatus: () => ipcRenderer.invoke('claracore-status')
+});
+
 // Add MCP service API
 contextBridge.exposeInMainWorld('mcpService', {
   getServers: () => ipcRenderer.invoke('mcp-get-servers'),
@@ -488,6 +496,12 @@ contextBridge.exposeInMainWorld('remoteServer', {
     ipcRenderer.on('remote-server:log', subscription);
     return () => ipcRenderer.removeListener('remote-server:log', subscription);
   }
+});
+
+// Add ClaraCore remote deployment API
+contextBridge.exposeInMainWorld('claraCoreRemote', {
+  testSetup: (config) => ipcRenderer.invoke('claracore-remote-test-setup', config),
+  deploy: (config) => ipcRenderer.invoke('claracore-remote-deploy', config)
 });
 
 // Notify main process when preload script has loaded

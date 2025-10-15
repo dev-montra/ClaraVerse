@@ -30,6 +30,7 @@ const { setupRemoteServerIPC } = require('./remoteServerIPC.cjs');
 const CentralServiceManager = require('./centralServiceManager.cjs');
 const ServiceConfigurationManager = require('./serviceConfiguration.cjs');
 const { getPlatformCompatibility, getCompatibleServices } = require('./serviceDefinitions.cjs');
+const ClaraCoreRemoteService = require('./claraCoreRemoteService.cjs');
 
 // Network Service Manager to prevent UI refreshes during crashes
 const NetworkServiceManager = require('./networkServiceManager.cjs');
@@ -2559,12 +2560,84 @@ function registerHandlers() {
       if (!dockerSetup) {
         throw new Error('Docker not initialized');
       }
-      
+
       log.info('Manual ComfyUI optimization requested');
       await dockerSetup.optimizeComfyUIContainer();
       return { success: true, message: 'ComfyUI optimization completed' };
     } catch (error) {
       log.error('Error optimizing ComfyUI:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // ClaraCore Service IPC Handlers
+  ipcMain.handle('claracore-start', async () => {
+    try {
+      log.info('Starting ClaraCore service...');
+
+      // Check if service manager has claracore service
+      if (centralServiceManager && centralServiceManager.services.has('claracore')) {
+        await centralServiceManager.startService('claracore');
+        return { success: true, message: 'ClaraCore service started successfully' };
+      }
+
+      return { success: false, error: 'ClaraCore service not registered' };
+    } catch (error) {
+      log.error('Error starting ClaraCore:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('claracore-stop', async () => {
+    try {
+      log.info('Stopping ClaraCore service...');
+
+      if (centralServiceManager && centralServiceManager.services.has('claracore')) {
+        await centralServiceManager.stopService('claracore');
+        return { success: true, message: 'ClaraCore service stopped successfully' };
+      }
+
+      return { success: false, error: 'ClaraCore service not registered' };
+    } catch (error) {
+      log.error('Error stopping ClaraCore:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('claracore-restart', async () => {
+    try {
+      log.info('Restarting ClaraCore service...');
+
+      if (centralServiceManager && centralServiceManager.services.has('claracore')) {
+        await centralServiceManager.restartService('claracore');
+        return { success: true, message: 'ClaraCore service restarted successfully' };
+      }
+
+      return { success: false, error: 'ClaraCore service not registered' };
+    } catch (error) {
+      log.error('Error restarting ClaraCore:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('claracore-status', async () => {
+    try {
+      if (centralServiceManager && centralServiceManager.services.has('claracore')) {
+        const service = centralServiceManager.services.get('claracore');
+        const status = {
+          isRunning: service.state === 'running',
+          state: service.state,
+          pid: service.instance?.process?.pid || null,
+          uptime: service.instance?.startTime ? Date.now() - service.instance.startTime : 0,
+          restartAttempts: service.restartAttempts || 0,
+          url: 'http://localhost:8091'
+        };
+        return { success: true, status };
+      }
+
+      return { success: false, error: 'ClaraCore service not registered' };
+    } catch (error) {
+      log.error('Error getting ClaraCore status:', error);
       return { success: false, error: error.message };
     }
   });
@@ -3289,6 +3362,31 @@ function registerHandlers() {
     }
   });
 
+  // ClaraCore Remote Deployment IPC Handlers
+  ipcMain.handle('claracore-remote-test-setup', async (event, config) => {
+    try {
+      log.info('Testing ClaraCore remote setup...');
+      const service = new ClaraCoreRemoteService();
+      const result = await service.testSetup(config);
+      return result;
+    } catch (error) {
+      log.error('ClaraCore remote test error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('claracore-remote-deploy', async (event, config) => {
+    try {
+      log.info('Deploying ClaraCore to remote server...');
+      const service = new ClaraCoreRemoteService();
+      const result = await service.deploy(config);
+      return result;
+    } catch (error) {
+      log.error('ClaraCore remote deployment error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
   ipcMain.handle('docker-close-ssh-tunnel', async (event, serviceName) => {
     try {
       if (!dockerSetup) {
@@ -3926,10 +4024,21 @@ async function initializeInBackground(selectedFeatures) {
         const serviceDefinition = SERVICE_DEFINITIONS[serviceName];
         centralServiceManager.registerService(serviceName, serviceDefinition);
       });
+
+      // Auto-start critical core services (ClaraCore) regardless of user settings
+      // ClaraCore is essential and should always run
+      try {
+        sendStatusUpdate('starting-claracore', { message: 'Starting Clara Core AI Engine...' });
+        await centralServiceManager.startService('claracore');
+        log.info('✅ Clara Core AI Engine started successfully');
+      } catch (claraCoreError) {
+        log.error('❌ Failed to start Clara Core AI Engine:', claraCoreError);
+        // Continue with app startup even if ClaraCore fails
+      }
     } catch (error) {
       log.warn('Service configuration managers initialization failed:', error);
     }
-    
+
     // Check Docker availability
     sendStatusUpdate('checking-docker', { message: 'Checking Docker availability...' });
     dockerSetup = new DockerSetup();
@@ -4709,7 +4818,18 @@ app.on('window-all-closed', async () => {
         log.error('Error stopping MCP servers:', error);
       }
     }
-    
+
+    // Stop ClaraCore service
+    if (centralServiceManager && centralServiceManager.services.has('claracore')) {
+      try {
+        log.info('Stopping ClaraCore service...');
+        await centralServiceManager.stopService('claracore');
+        log.info('✅ ClaraCore service stopped successfully');
+      } catch (error) {
+        log.error('❌ Error stopping ClaraCore service:', error);
+      }
+    }
+
     // Stop Docker containers
     if (dockerSetup) {
       await dockerSetup.stop();
