@@ -425,13 +425,14 @@ const Sidebar = ({ activePage = 'dashboard', onPageChange }: SidebarProps) => {
           className="flex items-center gap-3 hover:opacity-80 transition-opacity"
         >
           <img src={logo} alt="Clara Logo" className="w-8 h-8 flex-shrink-0" />
-          <h1 
-            className={`text-2xl font-semibold text-gray-800 dark:text-gray-100 whitespace-nowrap overflow-hidden transition-all duration-300 ${
-              isExpanded ? 'opacity-100 w-auto' : 'opacity-0 w-0'
-            }`}
-          >
-            Clara
-          </h1>
+        <h2
+          className={`text-2xl font-bold text-gray-800 dark:text-gray-100 whitespace-nowrap overflow-hidden transition-all duration-300 ${
+            isExpanded ? 'opacity-100 w-auto' : 'opacity-0 w-0'
+          }`}
+          style={{ fontFamily: 'Quicksand, sans-serif' }}
+        >
+          Clara<span className="bg-gradient-to-r from-pink-400 via-purple-500 to-pink-400 bg-clip-text text-transparent">Verse</span>
+        </h2>
         </button>
       </div>
 

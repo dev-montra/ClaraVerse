@@ -8,6 +8,7 @@ import ToolBelt from './ToolBelt';
 import UnifiedServiceManager from './Settings/UnifiedServiceManager';
 import StartupTab from './Settings/StartupTab';
 import RemoteServerSetup from './Settings/RemoteServerSetup';
+import ClaraCoreModels from './ClaraCoreModels';
 import { 
   DEFAULT_UI_PREFERENCES, 
   FONT_SCALE_OPTIONS, 
@@ -76,8 +77,8 @@ const Settings = () => {
   
   // Sub-tabs for each main category
   const [activeInterfaceTab, setActiveInterfaceTab] = useState<'appearance' | 'ui-preferences'>('appearance');
-  const [activeAITab, setActiveAITab] = useState<'api' | 'mcp'>('api');
-  const [activeSystemTab, setActiveSystemTab] = useState<'startup' | 'services' | 'toolbelt' | 'updates' | 'remote-server'>('startup');
+  const [activeAITab, setActiveAITab] = useState<'api' | 'mcp' | 'toolbelt' | 'models'>('api');
+  const [activeSystemTab, setActiveSystemTab] = useState<'startup' | 'services' | 'updates' | 'remote-server'>('startup');
   
   // Keep legacy activeTab for backward compatibility during transition
   const [activeTab, setActiveTab] = useState<'personal' | 'api' | 'preferences' | 'mcp' | 'toolbelt' | 'updates' | 'sdk-demo' | 'servers' | 'startup'>('api');
@@ -104,7 +105,7 @@ const Settings = () => {
     if (activeMainTab === 'ai-models') {
       // Default to first sub-tab when main tab is selected
       const selected = activeAITab || 'api';
-      return selected as 'api' | 'mcp';
+      return selected as 'api' | 'mcp' | 'toolbelt';
     }
     if (activeMainTab === 'system') {
       // Default to first sub-tab when main tab is selected
@@ -112,7 +113,7 @@ const Settings = () => {
       if (selected === 'startup') return 'startup';
       if (selected === 'services') return 'servers';
       if (selected === 'remote-server') return 'remote-server' as any;
-      return selected as 'toolbelt' | 'updates';
+      return selected as 'updates';
     }
     return 'api'; // default
   };
@@ -167,6 +168,7 @@ const Settings = () => {
   const [checkingLlamacppUpdates, setCheckingLlamacppUpdates] = useState(false);
   const [updatingLlamacppBinaries, setUpdatingLlamacppBinaries] = useState(false);
   const [lastLlamacppUpdateCheck, setLastLlamacppUpdateCheck] = useState<Date | null>(null);
+
 
   // Add Docker services status state
   const [dockerServices, setDockerServices] = useState<DockerServicesStatus>({
@@ -644,6 +646,7 @@ const Settings = () => {
       }
     }
   }, [activeTab, providersLoading, providers]);
+
 
   // Check URL parameters on mount to set initial tab
   useEffect(() => {
@@ -1812,6 +1815,26 @@ const Settings = () => {
                   >
                     MCP Servers
                   </button>
+                  <button
+                    onClick={() => setActiveAITab('toolbelt')}
+                    className={`flex items-center px-2.5 py-1.5 rounded-md text-sm transition-colors ${
+                      activeAITab === 'toolbelt'
+                        ? 'text-sakura-600 dark:text-sakura-300 font-medium'
+                        : 'text-gray-700 dark:text-gray-200 hover:text-gray-900 dark:hover:text-gray-100'
+                    }`}
+                  >
+                    Tools
+                  </button>
+                  <button
+                    onClick={() => setActiveAITab('models')}
+                    className={`flex items-center px-2.5 py-1.5 rounded-md text-sm transition-colors ${
+                      activeAITab === 'models'
+                        ? 'text-sakura-600 dark:text-sakura-300 font-medium'
+                        : 'text-gray-700 dark:text-gray-200 hover:text-gray-900 dark:hover:text-gray-100'
+                    }`}
+                  >
+                    Models
+                  </button>
                 </div>
               )}
 
@@ -1842,16 +1865,6 @@ const Settings = () => {
                     }`}
                   >
                     Services
-                  </button>
-                  <button
-                    onClick={() => setActiveSystemTab('toolbelt')}
-                    className={`flex items-center px-2.5 py-1.5 rounded-md text-sm transition-colors ${
-                      activeSystemTab === 'toolbelt'
-                        ? 'text-sakura-600 dark:text-sakura-300 font-medium'
-                        : 'text-gray-700 dark:text-gray-200 hover:text-gray-900 dark:hover:text-gray-100'
-                    }`}
-                  >
-                    Tools
                   </button>
                   <button
                     onClick={() => setActiveSystemTab('updates')}
@@ -3360,6 +3373,18 @@ const Settings = () => {
           {/* Tools Tab */}
           {effectiveActiveTab === 'toolbelt' && (
             <ToolBelt />
+          )}
+
+          {/* Models Tab - ClaraCore Models Interface */}
+          {effectiveActiveTab === 'models' && (
+            <div className="glassmorphic rounded-xl overflow-hidden flex flex-col" style={{ height: 'calc(100vh - 8rem)' }}>
+              <ClaraCoreModels
+                onNavigateToServices={() => {
+                  setActiveMainTab('system');
+                  setActiveSystemTab('services');
+                }}
+              />
+            </div>
           )}
 
           {/* Services Tab */}

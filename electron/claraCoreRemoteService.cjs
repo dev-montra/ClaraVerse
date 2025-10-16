@@ -89,10 +89,18 @@ class ClaraCoreRemoteService {
       docker: false,
       nvidia: false,
       rocm: false,
-      strix: false
+      strix: false,
+      architecture: 'unknown'
     };
 
     try {
+      // Check CPU Architecture
+      const archInfo = await this.execCommand(conn, 'uname -m');
+      if (archInfo) {
+        details.architecture = archInfo.trim();
+        log.info(`Detected architecture: ${details.architecture}`);
+      }
+
       // Check Docker
       const dockerVersion = await this.execCommand(conn, 'docker --version 2>/dev/null');
       if (dockerVersion && !dockerVersion.includes('command not found')) {
@@ -133,6 +141,20 @@ class ClaraCoreRemoteService {
         if (cpuInfo.includes('Ryzen AI Max') || cpuInfo.includes('Strix') || cpuInfo.includes('8040')) {
           details.strix = true;
         }
+      }
+
+      // Check if ARM architecture (not supported yet)
+      const isARM = details.architecture.includes('arm') ||
+                    details.architecture.includes('aarch');
+
+      if (isARM) {
+        return {
+          detected: 'unsupported',
+          confidence: 'high',
+          details,
+          error: `ARM architecture (${details.architecture}) is not supported yet. ClaraCore Docker images are currently only available for x86_64/amd64 architecture.`,
+          unsupportedReason: 'arm'
+        };
       }
 
       // Determine recommendation

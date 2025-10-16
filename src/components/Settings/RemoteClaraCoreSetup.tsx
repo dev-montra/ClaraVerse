@@ -10,7 +10,10 @@ import {
   Cpu,
   Zap,
   AlertCircle,
-  CheckCheck
+  CheckCheck,
+  Boxes,
+  Layers,
+  Hexagon
 } from 'lucide-react';
 
 interface ClaraCoreRemoteConfig {
@@ -22,7 +25,7 @@ interface ClaraCoreRemoteConfig {
 }
 
 interface HardwareDetectionResult {
-  detected: 'cuda' | 'rocm' | 'strix' | 'cpu';
+  detected: 'cuda' | 'rocm' | 'strix' | 'cpu' | 'unsupported';
   confidence: 'high' | 'medium' | 'low';
   details: {
     docker: boolean;
@@ -35,7 +38,10 @@ interface HardwareDetectionResult {
     strix: boolean;
     cpuModel?: string;
     gpuInfo?: string;
+    architecture?: string;
   };
+  error?: string;
+  unsupportedReason?: string;
 }
 
 interface TestResult {
@@ -124,6 +130,23 @@ const RemoteClaraCoreSetup: React.FC = () => {
         const hw = result.hardware;
         addLog('info', '\n🔍 Hardware Detection Results:');
 
+        // Show architecture
+        if (hw.details.architecture) {
+          addLog('info', `  ℹ Architecture: ${hw.details.architecture}`);
+        }
+
+        // Check if unsupported architecture
+        if (hw.detected === 'unsupported') {
+          addLog('error', '\n❌ Unsupported Architecture');
+          addLog('error', `  ${hw.error}`);
+          addLog('warning', '\n📢 ARM/ARM64 support is coming soon!');
+          addLog('info', '  ClaraCore currently only supports x86_64/amd64 systems.');
+          addLog('info', '  Please use an x86_64 server or wait for ARM images.');
+          setState('test-failed');
+          setTestResult(result);
+          return;
+        }
+
         // Docker
         if (hw.details.docker) {
           addLog('success', `  ✓ Docker installed: ${hw.details.dockerVersion}`);
@@ -160,7 +183,7 @@ const RemoteClaraCoreSetup: React.FC = () => {
 
         // Show recommendation
         addLog('info', '\n💡 Recommendation:');
-        const hwTypes = {
+        const hwTypes: Record<string, string> = {
           cuda: 'NVIDIA CUDA (Best for NVIDIA GPUs)',
           rocm: 'AMD ROCm (Best for AMD GPUs)',
           strix: 'AMD Strix Halo (Optimized for Ryzen AI Max)',
@@ -236,9 +259,9 @@ const RemoteClaraCoreSetup: React.FC = () => {
 
   const getHardwareIcon = (type: string) => {
     switch(type) {
-      case 'cuda': return <Zap className="w-5 h-5 text-green-500" />;
-      case 'rocm': return <Cpu className="w-5 h-5 text-red-500" />;
-      case 'strix': return <Zap className="w-5 h-5 text-orange-500" />;
+      case 'cuda': return <Boxes className="w-5 h-5 text-green-500" />;
+      case 'rocm': return <Layers className="w-5 h-5 text-red-500" />;
+      case 'strix': return <Hexagon className="w-5 h-5 text-orange-500" />;
       case 'cpu': return <Cpu className="w-5 h-5 text-gray-500" />;
       default: return <Server className="w-5 h-5 text-blue-500" />;
     }
@@ -359,42 +382,213 @@ const RemoteClaraCoreSetup: React.FC = () => {
               Hardware Type
             </label>
             <div className="grid grid-cols-5 gap-3">
-              {[
-                { value: 'auto', label: 'Auto-detect', icon: <CheckCheck className="w-4 h-4" />, color: 'blue' },
-                { value: 'cuda', label: 'NVIDIA CUDA', icon: <Zap className="w-4 h-4" />, color: 'green' },
-                { value: 'rocm', label: 'AMD ROCm', icon: <Cpu className="w-4 h-4" />, color: 'red' },
-                { value: 'strix', label: 'Strix Halo', icon: <Zap className="w-4 h-4" />, color: 'orange' },
-                { value: 'cpu', label: 'CPU Only', icon: <Cpu className="w-4 h-4" />, color: 'gray' }
-              ].map(({ value, label, icon, color }) => (
-                <button
-                  key={value}
-                  onClick={() => setConfig({ ...config, hardwareType: value as any })}
-                  disabled={state === 'deploying'}
-                  className={`flex flex-col items-center gap-2 p-4 rounded-lg border-2 transition-all ${
-                    config.hardwareType === value
-                      ? `border-${color}-500 bg-${color}-50 dark:bg-${color}-900/30`
-                      : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
-                  } ${state === 'deploying' ? 'opacity-50 cursor-not-allowed' : ''}`}
-                >
-                  {icon}
-                  <span className={`text-xs font-medium text-center ${
-                    config.hardwareType === value
-                      ? `text-${color}-700 dark:text-${color}-300`
+              {/* Auto-detect */}
+              <button
+                onClick={() => setConfig({ ...config, hardwareType: 'auto' })}
+                disabled={state === 'deploying'}
+                className={`group relative flex flex-col items-center gap-3 p-5 rounded-xl border-2 transition-all ${
+                  config.hardwareType === 'auto'
+                    ? 'border-blue-500 bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-900/30 dark:to-blue-800/20 shadow-lg shadow-blue-500/20'
+                    : 'border-gray-200 dark:border-gray-700 hover:border-blue-300 dark:hover:border-blue-600 hover:bg-blue-50/50 dark:hover:bg-blue-900/10'
+                } ${state === 'deploying' ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+              >
+                <div className={`p-3 rounded-lg ${
+                  config.hardwareType === 'auto'
+                    ? 'bg-blue-100 dark:bg-blue-800/30'
+                    : 'bg-gray-100 dark:bg-gray-800'
+                }`}>
+                  <CheckCheck className={`w-6 h-6 ${
+                    config.hardwareType === 'auto'
+                      ? 'text-blue-600 dark:text-blue-400'
+                      : 'text-gray-500 dark:text-gray-400'
+                  }`} />
+                </div>
+                <div className="text-center">
+                  <div className={`text-sm font-semibold ${
+                    config.hardwareType === 'auto'
+                      ? 'text-blue-700 dark:text-blue-300'
                       : 'text-gray-700 dark:text-gray-300'
                   }`}>
-                    {label}
-                  </span>
-                  {value === 'auto' && config.hardwareType === 'auto' && (
-                    <span className="text-xs text-blue-600 dark:text-blue-400">(Recommended)</span>
-                  )}
-                </button>
-              ))}
+                    Auto-detect
+                  </div>
+                  <div className="text-xs text-blue-600 dark:text-blue-400 mt-1 font-medium">
+                    Recommended
+                  </div>
+                </div>
+                {config.hardwareType === 'auto' && (
+                  <div className="absolute -top-1 -right-1 w-5 h-5 bg-blue-500 rounded-full flex items-center justify-center">
+                    <CheckCircle className="w-3 h-3 text-white" />
+                  </div>
+                )}
+              </button>
+
+              {/* NVIDIA CUDA */}
+              <button
+                onClick={() => setConfig({ ...config, hardwareType: 'cuda' })}
+                disabled={state === 'deploying'}
+                className={`group relative flex flex-col items-center gap-3 p-5 rounded-xl border-2 transition-all ${
+                  config.hardwareType === 'cuda'
+                    ? 'border-green-500 bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-900/30 dark:to-emerald-900/20 shadow-lg shadow-green-500/20'
+                    : 'border-gray-200 dark:border-gray-700 hover:border-green-300 dark:hover:border-green-600 hover:bg-green-50/50 dark:hover:bg-green-900/10'
+                } ${state === 'deploying' ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+              >
+                <div className={`p-3 rounded-lg ${
+                  config.hardwareType === 'cuda'
+                    ? 'bg-green-100 dark:bg-green-800/30'
+                    : 'bg-gray-100 dark:bg-gray-800'
+                }`}>
+                  <Boxes className={`w-6 h-6 ${
+                    config.hardwareType === 'cuda'
+                      ? 'text-green-600 dark:text-green-400'
+                      : 'text-gray-500 dark:text-gray-400'
+                  }`} />
+                </div>
+                <div className="text-center">
+                  <div className={`text-sm font-semibold ${
+                    config.hardwareType === 'cuda'
+                      ? 'text-green-700 dark:text-green-300'
+                      : 'text-gray-700 dark:text-gray-300'
+                  }`}>
+                    NVIDIA CUDA
+                  </div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    RTX / GTX
+                  </div>
+                </div>
+                {config.hardwareType === 'cuda' && (
+                  <div className="absolute -top-1 -right-1 w-5 h-5 bg-green-500 rounded-full flex items-center justify-center">
+                    <CheckCircle className="w-3 h-3 text-white" />
+                  </div>
+                )}
+              </button>
+
+              {/* AMD ROCm */}
+              <button
+                onClick={() => setConfig({ ...config, hardwareType: 'rocm' })}
+                disabled={state === 'deploying'}
+                className={`group relative flex flex-col items-center gap-3 p-5 rounded-xl border-2 transition-all ${
+                  config.hardwareType === 'rocm'
+                    ? 'border-red-500 bg-gradient-to-br from-red-50 to-orange-50 dark:from-red-900/30 dark:to-orange-900/20 shadow-lg shadow-red-500/20'
+                    : 'border-gray-200 dark:border-gray-700 hover:border-red-300 dark:hover:border-red-600 hover:bg-red-50/50 dark:hover:bg-red-900/10'
+                } ${state === 'deploying' ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+              >
+                <div className={`p-3 rounded-lg ${
+                  config.hardwareType === 'rocm'
+                    ? 'bg-red-100 dark:bg-red-800/30'
+                    : 'bg-gray-100 dark:bg-gray-800'
+                }`}>
+                  <Layers className={`w-6 h-6 ${
+                    config.hardwareType === 'rocm'
+                      ? 'text-red-600 dark:text-red-400'
+                      : 'text-gray-500 dark:text-gray-400'
+                  }`} />
+                </div>
+                <div className="text-center">
+                  <div className={`text-sm font-semibold ${
+                    config.hardwareType === 'rocm'
+                      ? 'text-red-700 dark:text-red-300'
+                      : 'text-gray-700 dark:text-gray-300'
+                  }`}>
+                    AMD ROCm
+                  </div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Radeon RX
+                  </div>
+                </div>
+                {config.hardwareType === 'rocm' && (
+                  <div className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center">
+                    <CheckCircle className="w-3 h-3 text-white" />
+                  </div>
+                )}
+              </button>
+
+              {/* AMD Strix Halo */}
+              <button
+                onClick={() => setConfig({ ...config, hardwareType: 'strix' })}
+                disabled={state === 'deploying'}
+                className={`group relative flex flex-col items-center gap-3 p-5 rounded-xl border-2 transition-all ${
+                  config.hardwareType === 'strix'
+                    ? 'border-orange-500 bg-gradient-to-br from-orange-50 to-amber-50 dark:from-orange-900/30 dark:to-amber-900/20 shadow-lg shadow-orange-500/20'
+                    : 'border-gray-200 dark:border-gray-700 hover:border-orange-300 dark:hover:border-orange-600 hover:bg-orange-50/50 dark:hover:bg-orange-900/10'
+                } ${state === 'deploying' ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+              >
+                <div className={`p-3 rounded-lg ${
+                  config.hardwareType === 'strix'
+                    ? 'bg-orange-100 dark:bg-orange-800/30'
+                    : 'bg-gray-100 dark:bg-gray-800'
+                }`}>
+                  <Hexagon className={`w-6 h-6 ${
+                    config.hardwareType === 'strix'
+                      ? 'text-orange-600 dark:text-orange-400'
+                      : 'text-gray-500 dark:text-gray-400'
+                  }`} />
+                </div>
+                <div className="text-center">
+                  <div className={`text-sm font-semibold ${
+                    config.hardwareType === 'strix'
+                      ? 'text-orange-700 dark:text-orange-300'
+                      : 'text-gray-700 dark:text-gray-300'
+                  }`}>
+                    Strix Halo
+                  </div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    Ryzen AI
+                  </div>
+                </div>
+                {config.hardwareType === 'strix' && (
+                  <div className="absolute -top-1 -right-1 w-5 h-5 bg-orange-500 rounded-full flex items-center justify-center">
+                    <CheckCircle className="w-3 h-3 text-white" />
+                  </div>
+                )}
+              </button>
+
+              {/* CPU Only */}
+              <button
+                onClick={() => setConfig({ ...config, hardwareType: 'cpu' })}
+                disabled={state === 'deploying'}
+                className={`group relative flex flex-col items-center gap-3 p-5 rounded-xl border-2 transition-all ${
+                  config.hardwareType === 'cpu'
+                    ? 'border-gray-500 bg-gradient-to-br from-gray-50 to-slate-100 dark:from-gray-800/30 dark:to-slate-800/20 shadow-lg shadow-gray-500/20'
+                    : 'border-gray-200 dark:border-gray-700 hover:border-gray-400 dark:hover:border-gray-600 hover:bg-gray-50/50 dark:hover:bg-gray-800/10'
+                } ${state === 'deploying' ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+              >
+                <div className={`p-3 rounded-lg ${
+                  config.hardwareType === 'cpu'
+                    ? 'bg-gray-200 dark:bg-gray-700/50'
+                    : 'bg-gray-100 dark:bg-gray-800'
+                }`}>
+                  <Cpu className={`w-6 h-6 ${
+                    config.hardwareType === 'cpu'
+                      ? 'text-gray-700 dark:text-gray-300'
+                      : 'text-gray-500 dark:text-gray-400'
+                  }`} />
+                </div>
+                <div className="text-center">
+                  <div className={`text-sm font-semibold ${
+                    config.hardwareType === 'cpu'
+                      ? 'text-gray-700 dark:text-gray-300'
+                      : 'text-gray-700 dark:text-gray-300'
+                  }`}>
+                    CPU Only
+                  </div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    No GPU
+                  </div>
+                </div>
+                {config.hardwareType === 'cpu' && (
+                  <div className="absolute -top-1 -right-1 w-5 h-5 bg-gray-500 rounded-full flex items-center justify-center">
+                    <CheckCircle className="w-3 h-3 text-white" />
+                  </div>
+                )}
+              </button>
             </div>
             {config.hardwareType !== 'auto' && (
-              <p className="mt-2 text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
-                <AlertCircle className="w-3 h-3" />
-                Manual override - auto-detection will be skipped
-              </p>
+              <div className="mt-3 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
+                <p className="text-sm text-amber-700 dark:text-amber-300 flex items-center gap-2">
+                  <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                  <span>Manual override enabled - auto-detection will be skipped during deployment</span>
+                </p>
+              </div>
             )}
           </div>
 
