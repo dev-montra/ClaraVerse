@@ -293,13 +293,10 @@ const CreateNotebookModal: React.FC<CreateNotebookModalProps> = ({ onClose, onCr
         }
         
         throw new Error(
+          `⚠️⚠️Note: If the notebook is created in remote mode then Notebook will not able to access Clara Core running on localhost. but vise versa is possible`+
           `⚠️ Model Validation Failed\n\n${errorMessages.join('\n\n')}\n\n` +
-          `Please check:\n` +
-          `• Model names are correct\n` +
-          `• API keys are valid\n` +
-          `• Services are running (Clara Core / Ollama / OpenAI)\n` +
-          `• Network connectivity\n\n` +
-          `If you proceed, document processing will fail silently.`
+          `Please check:\n ` +
+          `If you proceed, document processing will fail silently.\n\n\n`
         );
       }
 

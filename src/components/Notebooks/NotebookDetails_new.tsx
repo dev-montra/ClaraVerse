@@ -110,6 +110,10 @@ const NotebookDetails_new: React.FC<NotebookDetailsNewProps> = ({
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [isBackendHealthy, setIsBackendHealthy] = useState(true);
+
+  // Python backend deployment mode
+  const [pythonBackendMode, setPythonBackendMode] = useState<'docker' | 'remote' | 'manual' | null>(null);
+  const [pythonBackendUrl, setPythonBackendUrl] = useState<string | null>(null);
   
   // Notebook-specific model connectivity status
   const [modelStatus, setModelStatus] = useState<{
@@ -152,6 +156,28 @@ const NotebookDetails_new: React.FC<NotebookDetailsNewProps> = ({
       loadModels();
     }
   }, [providers]);
+
+  // Check Python backend deployment mode
+  useEffect(() => {
+    const checkPythonBackendMode = async () => {
+      try {
+        if ((window as any).electronAPI?.invoke) {
+          const status = await (window as any).electronAPI.invoke('check-python-status');
+          if (status) {
+            setPythonBackendMode(status.mode || null);
+            setPythonBackendUrl(status.serviceUrl || null);
+          }
+        }
+      } catch (error) {
+        console.error('Failed to check Python backend mode:', error);
+      }
+    };
+
+    checkPythonBackendMode();
+    // Check periodically every 30 seconds
+    const interval = setInterval(checkPythonBackendMode, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Validate current notebook's models (LLM and Embedding) periodically
   // Once connected successfully, stop checking to reduce pressure on models
@@ -1547,6 +1573,30 @@ const NotebookDetails_new: React.FC<NotebookDetailsNewProps> = ({
               </div>
             </div>
           </div>
+
+          {/* Right side - Python backend deployment mode */}
+          {pythonBackendMode && (
+            <div className="flex items-center space-x-2 mr-2">
+              <div className="text-xs text-gray-500 dark:text-gray-400 font-medium">Python Backend:</div>
+              <div className={`flex items-center space-x-1 px-2 py-1 rounded-lg text-xs font-medium ${
+                pythonBackendMode === 'docker'
+                  ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300'
+                  : pythonBackendMode === 'remote'
+                  ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300'
+                  : 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
+              }`}>
+                {pythonBackendMode === 'docker' && <span>🐳</span>}
+                {pythonBackendMode === 'remote' && <span>🌐</span>}
+                {pythonBackendMode === 'manual' && <span>⚙️</span>}
+                <span className="capitalize">{pythonBackendMode}</span>
+                {pythonBackendUrl && pythonBackendMode !== 'docker' && (
+                  <span className="text-[10px] opacity-75 ml-1">
+                    ({new URL(pythonBackendUrl).hostname})
+                  </span>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

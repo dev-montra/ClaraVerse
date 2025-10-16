@@ -468,12 +468,76 @@ public async validateModels(config: NotebookCreate): Promise<{
   }
 
   try {
+    // If Python backend is in Docker and needs to access services on host,
+    // translate localhost URLs to host.docker.internal for Windows/Mac
+    const configForValidation = { ...config };
+
+    // Check platform and if Python backend is in Docker
+    // Parse userAgent to detect platform
+    const userAgent = navigator.userAgent.toLowerCase();
+    const isWindows = userAgent.includes('win');
+    const isMac = userAgent.includes('mac');
+    const isLinux = userAgent.includes('linux') || userAgent.includes('x11');
+
+    const isPythonInDocker = this.baseUrl.includes('localhost:5001') ||
+                             this.baseUrl.includes('127.0.0.1:5001');
+
+    // Determine the host address based on platform
+    let hostAddress = '';
+    if (isPythonInDocker) {
+      if (isWindows || isMac) {
+        // Windows/Mac Docker Desktop provides host.docker.internal
+        hostAddress = 'host.docker.internal';
+      } else if (isLinux) {
+        // Linux: Use Docker bridge gateway IP (default is 172.17.0.1)
+        // Note: This assumes default Docker networking.
+        // Alternatively, containers can be started with --add-host=host.docker.internal:host-gateway
+        hostAddress = '172.17.0.1';
+        console.log('🐧 Linux detected: Using Docker bridge gateway IP for host access');
+      }
+    }
+
+    if (hostAddress && isPythonInDocker) {
+      // Translate localhost URLs for LLM provider
+      if (configForValidation.llm_provider.baseUrl) {
+        configForValidation.llm_provider = {
+          ...configForValidation.llm_provider,
+          baseUrl: configForValidation.llm_provider.baseUrl
+            .replace('http://localhost:', `http://${hostAddress}:`)
+            .replace('http://127.0.0.1:', `http://${hostAddress}:`)
+            .replace('https://localhost:', `https://${hostAddress}:`)
+            .replace('https://127.0.0.1:', `https://${hostAddress}:`)
+        };
+      }
+
+      // Translate localhost URLs for embedding provider
+      if (configForValidation.embedding_provider.baseUrl) {
+        configForValidation.embedding_provider = {
+          ...configForValidation.embedding_provider,
+          baseUrl: configForValidation.embedding_provider.baseUrl
+            .replace('http://localhost:', `http://${hostAddress}:`)
+            .replace('http://127.0.0.1:', `http://${hostAddress}:`)
+            .replace('https://localhost:', `https://${hostAddress}:`)
+            .replace('https://127.0.0.1:', `https://${hostAddress}:`)
+        };
+      }
+
+      const platformName = isWindows ? 'Windows' : isMac ? 'macOS' : isLinux ? 'Linux' : 'Unknown';
+      console.log(`🔄 Translated URLs for Docker container access (${platformName}):`, {
+        host_address: hostAddress,
+        original_llm: config.llm_provider.baseUrl,
+        translated_llm: configForValidation.llm_provider.baseUrl,
+        original_emb: config.embedding_provider.baseUrl,
+        translated_emb: configForValidation.embedding_provider.baseUrl
+      });
+    }
+
     const response = await fetch(`${this.baseUrl}/notebooks/validate-models`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(config),
+      body: JSON.stringify(configForValidation),
     });
 
     if (!response.ok) {
@@ -507,12 +571,69 @@ public async validateModels(config: NotebookCreate): Promise<{
     }
 
     try {
+      // Apply same URL translation for notebook creation
+      const notebookForCreation = { ...notebook };
+
+      // Check platform and if Python backend is in Docker
+      const userAgent = navigator.userAgent.toLowerCase();
+      const isWindows = userAgent.includes('win');
+      const isMac = userAgent.includes('mac');
+      const isLinux = userAgent.includes('linux') || userAgent.includes('x11');
+
+      const isPythonInDocker = this.baseUrl.includes('localhost:5001') ||
+                               this.baseUrl.includes('127.0.0.1:5001');
+
+      // Determine the host address based on platform
+      let hostAddress = '';
+      if (isPythonInDocker) {
+        if (isWindows || isMac) {
+          hostAddress = 'host.docker.internal';
+        } else if (isLinux) {
+          hostAddress = '172.17.0.1';
+        }
+      }
+
+      if (hostAddress && isPythonInDocker) {
+        // Translate localhost URLs for LLM provider
+        if (notebookForCreation.llm_provider.baseUrl) {
+          notebookForCreation.llm_provider = {
+            ...notebookForCreation.llm_provider,
+            baseUrl: notebookForCreation.llm_provider.baseUrl
+              .replace('http://localhost:', `http://${hostAddress}:`)
+              .replace('http://127.0.0.1:', `http://${hostAddress}:`)
+              .replace('https://localhost:', `https://${hostAddress}:`)
+              .replace('https://127.0.0.1:', `https://${hostAddress}:`)
+          };
+        }
+
+        // Translate localhost URLs for embedding provider
+        if (notebookForCreation.embedding_provider.baseUrl) {
+          notebookForCreation.embedding_provider = {
+            ...notebookForCreation.embedding_provider,
+            baseUrl: notebookForCreation.embedding_provider.baseUrl
+              .replace('http://localhost:', `http://${hostAddress}:`)
+              .replace('http://127.0.0.1:', `http://${hostAddress}:`)
+              .replace('https://localhost:', `https://${hostAddress}:`)
+              .replace('https://127.0.0.1:', `https://${hostAddress}:`)
+          };
+        }
+
+        const platformName = isWindows ? 'Windows' : isMac ? 'macOS' : isLinux ? 'Linux' : 'Unknown';
+        console.log(`🔄 Translated URLs for notebook creation (${platformName}):`, {
+          host_address: hostAddress,
+          original_llm: notebook.llm_provider.baseUrl,
+          translated_llm: notebookForCreation.llm_provider.baseUrl,
+          original_emb: notebook.embedding_provider.baseUrl,
+          translated_emb: notebookForCreation.embedding_provider.baseUrl
+        });
+      }
+
       const response = await fetch(`${this.baseUrl}/notebooks`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(notebook),
+        body: JSON.stringify(notebookForCreation),
       });
 
       if (!response.ok) {
