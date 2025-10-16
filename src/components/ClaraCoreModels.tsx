@@ -29,18 +29,51 @@ const ClaraCoreModels: React.FC<ClaraCoreModelsProps> = ({ onNavigateToServices 
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [claraCoreRunning, setClaraCoreRunning] = useState<boolean>(false);
+  const [deploymentMode, setDeploymentMode] = useState<string>('local');
   const webviewRef = useRef<WebviewTag | null>(null);
 
-  // Check ClaraCore service status
+  // Check ClaraCore service status using unified service manager
   useEffect(() => {
     const checkClaraCoreStatus = async () => {
       try {
+        // First, try to get enhanced status from unified service manager
+        if ((window as any).serviceConfig?.getEnhancedStatus) {
+          const enhancedStatus = await (window as any).serviceConfig.getEnhancedStatus();
+          const claraCoreStatus = enhancedStatus?.claracore;
+          
+          if (claraCoreStatus) {
+            const isRunning = claraCoreStatus.state === 'running';
+            const mode = claraCoreStatus.deploymentMode || 'local';
+            const serviceUrl = claraCoreStatus.serviceUrl;
+            
+            setClaraCoreRunning(isRunning);
+            setDeploymentMode(mode);
+            
+            // Use the service URL if available, otherwise construct based on mode
+            if (serviceUrl) {
+              setClaraCoreUrl(`${serviceUrl}/ui/models`);
+            } else if (mode === 'docker') {
+              setClaraCoreUrl('http://localhost:8091/ui/models');
+            } else if (mode === 'remote') {
+              // Remote URL should be in serviceUrl, but fallback to local
+              setClaraCoreUrl(serviceUrl ? `${serviceUrl}/ui/models` : 'http://localhost:8091/ui/models');
+            } else {
+              // Local mode
+              setClaraCoreUrl('http://localhost:8091/ui/models');
+            }
+            
+            console.log(`🔍 ClaraCore Status: running=${isRunning}, mode=${mode}, url=${serviceUrl || 'default'}`);
+            return;
+          }
+        }
+        
+        // Fallback to legacy API if unified service manager is not available
         const result = await (window as any).claraCore?.getStatus();
         if (result && result.success) {
           setClaraCoreRunning(result.status.isRunning || false);
-          // Append /ui/models to the base URL
           const baseUrl = result.status.url || 'http://localhost:8091';
           setClaraCoreUrl(`${baseUrl}/ui/models`);
+          setDeploymentMode('local'); // Default to local for legacy API
         } else {
           setClaraCoreRunning(false);
         }
@@ -140,8 +173,11 @@ const ClaraCoreModels: React.FC<ClaraCoreModelsProps> = ({ onNavigateToServices 
           <h3 className="text-xl font-medium text-gray-900 dark:text-white mb-3">
             ClaraCore is not running
           </h3>
-          <p className="text-sm text-gray-600 dark:text-gray-400 mb-6">
+          <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
             Start ClaraCore service to access the models interface
+          </p>
+          <p className="text-xs text-gray-500 dark:text-gray-500 mb-6">
+            Mode: {deploymentMode} • Checked all deployment modes (local, docker, remote)
           </p>
           {onNavigateToServices && (
             <button
@@ -226,7 +262,7 @@ const ClaraCoreModels: React.FC<ClaraCoreModelsProps> = ({ onNavigateToServices 
             transform: 'scale(0.75)',
             transformOrigin: 'top left'
           }}
-          allowpopups="true"
+          allowpopups={true}
         />
       </div>
     </div>

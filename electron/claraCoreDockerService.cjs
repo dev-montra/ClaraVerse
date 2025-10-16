@@ -336,7 +336,12 @@ class ClaraCoreDockerService {
       if (this.gpuType === 'cuda') {
         containerConfig.Env.push('NVIDIA_VISIBLE_DEVICES=all');
         containerConfig.Env.push('NVIDIA_DRIVER_CAPABILITIES=compute,utility');
-        containerConfig.HostConfig.Runtime = 'nvidia';
+        // Use modern DeviceRequests API instead of legacy Runtime for better Linux compatibility
+        containerConfig.HostConfig.DeviceRequests = [{
+          Driver: 'nvidia',
+          Count: -1, // All GPUs
+          Capabilities: [['gpu', 'compute', 'utility']]
+        }];
       } else if (this.gpuType === 'rocm') {
         containerConfig.HostConfig.Devices = [
           { PathOnHost: '/dev/kfd', PathInContainer: '/dev/kfd', CgroupPermissions: 'rwm' },

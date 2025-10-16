@@ -184,6 +184,7 @@ const UnifiedServiceManager: React.FC = () => {
 
   // Remote server state
   const [remoteServerConfig, setRemoteServerConfig] = useState<any>(null);
+  const [claraCoreRemoteConfig, setClaraCoreRemoteConfig] = useState<any>(null);
   const [loadingRemoteConfig, setLoadingRemoteConfig] = useState(false);
 
   const expectedServiceStatesRef = useRef<{ [key: string]: boolean }>({});
@@ -204,9 +205,13 @@ const UnifiedServiceManager: React.FC = () => {
   // Load remote server configuration
   const loadRemoteServerConfig = async () => {
     try {
-      if (window.electron?.store?.get) {
-        const config = await window.electron.store.get('remoteServer');
+      if ((window as any).electron?.store?.get) {
+        const config = await (window as any).electron.store.get('remoteServer');
         setRemoteServerConfig(config);
+        
+        // Also load ClaraCore remote config
+        const claraCoreConfig = await (window as any).electron.store.get('claraCoreRemote');
+        setClaraCoreRemoteConfig(claraCoreConfig);
       }
     } catch (error) {
       console.error('Failed to load remote server config:', error);
@@ -1248,27 +1253,44 @@ const UnifiedServiceManager: React.FC = () => {
               {/* Remote Mode */}
               <button
                 onClick={() => {
-                  // Check if remote server is configured
-                  if (!remoteServerConfig || !remoteServerConfig.isConnected) {
-                    alert('⚠️ Please setup Remote Server first!\n\nGo to Settings → System → Remote Server to configure your remote server.');
-                    return;
+                  let remoteUrl = '';
+                  let isDeployed = false;
+
+                  // For ClaraCore, check both claraCoreRemote and remoteServer configs
+                  if (service.id === 'claracore') {
+                    if (claraCoreRemoteConfig?.deployed && claraCoreRemoteConfig?.url) {
+                      // ClaraCore deployed via dedicated remote deployment
+                      remoteUrl = claraCoreRemoteConfig.url;
+                      isDeployed = true;
+                      console.log('🔍 [Remote Mode] ClaraCore deployed via dedicated remote:', remoteUrl);
+                    } else if (remoteServerConfig?.services?.claracore?.url) {
+                      // ClaraCore deployed via remote server deployment
+                      remoteUrl = remoteServerConfig.services.claracore.url;
+                      isDeployed = true;
+                      console.log('🔍 [Remote Mode] ClaraCore deployed via remote server:', remoteUrl);
+                    }
+                  } else {
+                    // For other services, check remote server config
+                    // Map service IDs to remote server keys (python-backend -> python)
+                    const remoteServiceKey = service.id === 'python-backend' ? 'python' : service.id;
+                    console.log('🔍 [Remote Mode] Checking remote service:', service.id, '-> key:', remoteServiceKey);
+                    console.log('🔍 [Remote Mode] Available services:', remoteServerConfig?.services);
+                    const remoteService = remoteServerConfig?.services?.[remoteServiceKey];
+                    console.log('🔍 [Remote Mode] Found remote service:', remoteService);
+
+                    if (remoteService?.url) {
+                      remoteUrl = remoteService.url;
+                      isDeployed = true;
+                    }
                   }
 
-                  // Check if this service is deployed remotely
-                  // Map service IDs to remote server keys (python-backend -> python)
-                  const remoteServiceKey = service.id === 'python-backend' ? 'python' : service.id;
-                  console.log('🔍 [Remote Mode] Checking remote service:', service.id, '-> key:', remoteServiceKey);
-                  console.log('🔍 [Remote Mode] Available services:', remoteServerConfig.services);
-                  const remoteService = remoteServerConfig.services?.[remoteServiceKey];
-                  console.log('🔍 [Remote Mode] Found remote service:', remoteService);
-
-                  if (!remoteService) {
-                    alert(`⚠️ ${service.name} is not deployed on remote server.\n\nGo to Remote Server tab to deploy it first.`);
+                  // Check if service is deployed
+                  if (!isDeployed || !remoteUrl) {
+                    alert(`⚠️ ${service.name} is not deployed on remote server.\n\n${service.id === 'claracore' ? 'Go to Remote ClaraCore tab to deploy it first.' : 'Go to Remote Server tab to deploy it first.'}`);
                     return;
                   }
 
                   // Switch to remote mode
-                  const remoteUrl = remoteService.url;
                   console.log('🔍 [Remote Mode] Using URL:', remoteUrl);
 
                   // Use the new mode switch handler with confirmation
@@ -1282,11 +1304,15 @@ const UnifiedServiceManager: React.FC = () => {
                     else if (service.id === 'python-backend') fetchPythonBackendStatus();
                   }, 1000);
                 }}
-                disabled={!remoteServerConfig?.isConnected}
+                disabled={
+                  service.id === 'claracore' 
+                    ? !claraCoreRemoteConfig?.deployed && !remoteServerConfig?.services?.claracore
+                    : !remoteServerConfig?.isConnected
+                }
                 className={`flex-1 p-3 rounded-lg border-2 transition-all relative ${
                   config.mode === 'remote'
                     ? 'border-orange-500 bg-orange-50 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 shadow-md'
-                    : remoteServerConfig?.isConnected
+                    : (service.id === 'claracore' ? (claraCoreRemoteConfig?.deployed || remoteServerConfig?.services?.claracore) : remoteServerConfig?.isConnected)
                       ? 'border-gray-200 dark:border-gray-700 hover:border-orange-300 dark:hover:border-orange-500 hover:bg-orange-50/50 dark:hover:bg-orange-900/10 text-gray-700 dark:text-gray-300'
                       : 'border-gray-200 dark:border-gray-700 bg-gray-100 dark:bg-gray-800/50 text-gray-400 dark:text-gray-600 cursor-not-allowed'
                 }`}
@@ -1304,9 +1330,11 @@ const UnifiedServiceManager: React.FC = () => {
                   )}
                 </div>
                 <p className="text-xs mt-1 text-left">
-                  {remoteServerConfig?.isConnected
-                    ? `Server: ${remoteServerConfig.host}`
-                    : 'Setup required'
+                  {service.id === 'claracore' && claraCoreRemoteConfig?.deployed
+                    ? `Server: ${claraCoreRemoteConfig.host}`
+                    : remoteServerConfig?.isConnected
+                      ? `Server: ${remoteServerConfig.host}`
+                      : 'Setup required'
                   }
                 </p>
               </button>

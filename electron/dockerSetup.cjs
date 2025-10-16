@@ -2154,16 +2154,14 @@ class DockerSetup extends EventEmitter {
           },
           Binds: config.volumes,
           NetworkMode: networkMode,
-          // Add GPU runtime support if available
-          ...(useGPURuntime && { Runtime: 'nvidia' }),
           // Add restart policy if specified
           ...(config.restartPolicy && { RestartPolicy: { Name: config.restartPolicy } }),
-          // Add GPU device access for NVIDIA runtime
+          // Add GPU device access using modern DeviceRequests API (works on both Linux and Windows)
           ...(useGPURuntime && {
             DeviceRequests: [{
               Driver: 'nvidia',
               Count: -1, // All GPUs
-              Capabilities: [['gpu']]
+              Capabilities: [['gpu', 'compute', 'utility']]
             }]
           })
         },
