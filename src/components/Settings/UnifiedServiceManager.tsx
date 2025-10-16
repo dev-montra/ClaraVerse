@@ -632,6 +632,76 @@ const UnifiedServiceManager: React.FC = () => {
     }
   };
 
+  // Handle mode switching with confirmation for Clara Core
+  const handleModeSwitch = async (serviceName: string, newMode: string, url?: string) => {
+    const currentConfig = serviceConfigs[serviceName];
+    const currentMode = currentConfig?.mode;
+
+    // If switching from an active mode, ask for confirmation
+    if (serviceName === 'claracore' && currentMode && currentMode !== newMode) {
+      const modeNames: Record<string, string> = {
+        local: 'Local',
+        docker: 'Docker',
+        manual: 'Manual',
+        remote: 'Remote'
+      };
+
+      const confirmed = window.confirm(
+        `Do you want to stop the ${modeNames[currentMode] || currentMode} Clara Core service and switch to ${modeNames[newMode] || newMode} mode?\n\nThis will:\n1. Stop the currently running service\n2. Switch to ${modeNames[newMode]} mode\n3. Start the service automatically`
+      );
+
+      if (!confirmed) {
+        return; // User cancelled, don't switch
+      }
+
+      // Stop the current service based on mode
+      try {
+        if (currentMode === 'local') {
+          await (window as any).claraCore?.stop();
+        } else if (currentMode === 'docker') {
+          await (window as any).claraCore?.stopDocker();
+        }
+        
+        // Wait a moment for service to stop
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      } catch (error) {
+        console.error('Error stopping current service:', error);
+      }
+    }
+
+    // Update local state immediately
+    setServiceConfigs((prev: any) => ({
+      ...prev,
+      [serviceName]: {
+        ...prev[serviceName],
+        mode: newMode,
+        url: url
+      }
+    }));
+
+    // Update backend config
+    await updateServiceConfig(serviceName, newMode, url);
+
+    // Auto-start the new service for Clara Core
+    if (serviceName === 'claracore') {
+      try {
+        // Wait a moment before starting
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        if (newMode === 'local') {
+          await (window as any).claraCore?.start();
+        } else if (newMode === 'docker') {
+          await (window as any).claraCore?.startDocker();
+        }
+        
+        // Refresh status
+        setTimeout(() => fetchClaraCoreStatus(), 2000);
+      } catch (error) {
+        console.error('Error starting new service:', error);
+      }
+    }
+  };
+
   // Save manual service URL (from Settings.tsx)
   const saveManualServiceUrl = async (serviceName: string) => {
     const urlToSave = tempServiceUrls[serviceName] || serviceConfigs[serviceName]?.url || '';
@@ -1063,17 +1133,8 @@ const UnifiedServiceManager: React.FC = () => {
               {service.platformSupport.local && (
                 <button
                   onClick={() => {
-                    // Immediately update local state for instant UI response
-                    setServiceConfigs((prev: any) => ({
-                      ...prev,
-                      [service.id]: {
-                        ...prev[service.id],
-                        mode: 'local'
-                      }
-                    }));
-
-                    // Update backend config
-                    updateServiceConfig(service.id, 'local');
+                    // Use the new mode switch handler with confirmation
+                    handleModeSwitch(service.id, 'local');
                   }}
                   className={`flex-1 p-3 rounded-lg border-2 transition-all relative ${
                     config.mode === 'local'
@@ -1104,17 +1165,8 @@ const UnifiedServiceManager: React.FC = () => {
                 <button
                   onClick={() => {
                     if (!isManualOnly) {
-                      // Immediately update local state for instant UI response
-                      setServiceConfigs((prev: any) => ({
-                        ...prev,
-                        [service.id]: {
-                          ...prev[service.id],
-                          mode: 'docker'
-                        }
-                      }));
-
-                      // Update backend config
-                      updateServiceConfig(service.id, 'docker');
+                      // Use the new mode switch handler with confirmation
+                      handleModeSwitch(service.id, 'docker');
                     }
                   }}
                   disabled={isManualOnly}
@@ -1160,24 +1212,14 @@ const UnifiedServiceManager: React.FC = () => {
 
                   const urlToUse = config.url || defaultUrl;
 
-                  // Immediately update local state for instant UI response
-                  setServiceConfigs((prev: any) => ({
-                    ...prev,
-                    [service.id]: {
-                      ...prev[service.id],
-                      mode: 'manual',
-                      url: urlToUse
-                    }
-                  }));
-
                   // Set temp URL for editing
                   setTempServiceUrls(prev => ({
                     ...prev,
                     [service.id]: urlToUse
                   }));
 
-                  // Update config with default URL to satisfy backend validation
-                  updateServiceConfig(service.id, 'manual', urlToUse);
+                  // Use the new mode switch handler with confirmation
+                  handleModeSwitch(service.id, 'manual', urlToUse);
                 }}
                 className={`flex-1 p-3 rounded-lg border-2 transition-all relative ${
                   config.mode === 'manual'
@@ -1229,16 +1271,8 @@ const UnifiedServiceManager: React.FC = () => {
                   const remoteUrl = remoteService.url;
                   console.log('🔍 [Remote Mode] Using URL:', remoteUrl);
 
-                  setServiceConfigs((prev: any) => ({
-                    ...prev,
-                    [service.id]: {
-                      ...prev[service.id],
-                      mode: 'remote',
-                      url: remoteUrl
-                    }
-                  }));
-
-                  updateServiceConfig(service.id, 'remote', remoteUrl);
+                  // Use the new mode switch handler with confirmation
+                  handleModeSwitch(service.id, 'remote', remoteUrl);
 
                   // Refresh service status after mode change
                   setTimeout(() => {
