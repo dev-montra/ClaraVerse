@@ -273,42 +273,6 @@ const RemoteClaraCoreSetup: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Header */}
-      <div className="glassmorphic rounded-xl p-6">
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center gap-3">
-            <Server className="w-6 h-6 text-blue-500" />
-            <div>
-              <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
-                Remote ClaraCore Setup
-              </h2>
-              <p className="text-sm text-gray-600 dark:text-gray-400">
-                Deploy ClaraCore AI Engine to a remote server with GPU acceleration
-              </p>
-            </div>
-          </div>
-          {state === 'deployed' && (
-            <span className="px-3 py-1 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300">
-              ✓ Deployed
-            </span>
-          )}
-        </div>
-
-        {/* Info Box */}
-        <div className="bg-blue-50/50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
-          <div className="flex items-start gap-3">
-            <Info className="w-5 h-5 text-blue-600 dark:text-blue-400 mt-0.5 flex-shrink-0" />
-            <div>
-              <h4 className="font-medium text-blue-900 dark:text-blue-100 mb-2">How It Works</h4>
-              <ul className="text-sm text-blue-700 dark:text-blue-300 space-y-1">
-                <li>• Test Setup: Automatically detects your server's hardware (NVIDIA, AMD, CPU)</li>
-                <li>• Auto-Install: Installs Docker and GPU drivers if needed</li>
-                <li>• Smart Deploy: Pulls the right ClaraCore image for your hardware</li>
-                <li>• Manual Override: You can choose a different image if auto-detection is wrong</li>
-              </ul>
-            </div>
-          </div>
-        </div>
-      </div>
 
       {/* Configuration Form */}
       <div className="glassmorphic rounded-xl p-6">
