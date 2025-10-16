@@ -1,14 +1,14 @@
 import React, { useEffect, useState, useRef } from 'react';
-import { 
-  Server, 
-  Bot, 
-  Code, 
-  Image, 
-  Zap, 
-  ExternalLink, 
-  Play, 
-  Square, 
-  RefreshCw, 
+import {
+  Server,
+  Bot,
+  Code,
+  Image,
+  Zap,
+  ExternalLink,
+  Play,
+  Square,
+  RefreshCw,
   AlertCircle,
   HardDrive,
   Save,
@@ -16,6 +16,7 @@ import {
   X,
   Monitor
 } from 'lucide-react';
+import { useProviders } from '../../contexts/ProvidersContext';
 
 // Interfaces for service types
 interface CoreService {
@@ -76,6 +77,9 @@ interface ServiceStatus {
 }
 
 const UnifiedServiceManager: React.FC = () => {
+  // Use ProvidersContext for managing Clara's Core provider URL updates
+  const { updateProvider: updateProviderInContext, providers } = useProviders();
+
   // Core service states (reused from existing ServicesTab)
   const [dockerServices, setDockerServices] = useState<DockerServicesStatus>({
     dockerAvailable: false,
@@ -126,6 +130,9 @@ const UnifiedServiceManager: React.FC = () => {
     claraCore: true
   });
   const [savingFeatureConfig, setSavingFeatureConfig] = useState(false);
+
+  // Active Service Tab State (for card-based UI)
+  const [activeServiceTab, setActiveServiceTab] = useState<string>('claracore');
 
   // Load feature configuration
   const loadFeatureConfig = async () => {
@@ -470,6 +477,7 @@ const UnifiedServiceManager: React.FC = () => {
       } else if (mode === 'remote') {
         // Remote mode - check remote server health
         const remoteUrl = serviceConfigs.claracore?.url || claraCoreRemoteConfig?.url || remoteServerConfig?.services?.claracore?.url;
+        console.log('🔍 Checking ClaraCore remote status:', remoteUrl);
         if (remoteUrl) {
           try {
             const response = await fetch(`${remoteUrl}/health`, {
@@ -477,12 +485,14 @@ const UnifiedServiceManager: React.FC = () => {
               signal: AbortSignal.timeout(5000)
             });
             const isHealthy = response.ok;
+            console.log('✅ ClaraCore remote health check:', isHealthy);
             setClaraCoreStatus({
               running: isHealthy,
               serviceUrl: remoteUrl,
               error: isHealthy ? undefined : 'Remote service unhealthy'
             });
           } catch (fetchError) {
+            console.error('❌ ClaraCore remote health check failed:', fetchError);
             setClaraCoreStatus({
               running: false,
               serviceUrl: remoteUrl,
@@ -490,6 +500,7 @@ const UnifiedServiceManager: React.FC = () => {
             });
           }
         } else {
+          console.warn('⚠️ ClaraCore remote URL not configured');
           setClaraCoreStatus({
             running: false,
             serviceUrl: 'http://localhost:8091',
@@ -841,13 +852,29 @@ const UnifiedServiceManager: React.FC = () => {
       try {
         // Wait a moment before starting
         await new Promise(resolve => setTimeout(resolve, 1000));
-        
+
         if (newMode === 'local') {
           await (window as any).claraCore?.start();
         } else if (newMode === 'docker') {
           await (window as any).claraCore?.startDocker();
         }
-        
+
+        // Update Clara's Core provider URL in database when mode changes
+        try {
+          const clarasCoreProvider = providers.find((p: any) => p.type === 'claras-pocket');
+
+          if (clarasCoreProvider) {
+            const newBaseUrl = url ? `${url}/v1` : 'http://localhost:8091/v1';
+            console.log(`🔄 Updating Clara's Core provider URL: ${clarasCoreProvider.baseUrl} → ${newBaseUrl}`);
+            await updateProviderInContext(clarasCoreProvider.id, {
+              baseUrl: newBaseUrl
+            });
+            console.log('✅ Clara\'s Core provider URL updated successfully');
+          }
+        } catch (providerError) {
+          console.error('Failed to update Clara\'s Core provider URL:', providerError);
+        }
+
         // Refresh status
         setTimeout(() => fetchClaraCoreStatus(), 2000);
       } catch (error) {
@@ -1807,50 +1834,55 @@ const UnifiedServiceManager: React.FC = () => {
                       Open
                     </button>
                   )}
-                  {service.actions.includes('start') && !isRunning && (
-                    <button
-                      onClick={() => {
-                        if (service.id === 'claracore') handleClaraCoreAction('start');
-                        else if (service.id === 'n8n') handleN8nAction('start');
-                        else if (service.id === 'comfyui') handleComfyuiAction('start');
-                        else if (service.id === 'python-backend') handlePythonBackendAction('start');
-                      }}
-                      disabled={service.isLoading}
-                      className="px-3 py-1 bg-green-500 text-white rounded text-sm hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
-                    >
-                      {service.isLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
-                      {service.isLoading ? 'Starting...' : 'Start'}
-                    </button>
-                  )}
-                  {service.actions.includes('stop') && isRunning && (
-                    <button
-                      onClick={() => {
-                        if (service.id === 'claracore') handleClaraCoreAction('stop');
-                        else if (service.id === 'n8n') handleN8nAction('stop');
-                        else if (service.id === 'comfyui') handleComfyuiAction('stop');
-                        else if (service.id === 'python-backend') handlePythonBackendAction('stop');
-                      }}
-                      disabled={service.isLoading}
-                      className="px-3 py-1 bg-red-500 text-white rounded text-sm hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
-                    >
-                      {service.isLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Square className="w-3 h-3" />}
-                      {service.isLoading ? 'Stopping...' : 'Stop'}
-                    </button>
-                  )}
-                  {service.actions.includes('restart') && (
-                    <button
-                      onClick={() => {
-                        if (service.id === 'claracore') handleClaraCoreAction('restart');
-                        else if (service.id === 'n8n') handleN8nAction('restart');
-                        else if (service.id === 'comfyui') handleComfyuiAction('restart');
-                        else if (service.id === 'python-backend') handlePythonBackendAction('restart');
-                      }}
-                      disabled={service.isLoading}
-                      className="px-3 py-1 bg-amber-500 text-white rounded text-sm hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
-                    >
-                      <RefreshCw className={`w-3 h-3 ${service.isLoading ? 'animate-spin' : ''}`} />
-                      {service.isLoading ? 'Restarting...' : 'Restart'}
-                    </button>
+                  {/* Hide Start/Stop/Restart buttons for remote mode services */}
+                  {config.mode !== 'remote' && (
+                    <>
+                      {service.actions.includes('start') && !isRunning && (
+                        <button
+                          onClick={() => {
+                            if (service.id === 'claracore') handleClaraCoreAction('start');
+                            else if (service.id === 'n8n') handleN8nAction('start');
+                            else if (service.id === 'comfyui') handleComfyuiAction('start');
+                            else if (service.id === 'python-backend') handlePythonBackendAction('start');
+                          }}
+                          disabled={service.isLoading}
+                          className="px-3 py-1 bg-green-500 text-white rounded text-sm hover:bg-green-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
+                        >
+                          {service.isLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
+                          {service.isLoading ? 'Starting...' : 'Start'}
+                        </button>
+                      )}
+                      {service.actions.includes('stop') && isRunning && (
+                        <button
+                          onClick={() => {
+                            if (service.id === 'claracore') handleClaraCoreAction('stop');
+                            else if (service.id === 'n8n') handleN8nAction('stop');
+                            else if (service.id === 'comfyui') handleComfyuiAction('stop');
+                            else if (service.id === 'python-backend') handlePythonBackendAction('stop');
+                          }}
+                          disabled={service.isLoading}
+                          className="px-3 py-1 bg-red-500 text-white rounded text-sm hover:bg-red-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
+                        >
+                          {service.isLoading ? <RefreshCw className="w-3 h-3 animate-spin" /> : <Square className="w-3 h-3" />}
+                          {service.isLoading ? 'Stopping...' : 'Stop'}
+                        </button>
+                      )}
+                      {service.actions.includes('restart') && (
+                        <button
+                          onClick={() => {
+                            if (service.id === 'claracore') handleClaraCoreAction('restart');
+                            else if (service.id === 'n8n') handleN8nAction('restart');
+                            else if (service.id === 'comfyui') handleComfyuiAction('restart');
+                            else if (service.id === 'python-backend') handlePythonBackendAction('restart');
+                          }}
+                          disabled={service.isLoading}
+                          className="px-3 py-1 bg-amber-500 text-white rounded text-sm hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-1"
+                        >
+                          <RefreshCw className={`w-3 h-3 ${service.isLoading ? 'animate-spin' : ''}`} />
+                          {service.isLoading ? 'Restarting...' : 'Restart'}
+                        </button>
+                      )}
+                    </>
                   )}
                 </div>
               </div>
@@ -1903,64 +1935,66 @@ const UnifiedServiceManager: React.FC = () => {
             </div>
           )}
 
-          {/* Feature Configuration Toggle */}
-          <div className="pt-3 border-t border-gray-200 dark:border-gray-700">
-            <div className="flex items-center justify-between">
-              <div>
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                  {service.id === 'comfyui' ? '🎨 Enable' : service.id === 'python-backend' ? '🧠 Enable' : '⚡ Enable'}
-                </label>
-                <p className="text-xs text-gray-500 dark:text-gray-400">
-                  {service.id === 'comfyui'
-                    ? 'Show ComfyUI in the sidebar'
-                    : service.id === 'python-backend'
-                      ? 'Enable RAG and TTS features in the sidebar'
-                      : 'Show N8N in the sidebar'
-                  }
-                </p>
-              </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={service.id === 'comfyui' ? featureConfig.comfyUI : service.id === 'python-backend' ? featureConfig.ragAndTts : featureConfig.n8n}
-                  onChange={(e) => {
-                    if (service.id === 'comfyui') {
-                      updateFeatureConfig({ comfyUI: e.target.checked });
-                    } else if (service.id === 'python-backend') {
-                      updateFeatureConfig({ ragAndTts: e.target.checked });
-                    } else {
-                      updateFeatureConfig({ n8n: e.target.checked });
+          {/* Feature Configuration Toggle - Only for optional services (not ClaraCore) */}
+          {service.id !== 'claracore' && (
+            <div className="pt-3 border-t border-gray-200 dark:border-gray-700">
+              <div className="flex items-center justify-between">
+                <div>
+                  <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    {service.id === 'comfyui' ? '🎨 Enable' : service.id === 'python-backend' ? '🧠 Enable' : '⚡ Enable'}
+                  </label>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    {service.id === 'comfyui'
+                      ? 'Show ComfyUI in the sidebar'
+                      : service.id === 'python-backend'
+                        ? 'Enable RAG and TTS features in the sidebar'
+                        : 'Show N8N in the sidebar'
                     }
-                  }}
-                  disabled={savingFeatureConfig}
-                  className="sr-only peer"
-                />
-                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-purple-300/20 dark:peer-focus:ring-purple-800/20 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-purple-600"></div>
-              </label>
-            </div>
+                  </p>
+                </div>
+                <label className="relative inline-flex items-center cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={service.id === 'comfyui' ? featureConfig.comfyUI : service.id === 'python-backend' ? featureConfig.ragAndTts : featureConfig.n8n}
+                    onChange={(e) => {
+                      if (service.id === 'comfyui') {
+                        updateFeatureConfig({ comfyUI: e.target.checked });
+                      } else if (service.id === 'python-backend') {
+                        updateFeatureConfig({ ragAndTts: e.target.checked });
+                      } else {
+                        updateFeatureConfig({ n8n: e.target.checked });
+                      }
+                    }}
+                    disabled={savingFeatureConfig}
+                    className="sr-only peer"
+                  />
+                  <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-purple-300/20 dark:peer-focus:ring-purple-800/20 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-purple-600"></div>
+                </label>
+              </div>
 
-            {savingFeatureConfig && (
-              <div className="mt-2 p-2 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded text-sm">
-                <div className="flex items-center gap-2">
-                  <div className="w-3 h-3 border-2 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
-                  <span className="text-purple-700 dark:text-purple-300">
-                    Updating feature configuration...
-                  </span>
+              {savingFeatureConfig && (
+                <div className="mt-2 p-2 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded text-sm">
+                  <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 border-2 border-purple-500 border-t-transparent rounded-full animate-spin"></div>
+                    <span className="text-purple-700 dark:text-purple-300">
+                      Updating feature configuration...
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              <div className="mt-2 p-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded text-xs">
+                <div className="flex items-start gap-2">
+                  <div className="text-blue-600 dark:text-blue-400 mt-0.5">💡</div>
+                  <div className="text-blue-700 dark:text-blue-300">
+                    <strong>Tip:</strong> Enabling this feature will make {service.id === 'comfyui' ? 'Image Generation' : service.id === 'python-backend' ? 'RAG and TTS' : 'Workflow Automation'}
+                    available in the sidebar and include it in the onboarding flow for new users.
+                    This is useful if you initially skipped this service during setup.
+                  </div>
                 </div>
               </div>
-            )}
-
-            <div className="mt-2 p-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded text-xs">
-              <div className="flex items-start gap-2">
-                <div className="text-blue-600 dark:text-blue-400 mt-0.5">💡</div>
-                <div className="text-blue-700 dark:text-blue-300">
-                  <strong>Tip:</strong> Enabling this feature will make {service.id === 'comfyui' ? 'Image Generation' : service.id === 'python-backend' ? 'RAG and TTS' : 'Workflow Automation'}
-                  available in the sidebar and include it in the onboarding flow for new users.
-                  This is useful if you initially skipped this service during setup.
-                </div>
-              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
     );
@@ -2031,7 +2065,7 @@ const UnifiedServiceManager: React.FC = () => {
 
     
 
-      {/* Configurable Services */}
+      {/* Configurable Services - Card-Based Tabbed UI */}
       <div className="glassmorphic rounded-xl p-6">
         <div className="flex items-center gap-3 mb-6">
           <div className="w-3 h-3 bg-purple-500 rounded-full"></div>
@@ -2045,8 +2079,59 @@ const UnifiedServiceManager: React.FC = () => {
           </div>
         </div>
 
-        <div className="space-y-4">
-          {configurableServices.map(renderConfigurableServiceCard)}
+        {/* Service Tabs Navigation */}
+        <div className="flex gap-2 mb-6 overflow-x-auto pb-2">
+          {configurableServices.map((service) => {
+            const isActive = activeServiceTab === service.id;
+            const Icon = service.icon;
+            const isRunning = service.status === 'running';
+
+            return (
+              <button
+                key={service.id}
+                onClick={() => setActiveServiceTab(service.id)}
+                className={`flex items-center gap-2 px-4 py-3 rounded-lg border-2 transition-all flex-shrink-0 ${
+                  isActive
+                    ? 'border-purple-500 bg-purple-50 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 shadow-md'
+                    : 'border-gray-200 dark:border-gray-700 hover:border-purple-300 dark:hover:border-purple-500 hover:bg-purple-50/50 dark:hover:bg-purple-900/10 text-gray-700 dark:text-gray-300'
+                }`}
+              >
+                <div className="relative">
+                  <Icon className={`w-5 h-5 ${isActive ? 'text-purple-600 dark:text-purple-400' : ''}`} />
+                  <div className={`absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full border-2 border-white dark:border-gray-800 ${
+                    isRunning ? 'bg-green-500' : 'bg-gray-400'
+                  }`}></div>
+                </div>
+                <div className="text-left">
+                  <div className="font-medium text-sm">
+                    {service.id === 'claracore'
+                      ? 'Clara Core'
+                      : service.id === 'python-backend'
+                        ? 'Python Backend'
+                        : service.id === 'comfyui'
+                          ? 'ComfyUI'
+                          : 'N8N'
+                    }
+                  </div>
+                  <div className="text-xs opacity-75">
+                    {isRunning ? 'Running' : 'Stopped'}
+                  </div>
+                </div>
+                {isActive && (
+                  <div className="ml-2 px-2 py-0.5 bg-purple-200 dark:bg-purple-700 rounded-full text-xs font-medium">
+                    Active
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Active Service Card */}
+        <div className="transition-all duration-300">
+          {configurableServices
+            .filter(service => service.id === activeServiceTab)
+            .map(renderConfigurableServiceCard)}
         </div>
       </div>
     </div>
