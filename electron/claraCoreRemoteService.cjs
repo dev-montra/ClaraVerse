@@ -8,6 +8,14 @@ const log = require('electron-log');
 class ClaraCoreRemoteService {
   constructor() {
     this.conn = null;
+    // SECURITY NOTE: sudoPassword is only stored temporarily during deployment
+    // It is:
+    // 1. Set at deployment start
+    // 2. Used only for sudo operations during deployment
+    // 3. Cleared immediately after deployment (success or failure)
+    // 4. Never persisted to disk or logs
+    // 5. Transmitted only over encrypted SSH connection
+    this.sudoPassword = null;
   }
 
   /**
@@ -191,8 +199,9 @@ class ClaraCoreRemoteService {
     return new Promise((resolve, reject) => {
       const conn = new Client();
       let isResolved = false;
-      
-      // Store password for sudo commands
+
+      // Store password temporarily for this deployment session only
+      // It will be cleared in all exit paths (success/failure/timeout)
       this.sudoPassword = config.password;
 
       const timeout = setTimeout(() => {
@@ -220,28 +229,62 @@ class ClaraCoreRemoteService {
             await this.installDocker(conn);
           }
 
-          // 2. Install hardware-specific prerequisites
-          if (hardwareType === 'cuda') {
-            await this.setupCuda(conn);
-          } else if (hardwareType === 'rocm') {
-            await this.setupRocm(conn);
-          } else if (hardwareType === 'strix') {
-            await this.setupStrix(conn);
+          // 2. Install hardware-specific prerequisites (with CPU fallback option)
+          let actualHardwareType = hardwareType;
+          let gpuAvailable = false;
+
+          if (hardwareType !== 'cpu') {
+            try {
+              if (hardwareType === 'cuda') {
+                await this.setupCuda(conn);
+                gpuAvailable = true;
+              } else if (hardwareType === 'rocm') {
+                await this.setupRocm(conn);
+                gpuAvailable = true;
+              } else if (hardwareType === 'strix') {
+                await this.setupStrix(conn);
+                gpuAvailable = true;
+              }
+            } catch (gpuError) {
+              // GPU setup failed - offer CPU fallback
+              log.warn(`[Remote] GPU setup failed: ${gpuError.message}`);
+              log.warn('[Remote] ⚠️  GPU acceleration not available. Falling back to CPU mode...');
+              log.warn('[Remote] Note: Inference will run on CPU only, which will be slower.');
+
+              // Switch to CPU container
+              actualHardwareType = 'cpu';
+              gpuAvailable = false;
+            }
+          }
+
+          // Update container name and image based on actual hardware type
+          const finalImageName = `clara17verse/claracore:${actualHardwareType}`;
+          const finalContainerName = `claracore-${actualHardwareType}`;
+
+          if (!gpuAvailable && hardwareType !== 'cpu') {
+            log.info(`[Remote] 🔄 Switching from ${hardwareType} to CPU mode due to GPU unavailability`);
           }
 
           // 3. Stop and remove existing container
           log.info('Cleaning up existing containers...');
-          await this.execCommand(conn, `docker stop ${containerName} 2>/dev/null || true`);
-          await this.execCommand(conn, `docker rm ${containerName} 2>/dev/null || true`);
+          await this.execCommand(conn, `docker stop ${finalContainerName} 2>/dev/null || true`);
+          await this.execCommand(conn, `docker rm ${finalContainerName} 2>/dev/null || true`);
 
           // 4. Pull the image
-          log.info(`Pulling image ${imageName}...`);
-          await this.execCommandWithOutput(conn, `docker pull ${imageName}`);
+          log.info(`Pulling image ${finalImageName}...`);
+          await this.execCommandWithOutput(conn, `docker pull ${finalImageName}`);
 
           // 5. Run the container with appropriate flags
-          log.info(`Starting container ${containerName}...`);
-          const runCommand = this.buildDockerRunCommand(hardwareType, containerName, imageName);
-          const runResult = await this.execCommand(conn, runCommand);
+          log.info(`Starting container ${finalContainerName}...`);
+          const runCommand = this.buildDockerRunCommand(actualHardwareType, finalContainerName, finalImageName);
+
+          try {
+            const runResult = await this.execCommand(conn, runCommand);
+          } catch (runError) {
+            // If docker run fails, throw detailed error immediately
+            log.error(`Docker run command failed: ${runError.message}`);
+            throw new Error(`Failed to start container: ${runError.message}`);
+          }
 
           // 6. Wait for container to be healthy
           log.info('Waiting for container to start...');
@@ -279,7 +322,13 @@ class ClaraCoreRemoteService {
             resolve({
               success: true,
               url: `http://${config.host}:5890`,
-              containerName
+              containerName: finalContainerName,
+              hardwareType: actualHardwareType,
+              gpuAvailable: gpuAvailable,
+              fallbackToCpu: (hardwareType !== 'cpu' && actualHardwareType === 'cpu'),
+              message: gpuAvailable
+                ? `Successfully deployed with ${actualHardwareType.toUpperCase()} acceleration`
+                : `Deployed in CPU mode${hardwareType !== 'cpu' ? ' (GPU unavailable)' : ''}`
             });
           }
 
@@ -570,32 +619,121 @@ class ClaraCoreRemoteService {
    * Setup AMD ROCm
    */
   async setupRocm(conn) {
-    // Ensure user is in video and render groups
-    await this.execCommand(conn, 'sudo usermod -a -G video,render $USER');
+    try {
+      log.info('[Remote] Validating ROCm device access...');
+
+      // Check if /dev/kfd exists (required for ROCm)
+      const kfdCheck = await this.execCommand(conn, 'test -e /dev/kfd && echo "exists" || echo "missing"');
+      if (kfdCheck.trim() === 'missing') {
+        throw new Error('ROCm device /dev/kfd not found. Please install ROCm drivers first.\n\nInstallation guide: https://rocmdocs.amd.com/en/latest/Installation_Guide/Installation-Guide.html');
+      }
+
+      // Check if /dev/dri exists
+      const driCheck = await this.execCommand(conn, 'test -e /dev/dri && echo "exists" || echo "missing"');
+      if (driCheck.trim() === 'missing') {
+        throw new Error('Device /dev/dri not found. AMD GPU drivers may not be installed correctly.');
+      }
+
+      log.info('[Remote] ROCm devices found: /dev/kfd and /dev/dri');
+
+      // Ensure user is in video and render groups
+      const username = await this.execCommand(conn, 'whoami');
+      const user = username.trim();
+      log.info(`[Remote] Adding user ${user} to video and render groups...`);
+      await this.execCommand(conn, `sudo usermod -a -G video,render ${user}`);
+
+      log.info('[Remote] ROCm setup complete. Note: User may need to log out and back in for group changes to take effect.');
+    } catch (error) {
+      log.error('[Remote] ROCm setup failed:', error);
+      throw error;
+    }
   }
 
   /**
-   * Setup Strix Halo
+   * Setup Strix Halo (Ryzen AI Max with integrated GPU)
+   * Focuses on Vulkan support for GPU acceleration
    */
   async setupStrix(conn) {
-    // Create udev rules for GPU access
-    const udevRules = `SUBSYSTEM=="kfd", GROUP="render", MODE="0666", OPTIONS+="last_rule"
-SUBSYSTEM=="drm", KERNEL=="card[0-9]*", GROUP="render", MODE="0666", OPTIONS+="last_rule"`;
+    try {
+      log.info('[Remote] Setting up Strix Halo (Ryzen AI Max) with Vulkan support...');
 
-    await this.execCommand(conn, `echo '${udevRules}' | sudo tee /etc/udev/rules.d/99-amd-kfd.rules`);
-    await this.execCommand(conn, 'sudo udevadm control --reload-rules');
-    await this.execCommand(conn, 'sudo udevadm trigger');
-    await this.execCommand(conn, 'sudo usermod -a -G video,render $USER');
+      // 1. Validate DRI device (required for GPU access)
+      log.info('[Remote] Checking GPU device access...');
+      const driCheck = await this.execCommand(conn, 'test -e /dev/dri && echo "exists" || echo "missing"');
+      if (driCheck.trim() === 'missing') {
+        throw new Error('Device /dev/dri not found. AMD GPU drivers (amdgpu) may not be installed.\n\nPlease ensure the Linux kernel has amdgpu drivers loaded.');
+      }
+      log.info('[Remote] ✓ GPU device found: /dev/dri');
+
+      // 2. Check for Vulkan support (critical for GPU acceleration)
+      log.info('[Remote] Checking Vulkan support...');
+      const vulkanCheck = await this.execCommand(conn, 'which vulkaninfo 2>/dev/null');
+
+      if (!vulkanCheck || !vulkanCheck.trim()) {
+        // Vulkan not found - need to install
+        log.info('[Remote] Vulkan not found. Installing Vulkan drivers...');
+
+        // Detect distro
+        const osRelease = await this.execCommand(conn, 'cat /etc/os-release');
+        const distro = this.detectDistro(osRelease);
+        log.info(`[Remote] Detected distribution: ${distro}`);
+
+        // Install based on distro
+        if (osRelease.includes('Ubuntu') || osRelease.includes('Debian')) {
+          log.info('[Remote] Installing Vulkan packages for Ubuntu/Debian...');
+          await this.execCommandWithOutput(conn, 'sudo apt-get update');
+          await this.execCommandWithOutput(conn, 'sudo apt-get install -y mesa-vulkan-drivers vulkan-tools libvulkan1');
+        } else if (osRelease.includes('Fedora') || osRelease.includes('Red Hat') || osRelease.includes('CentOS')) {
+          log.info('[Remote] Installing Vulkan packages for Fedora/RHEL...');
+          await this.execCommandWithOutput(conn, 'sudo dnf install -y mesa-vulkan-drivers vulkan-tools vulkan-loader');
+        } else if (osRelease.includes('Arch')) {
+          log.info('[Remote] Installing Vulkan packages for Arch Linux...');
+          await this.execCommandWithOutput(conn, 'sudo pacman -S --noconfirm vulkan-radeon vulkan-tools');
+        } else {
+          throw new Error(`Unsupported distribution: ${distro}. Please install mesa-vulkan-drivers and vulkan-tools manually.`);
+        }
+
+        // Verify Vulkan installation
+        log.info('[Remote] Verifying Vulkan installation...');
+        const vulkanVerify = await this.execCommand(conn, 'vulkaninfo --summary 2>&1 | grep -i "Vulkan Instance Version" || echo "failed"');
+        if (!vulkanVerify.includes('failed')) {
+          log.info('[Remote] ✓ Vulkan installed and detected successfully');
+        } else {
+          log.warn('[Remote] ⚠ Vulkan installed but may not be functioning. A system reboot might be required.');
+        }
+      } else {
+        log.info('[Remote] ✓ Vulkan already installed');
+
+        // Quick Vulkan validation
+        const vulkanDevices = await this.execCommand(conn, 'vulkaninfo --summary 2>&1 | grep -i "deviceName" || echo "none"');
+        if (!vulkanDevices.includes('none')) {
+          log.info(`[Remote] ✓ Vulkan GPU detected: ${vulkanDevices.trim()}`);
+        }
+      }
+
+      // 3. Set up user permissions for GPU access
+      const username = await this.execCommand(conn, 'whoami');
+      const user = username.trim();
+      log.info(`[Remote] Adding user ${user} to video and render groups...`);
+      await this.execCommand(conn, `sudo usermod -a -G video,render ${user}`);
+
+      log.info('[Remote] ✓ Strix Halo setup complete! GPU will be available via Vulkan.');
+      log.info('[Remote] Note: User may need to log out and back in for group changes to take effect.');
+
+    } catch (error) {
+      log.error('[Remote] Strix Halo setup failed:', error);
+      throw error;
+    }
   }
 
   /**
-   * Execute command with sudo support (using stored password)
+   * Execute command with sudo support (using temporarily stored password)
    */
   execCommand(conn, command) {
     return new Promise((resolve, reject) => {
       // Handle sudo commands with password properly
       let execCommand = command;
-      
+
       if (this.sudoPassword && command.includes('sudo')) {
         // Escape password for shell
         const escapedPassword = this.sudoPassword.replace(/'/g, "'\\''");
@@ -639,13 +777,13 @@ SUBSYSTEM=="drm", KERNEL=="card[0-9]*", GROUP="render", MODE="0666", OPTIONS+="l
   }
 
   /**
-   * Execute command and stream output (for long-running commands)
+   * Execute command and stream output (for long-running commands, using temporarily stored password)
    */
   execCommandWithOutput(conn, command) {
     return new Promise((resolve, reject) => {
       // Handle sudo commands with password properly
       let execCommand = command;
-      
+
       if (this.sudoPassword && command.includes('sudo')) {
         // For commands with pipes that contain sudo, we need to handle it specially
         // Replace all instances of 'sudo' with proper password handling
@@ -669,11 +807,16 @@ SUBSYSTEM=="drm", KERNEL=="card[0-9]*", GROUP="render", MODE="0666", OPTIONS+="l
 
         let hasOutput = false;
 
+        let stderrOutput = '';
+
         stream.on('close', (code) => {
           if (code === 0) {
             resolve();
           } else {
-            reject(new Error(`Command failed with code ${code}`));
+            const errorMsg = stderrOutput ?
+              `Command failed with code ${code}: ${stderrOutput}` :
+              `Command failed with code ${code}`;
+            reject(new Error(errorMsg));
           }
         });
 
@@ -687,14 +830,120 @@ SUBSYSTEM=="drm", KERNEL=="card[0-9]*", GROUP="render", MODE="0666", OPTIONS+="l
 
         stream.stderr.on('data', (data) => {
           const output = data.toString().trim();
-          // Filter out sudo password prompts and sudo warnings
-          if (output && 
-              !output.includes('[sudo] password') && 
+          // Capture stderr for error reporting
+          if (output) {
+            stderrOutput += output + '\n';
+          }
+          // Filter out sudo password prompts and sudo warnings for logging
+          if (output &&
+              !output.includes('[sudo] password') &&
               !output.includes('Sorry, try again') &&
               !output.includes('sudo: a password is required')) {
             log.info(`[Remote] ${output}`);
           }
         });
+      });
+    });
+  }
+
+  /**
+   * Monitor remote ClaraCore services
+   * Returns status of all ClaraCore containers running on remote server
+   */
+  async monitorRemoteServices(config) {
+    return new Promise((resolve, reject) => {
+      const conn = new Client();
+      let isResolved = false;
+
+      const timeout = setTimeout(() => {
+        if (!isResolved) {
+          isResolved = true;
+          conn.end();
+          reject(new Error('Monitor timeout after 15 seconds'));
+        }
+      }, 15000);
+
+      conn.on('ready', async () => {
+        try {
+          // List all claracore containers
+          const containerListCmd = 'docker ps -a --filter "name=claracore-" --format "{{.Names}}|{{.Status}}|{{.Ports}}"';
+          const containerList = await this.execCommand(conn, containerListCmd);
+
+          const services = [];
+
+          if (containerList && containerList.trim()) {
+            const lines = containerList.trim().split('\n');
+
+            for (const line of lines) {
+              const [name, status, ports] = line.split('|');
+
+              // Extract hardware type from container name (claracore-cuda, claracore-rocm, etc.)
+              const hardwareType = name.replace('claracore-', '');
+              const isRunning = status.toLowerCase().includes('up');
+
+              // Check health if running
+              let isHealthy = false;
+              if (isRunning) {
+                try {
+                  const healthCheck = await this.execCommand(conn, `curl -sf http://localhost:5890/health 2>&1`);
+                  isHealthy = healthCheck && !healthCheck.includes('Failed to connect');
+                } catch {
+                  isHealthy = false;
+                }
+              }
+
+              services.push({
+                name,
+                hardwareType,
+                status: isRunning ? 'running' : 'stopped',
+                isHealthy: isRunning ? isHealthy : false,
+                ports: ports || 'N/A',
+                url: isRunning ? `http://${config.host}:5890` : null
+              });
+            }
+          }
+
+          clearTimeout(timeout);
+          conn.end();
+
+          if (!isResolved) {
+            isResolved = true;
+            resolve({
+              success: true,
+              host: config.host,
+              services,
+              totalServices: services.length,
+              runningServices: services.filter(s => s.status === 'running').length,
+              healthyServices: services.filter(s => s.isHealthy).length,
+              timestamp: new Date().toISOString()
+            });
+          }
+        } catch (error) {
+          log.error('Monitor error:', error);
+          clearTimeout(timeout);
+          conn.end();
+
+          if (!isResolved) {
+            isResolved = true;
+            reject(error);
+          }
+        }
+      });
+
+      conn.on('error', (err) => {
+        if (!isResolved) {
+          isResolved = true;
+          clearTimeout(timeout);
+          reject(err);
+        }
+      });
+
+      conn.connect({
+        host: config.host,
+        port: config.port || 22,
+        username: config.username,
+        password: config.password,
+        readyTimeout: 15000
       });
     });
   }

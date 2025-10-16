@@ -207,7 +207,43 @@ const UnifiedServiceManager: React.FC = () => {
       // Fallback for web environment
       setCurrentPlatform('win32');
     }
-  }, []);
+
+    // Listen for remote deployment success to auto-update provider
+    const handleRemoteDeployed = async (event: any, data: { url: string; hardwareType: string }) => {
+      console.log('🔄 Remote ClaraCore deployed, updating provider...', data);
+
+      try {
+        // Find Clara's Core provider
+        const clarasCoreProvider = providers.find((p: any) => p.type === 'claras-pocket');
+
+        if (clarasCoreProvider) {
+          const newBaseUrl = `${data.url}/v1`;
+          await updateProviderInContext(clarasCoreProvider.id, { baseUrl: newBaseUrl });
+          console.log(`✅ Clara's Core provider updated to: ${newBaseUrl}`);
+        }
+      } catch (error) {
+        console.error('Failed to update Clara\'s Core provider:', error);
+      }
+
+      // Refresh service status and configuration
+      await loadServiceConfigurations();
+      await fetchClaraCoreStatus();
+      await fetchN8nStatus();
+      await fetchComfyuiStatus();
+      await fetchPythonBackendStatus();
+    };
+
+    // Register listener
+    const electron = (window as any).electron;
+    if (electron?.ipcRenderer) {
+      electron.ipcRenderer.on('claracore:remote-deployed', handleRemoteDeployed);
+
+      // Cleanup
+      return () => {
+        electron.ipcRenderer.removeListener('claracore:remote-deployed', handleRemoteDeployed);
+      };
+    }
+  }, [providers, updateProviderInContext]);
 
   // Load remote server configuration
   const loadRemoteServerConfig = async () => {

@@ -348,12 +348,13 @@ async function stopAllLocalServices(serviceName = null) {
           stoppedServices.push(`${service} (native)`);
         }
 
-        // Stop Docker services
-        if (service === 'claracore' && claraCoreDocker) {
-          log.info('Stopping local ClaraCore Docker service...');
-          await claraCoreDocker.stopService();
-          stoppedServices.push('claracore (docker)');
-        }
+        // Stop Docker services (claraCoreDocker may not be defined in this scope)
+        // Skip Docker stop as it's handled by centralServiceManager
+        // if (service === 'claracore' && claraCoreDockerService) {
+        //   log.info('Stopping local ClaraCore Docker service...');
+        //   await claraCoreDockerService.stopService();
+        //   stoppedServices.push('claracore (docker)');
+        // }
 
         if (service === 'comfyui' && comfyUIService) {
           log.info('Stopping local ComfyUI Docker service...');
@@ -1020,9 +1021,48 @@ function registerServiceConfigurationHandlers() {
         log.warn('⚠️  Central service manager not available, returning empty status');
         return {};
       }
-      
+
       const status = centralServiceManager.getServicesStatus();
-      
+
+      // Check health of remote/manual services and update their state
+      const http = require('http');
+      const https = require('https');
+
+      for (const [serviceName, serviceStatus] of Object.entries(status)) {
+        if ((serviceStatus.deploymentMode === 'remote' || serviceStatus.deploymentMode === 'manual') && serviceStatus.serviceUrl) {
+          try {
+            // Quick health check for remote services
+            const url = new URL(serviceStatus.serviceUrl);
+            const protocol = url.protocol === 'https:' ? https : http;
+            const healthEndpoint = `${serviceStatus.serviceUrl}/health`;
+
+            const isHealthy = await new Promise((resolve) => {
+              const req = protocol.get(healthEndpoint, { timeout: 3000 }, (res) => {
+                resolve(res.statusCode === 200);
+              });
+              req.on('error', () => resolve(false));
+              req.on('timeout', () => {
+                req.destroy();
+                resolve(false);
+              });
+            });
+
+            // Update state based on health check
+            if (isHealthy) {
+              centralServiceManager.setState(serviceName, centralServiceManager.states.RUNNING);
+              status[serviceName].state = 'running';
+            } else {
+              centralServiceManager.setState(serviceName, centralServiceManager.states.STOPPED);
+              status[serviceName].state = 'stopped';
+            }
+          } catch (error) {
+            // If health check fails, mark as stopped
+            centralServiceManager.setState(serviceName, centralServiceManager.states.STOPPED);
+            status[serviceName].state = 'stopped';
+          }
+        }
+      }
+
       // Only log if meaningful status has changed (exclude dynamic fields like uptime, lastHealthCheck)
       const stableStatus = {};
       for (const [serviceName, serviceStatus] of Object.entries(status)) {
@@ -1037,13 +1077,13 @@ function registerServiceConfigurationHandlers() {
           lastError: serviceStatus.lastError
         };
       }
-      
+
       const stableStatusString = JSON.stringify(stableStatus);
       if (stableStatusString !== lastLoggedServiceStatus) {
         log.info('📊 Enhanced service status changed:', stableStatus);
         lastLoggedServiceStatus = stableStatusString;
       }
-      
+
       return status;
     } catch (error) {
       log.error('Error getting enhanced service status:', error);
@@ -2734,7 +2774,7 @@ function registerHandlers() {
       // Save deployment mode preference to configuration
       if (serviceConfigManager) {
         try {
-          serviceConfigManager.setServiceMode('claracore', 'docker');
+          serviceConfigManager.setServiceConfig('claracore', 'docker', null);
           log.info('✅ Saved ClaraCore deployment mode preference: docker');
         } catch (error) {
           log.warn('Failed to save deployment mode preference:', error);
@@ -3636,11 +3676,57 @@ function registerHandlers() {
       if (result.success) {
         log.info('✅ Successfully deployed ClaraCore to remote server');
         result.localServicesStopped = stopResult.stopped;
+
+        // Automatically switch ClaraCore service to remote mode
+        try {
+          log.info('🔄 Auto-configuring ClaraCore service to use remote deployment...');
+
+          // Set service to remote mode with the deployed URL
+          if (serviceConfigManager) {
+            await serviceConfigManager.setServiceConfig('claracore', 'remote', result.url);
+            log.info(`✅ ClaraCore service configured: mode=remote, url=${result.url}`);
+          }
+
+          // Update CentralServiceManager state
+          if (centralServiceManager) {
+            centralServiceManager.setServiceUrl('claracore', result.url);
+            centralServiceManager.setState('claracore', centralServiceManager.states.RUNNING);
+            log.info('✅ CentralServiceManager updated: ClaraCore is now RUNNING in remote mode');
+          }
+
+          // Notify frontend to update Clara's Core provider
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('claracore:remote-deployed', {
+              url: result.url,
+              hardwareType: config.hardwareType
+            });
+            log.info('✅ Notified frontend to update Clara\'s Core provider');
+          }
+
+          result.autoConfigured = true;
+        } catch (configError) {
+          log.error('Failed to auto-configure service (deployment still successful):', configError);
+          result.autoConfigured = false;
+          result.configError = configError.message;
+        }
       }
-      
+
       return result;
     } catch (error) {
       log.error('ClaraCore remote deployment error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Monitor remote ClaraCore services
+  ipcMain.handle('claracore-remote:monitor', async (event, config) => {
+    try {
+      log.info('Monitoring remote ClaraCore services...');
+      const service = new ClaraCoreRemoteService();
+      const result = await service.monitorRemoteServices(config);
+      return result;
+    } catch (error) {
+      log.error('Remote monitoring error:', error);
       return { success: false, error: error.message };
     }
   });

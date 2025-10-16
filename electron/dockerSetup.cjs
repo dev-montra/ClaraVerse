@@ -2049,19 +2049,32 @@ class DockerSetup extends EventEmitter {
         
         if (containerInfo.State.Running) {
           console.log(`Container ${config.name} is already running, checking health...`);
-          
+
           // Check if the running container is healthy
           const isHealthy = await config.healthCheck();
           if (isHealthy) {
             console.log(`Container ${config.name} is running and healthy, skipping recreation`);
-            return;
+            if (config.statusCallback) {
+              config.statusCallback(`${config.name} is already running and healthy`, 'success', { percentage: 100 });
+            }
+            return {
+              success: true,
+              alreadyRunning: true,
+              message: `${config.name} is already running and healthy`
+            };
           }
-          
+
           console.log(`Container ${config.name} is running but not healthy, will recreate`);
+          if (config.statusCallback) {
+            config.statusCallback(`${config.name} is unhealthy, restarting...`, 'warning', { percentage: 5 });
+          }
           await existingContainer.stop();
           await existingContainer.remove({ force: true });
         } else {
           console.log(`Container ${config.name} exists but is not running, will recreate`);
+          if (config.statusCallback) {
+            config.statusCallback(`${config.name} is stopped, restarting...`, 'info', { percentage: 5 });
+          }
           await existingContainer.remove({ force: true });
         }
       } catch (error) {

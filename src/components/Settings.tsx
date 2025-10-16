@@ -249,6 +249,8 @@ const Settings = () => {
     isEnabled: true
   });
   const [addProviderStep, setAddProviderStep] = useState<'select' | 'configure'>('select');
+  const [selectedPreset, setSelectedPreset] = useState<ProviderPreset | null>(null);
+  const [providerFilter, setProviderFilter] = useState<'all' | 'local' | 'free' | 'cloud'>('all');
   const [remoteServers, setRemoteServers] = useState<Array<any>>([]);
 
   useEffect(() => {
@@ -290,6 +292,10 @@ const Settings = () => {
     baseUrl: string;
     type: Provider['type'];
     brandDomain?: string; // domain to use for logo/favicon lookups (e.g., openai.com)
+    hasFree?: boolean; // indicates if provider has free tier
+    freeDetails?: string; // brief description of free tier
+    signupUrl?: string; // URL to get free API key
+    isLocal?: boolean; // indicates if this is a local/self-hosted provider
   };
 
   const getHostnameFromUrl = (baseUrl: string): string => {
@@ -311,27 +317,81 @@ const Settings = () => {
   };
 
   const PROVIDER_PRESETS: ProviderPreset[] = [
-    { id: 'openai', label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', type: 'openai', brandDomain: 'openai.com' },
-    { id: 'openrouter', label: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', type: 'openrouter', brandDomain: 'openrouter.ai' },
-    { id: 'groq', label: 'Groq', baseUrl: 'https://api.groq.com/openai/v1', type: 'openai_compatible', brandDomain: 'groq.com' },
-    { id: 'grok', label: 'Grok (xAI)', baseUrl: 'https://api.x.ai/v1', type: 'openai_compatible', brandDomain: 'x.ai' },
-    { id: 'gemini', label: 'Google Gemini', baseUrl: 'https://cloudaicompanion.googleapis.com', type: 'openai_compatible', brandDomain: 'gemini.google.com' },
-    { id: 'mistral', label: 'Mistral AI', baseUrl: 'https://api.mistral.ai/v1', type: 'openai_compatible', brandDomain: 'mistral.ai' },
-    { id: 'meta-llama', label: 'Meta (Llama API)', baseUrl: 'https://llama-api.meta.com/v1', type: 'openai_compatible', brandDomain: 'meta.com' },
-    { id: 'deepseek', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', type: 'openai_compatible', brandDomain: 'deepseek.com' },
-    { id: 'cohere', label: 'Cohere', baseUrl: 'https://api.cohere.ai/v1', type: 'openai_compatible', brandDomain: 'cohere.com' },
-    { id: 'together', label: 'Together AI', baseUrl: 'https://api.together.xyz/v1', type: 'openai_compatible', brandDomain: 'together.ai' },
-    { id: 'huggingface', label: 'HuggingFace', baseUrl: 'https://api-inference.huggingface.co/v1', type: 'openai_compatible', brandDomain: 'huggingface.co' },
-    { id: 'lmstudio', label: 'LM Studio (Local)', baseUrl: 'http://localhost:1234/v1', type: 'openai_compatible', brandDomain: 'lmstudio.ai' },
-    { id: 'llamacpp', label: 'llama.cpp (Local)', baseUrl: 'http://localhost:8080/v1', type: 'openai_compatible' },
-    { id: 'vllm', label: 'vLLM (Local)', baseUrl: 'http://localhost:8000/v1', type: 'openai_compatible', brandDomain: 'vllm.ai' },
-    { id: 'localai', label: 'LocalAI (Local)', baseUrl: 'http://localhost:8080/v1', type: 'openai_compatible', brandDomain: 'localai.io' },
-    { id: 'ollama', label: 'Ollama (Local)', baseUrl: 'http://localhost:11434/v1', type: 'ollama', brandDomain: 'ollama.com' },
+    // 🌟 Most Popular Cloud Providers (by usage & community)
+    { id: 'openai', label: 'OpenAI', baseUrl: 'https://api.openai.com/v1', type: 'openai', brandDomain: 'openai.com', hasFree: true, freeDetails: '$5 free credits on signup', signupUrl: 'https://platform.openai.com/signup' },
+    { id: 'openrouter', label: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1', type: 'openrouter', brandDomain: 'openrouter.ai', hasFree: true, freeDetails: 'Free tier with daily limits', signupUrl: 'https://openrouter.ai/keys' },
+    { id: 'groq', label: 'Groq', baseUrl: 'https://api.groq.com/openai/v1', type: 'openai_compatible', brandDomain: 'groq.com', hasFree: true, freeDetails: 'Generous free tier', signupUrl: 'https://console.groq.com/keys' },
+    { id: 'gemini', label: 'Google Gemini', baseUrl: 'https://cloudaicompanion.googleapis.com', type: 'openai_compatible', brandDomain: 'gemini.google.com', hasFree: true, freeDetails: 'Free tier available', signupUrl: 'https://aistudio.google.com/app/apikey' },
+    { id: 'deepseek', label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1', type: 'openai_compatible', brandDomain: 'deepseek.com', hasFree: true, freeDetails: 'Free tier with limits', signupUrl: 'https://platform.deepseek.com/api_keys' },
+    
+    // 🚀 Fast & Popular Cloud Services
+    { id: 'together', label: 'Together AI', baseUrl: 'https://api.together.xyz/v1', type: 'openai_compatible', brandDomain: 'together.ai', hasFree: true, freeDetails: '$25 free credits', signupUrl: 'https://api.together.xyz/signup' },
+    { id: 'fireworks', label: 'Fireworks AI', baseUrl: 'https://api.fireworks.ai/inference/v1', type: 'openai_compatible', brandDomain: 'fireworks.ai', hasFree: true, freeDetails: 'Free tier available', signupUrl: 'https://fireworks.ai/login' },
+    { id: 'replicate', label: 'Replicate', baseUrl: 'https://api.replicate.com/v1', type: 'openai_compatible', brandDomain: 'replicate.com', hasFree: true, freeDetails: 'Pay-as-you-go from $0', signupUrl: 'https://replicate.com/signin' },
+    { id: 'perplexity', label: 'Perplexity AI', baseUrl: 'https://api.perplexity.ai', type: 'openai_compatible', brandDomain: 'perplexity.ai', hasFree: false },
+    { id: 'huggingface', label: 'HuggingFace', baseUrl: 'https://api-inference.huggingface.co/v1', type: 'openai_compatible', brandDomain: 'huggingface.co', hasFree: true, freeDetails: 'Free inference API', signupUrl: 'https://huggingface.co/join' },
+    
+    // 🏢 Enterprise & Specialized
+    { id: 'mistral', label: 'Mistral AI', baseUrl: 'https://api.mistral.ai/v1', type: 'openai_compatible', brandDomain: 'mistral.ai', hasFree: true, freeDetails: 'Free tier with limits', signupUrl: 'https://console.mistral.ai/' },
+    { id: 'cohere', label: 'Cohere', baseUrl: 'https://api.cohere.ai/v1', type: 'openai_compatible', brandDomain: 'cohere.com', hasFree: true, freeDetails: 'Free trial available', signupUrl: 'https://dashboard.cohere.com/welcome/register' },
+    { id: 'nvidia', label: 'NVIDIA NIM', baseUrl: 'https://integrate.api.nvidia.com/v1', type: 'openai_compatible', brandDomain: 'nvidia.com', hasFree: true, freeDetails: 'Free credits for testing', signupUrl: 'https://build.nvidia.com/' },
+    { id: 'anyscale', label: 'Anyscale Endpoints', baseUrl: 'https://api.endpoints.anyscale.com/v1', type: 'openai_compatible', brandDomain: 'anyscale.com', hasFree: true, freeDetails: 'Free trial available', signupUrl: 'https://www.anyscale.com/get-started' },
+    { id: 'octoai', label: 'OctoAI', baseUrl: 'https://text.octoai.run/v1', type: 'openai_compatible', brandDomain: 'octo.ai', hasFree: true, freeDetails: 'Free tier available', signupUrl: 'https://octo.ai/sign-up' },
+    { id: 'lepton', label: 'Lepton AI', baseUrl: 'https://api.lepton.ai/v1', type: 'openai_compatible', brandDomain: 'lepton.ai', hasFree: true, freeDetails: 'Free tier with limits', signupUrl: 'https://dashboard.lepton.ai/' },
+    
+    // 🔥 Trending & Emerging
+    { id: 'grok', label: 'Grok (xAI)', baseUrl: 'https://api.x.ai/v1', type: 'openai_compatible', brandDomain: 'x.ai', hasFree: false },
+    { id: 'meta-llama', label: 'Meta (Llama API)', baseUrl: 'https://llama-api.meta.com/v1', type: 'openai_compatible', brandDomain: 'meta.com', hasFree: false },
+    
+    // 🌏 Asia-Pacific Providers
+    { id: 'sarvam', label: 'Sarvam AI', baseUrl: 'https://api.sarvam.ai/v1', type: 'openai_compatible', brandDomain: 'sarvam.ai', hasFree: true, freeDetails: 'Free trial available', signupUrl: 'https://www.sarvam.ai/' },
+    { id: 'ola-krutrim', label: 'Ola Krutrim', baseUrl: 'https://cloud.olakrutrim.com/v1', type: 'openai_compatible', brandDomain: 'olakrutrim.com', hasFree: true, freeDetails: 'Beta access with credits', signupUrl: 'https://cloud.olakrutrim.com/' },
+    { id: 'aimlapi', label: 'AI/ML API', baseUrl: 'https://api.aimlapi.com/v1', type: 'openai_compatible', brandDomain: 'aimlapi.com', hasFree: true, freeDetails: '$5 free credits', signupUrl: 'https://aimlapi.com/' },
+    { id: 'hyperbolic', label: 'Hyperbolic', baseUrl: 'https://api.hyperbolic.xyz/v1', type: 'openai_compatible', brandDomain: 'hyperbolic.xyz', hasFree: true, freeDetails: '$10 free credits', signupUrl: 'https://app.hyperbolic.xyz/register' },
+    { id: 'featherless', label: 'Featherless AI', baseUrl: 'https://api.featherless.ai/v1', type: 'openai_compatible', brandDomain: 'featherless.ai', hasFree: true, freeDetails: 'Free tier with limits', signupUrl: 'https://featherless.ai/' },
+    
+    // 🌍 European & Sovereign Cloud
+    { id: 'nscale', label: 'Nscale (EU)', baseUrl: 'https://api.nscale.com/v1', type: 'openai_compatible', brandDomain: 'nscale.com', hasFree: true, freeDetails: 'Free tier available', signupUrl: 'https://nscale.com/' },
+    { id: 'ovhcloud', label: 'OVHCloud AI', baseUrl: 'https://endpoints.ai.cloud.ovh.net/v1', type: 'openai_compatible', brandDomain: 'ovh.net', hasFree: true, freeDetails: 'Free trial with credits', signupUrl: 'https://www.ovhcloud.com/en/public-cloud/ai/' },
+    { id: 'nebius', label: 'Nebius AI', baseUrl: 'https://api.studio.nebius.ai/v1', type: 'openai_compatible', brandDomain: 'nebius.ai', hasFree: true, freeDetails: '$25 free credits', signupUrl: 'https://studio.nebius.ai/' },
+    
+    // 🔬 Research & Academic
+    { id: 'cerebras', label: 'Cerebras', baseUrl: 'https://api.cerebras.ai/v1', type: 'openai_compatible', brandDomain: 'cerebras.ai', hasFree: true, freeDetails: 'Free tier for researchers', signupUrl: 'https://cloud.cerebras.ai/' },
+    { id: 'sambanova', label: 'SambaNova', baseUrl: 'https://api.sambanova.ai/v1', type: 'openai_compatible', brandDomain: 'sambanova.ai', hasFree: true, freeDetails: 'Free tier available', signupUrl: 'https://cloud.sambanova.ai/' },
+    { id: 'baseten', label: 'Baseten', baseUrl: 'https://api.baseten.co/v1', type: 'openai_compatible', brandDomain: 'baseten.co', hasFree: true, freeDetails: 'Free credits on signup', signupUrl: 'https://app.baseten.co/signup' },
+    
+    // 💻 Most Popular Local/Self-Hosted
+    { id: 'ollama', label: 'Ollama', baseUrl: 'http://localhost:11434/v1', type: 'ollama', brandDomain: 'ollama.com', isLocal: true, hasFree: true, freeDetails: 'Free and open source' },
+    { id: 'lmstudio', label: 'LM Studio', baseUrl: 'http://localhost:1234/v1', type: 'openai_compatible', brandDomain: 'lmstudio.ai', isLocal: true, hasFree: true, freeDetails: 'Free desktop app' },
+    { id: 'llamacpp', label: 'llama.cpp', baseUrl: 'http://localhost:8080/v1', type: 'openai_compatible', isLocal: true, hasFree: true, freeDetails: 'Free and open source' },
+    { id: 'vllm', label: 'vLLM', baseUrl: 'http://localhost:8000/v1', type: 'openai_compatible', brandDomain: 'vllm.ai', isLocal: true, hasFree: true, freeDetails: 'Free and open source' },
+    { id: 'textgen-webui', label: 'text-generation-webui', baseUrl: 'http://localhost:5000/v1', type: 'openai_compatible', brandDomain: 'github.com', isLocal: true, hasFree: true, freeDetails: 'Free and open source' },
+    
+    // 🛠️ Advanced Local Tools
+    { id: 'jan', label: 'Jan', baseUrl: 'http://localhost:1337/v1', type: 'openai_compatible', brandDomain: 'jan.ai', isLocal: true, hasFree: true, freeDetails: 'Free and open source' },
+    { id: 'localai', label: 'LocalAI', baseUrl: 'http://localhost:8080/v1', type: 'openai_compatible', brandDomain: 'localai.io', isLocal: true, hasFree: true, freeDetails: 'Free and open source' },
+    { id: 'koboldai', label: 'KoboldAI', baseUrl: 'http://localhost:5001/v1', type: 'openai_compatible', brandDomain: 'koboldai.org', isLocal: true, hasFree: true, freeDetails: 'Free and open source' },
+    { id: 'tabby', label: 'Tabby', baseUrl: 'http://localhost:8080/v1', type: 'openai_compatible', brandDomain: 'tabbyml.com', isLocal: true, hasFree: true, freeDetails: 'Free and open source' },
+    { id: 'litellm', label: 'LiteLLM Proxy', baseUrl: 'http://localhost:4000', type: 'openai_compatible', brandDomain: 'litellm.ai', isLocal: true, hasFree: true, freeDetails: 'Free and open source' },
   ];
 
   const filteredPresets = PROVIDER_PRESETS.filter(p => {
+    // Search filter
     const q = providerSearchQuery.toLowerCase();
-    return p.label.toLowerCase().includes(q) || p.baseUrl.toLowerCase().includes(q);
+    const matchesSearch = p.label.toLowerCase().includes(q) || p.baseUrl.toLowerCase().includes(q);
+    
+    // Category filter
+    let matchesFilter = true;
+    if (providerFilter === 'local') {
+      matchesFilter = p.isLocal === true;
+    } else if (providerFilter === 'free') {
+      matchesFilter = p.hasFree === true && !p.isLocal;
+    } else if (providerFilter === 'cloud') {
+      matchesFilter = !p.isLocal;
+    }
+    // 'all' shows everything
+    
+    return matchesSearch && matchesFilter;
   });
 
   const isLocalPreset = (preset: ProviderPreset): boolean => {
@@ -406,6 +466,7 @@ const Settings = () => {
   });
 
   const handleSelectPreset = (preset: ProviderPreset) => {
+    setSelectedPreset(preset);
     setNewProviderForm(prev => ({
       ...prev,
       type: preset.type,
@@ -1912,6 +1973,7 @@ const Settings = () => {
                   >
                     Remote Server
                   </button>
+                  {/* Monitor tab - hidden for now
                   <button
                     onClick={() => setActiveSystemTab('monitor')}
                     className={`flex items-center px-2.5 py-1.5 rounded-md text-sm transition-colors ${
@@ -1922,6 +1984,7 @@ const Settings = () => {
                   >
                     Monitor
                   </button>
+                  */}
                 </div>
               )}
 
@@ -4076,10 +4139,10 @@ const ProcessButton = () => {
             <RemoteServerSetup />
           )}
 
-          {/* Monitor Tab */}
-          {effectiveActiveTab === 'monitor' && (
+          {/* Monitor Tab - hidden for now */}
+          {/* effectiveActiveTab === 'monitor' && (
             <MonitorTab remoteServers={remoteServers} />
-          )}
+          ) */}
         </div>
       </div>
 
@@ -4129,7 +4192,7 @@ const ProcessButton = () => {
       {/* Add/Edit Provider Modal */}
       {showAddProviderModal && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50">
-          <div className="bg-white dark:bg-gray-800 rounded-xl p-6 w-full max-w-md mx-4 shadow-xl">
+          <div className="bg-white dark:bg-gray-800 rounded-xl p-6 w-full max-w-3xl mx-4 shadow-xl glassmorphic">
             <div className="flex items-center justify-between mb-6">
               <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
                 {editingProvider ? 'Edit Provider' : 'Add Provider'}
@@ -4138,6 +4201,7 @@ const ProcessButton = () => {
                 onClick={() => {
                   setShowAddProviderModal(false);
                   setEditingProvider(null);
+                  setSelectedPreset(null);
                 }}
                 className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
               >
@@ -4149,6 +4213,57 @@ const ProcessButton = () => {
               {addProviderStep === 'select' ? (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Choose a Provider</label>
+                  
+                  {/* Filter buttons */}
+                  <div className="flex gap-2 mb-3 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={() => setProviderFilter('all')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                        providerFilter === 'all'
+                          ? 'bg-sakura-500 text-white'
+                          : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600'
+                      }`}
+                    >
+                      All Providers
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setProviderFilter('local')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors inline-flex items-center gap-1 ${
+                        providerFilter === 'local'
+                          ? 'bg-blue-500 text-white'
+                          : 'bg-blue-50 text-blue-700 hover:bg-blue-100 dark:bg-blue-900/30 dark:text-blue-300 dark:hover:bg-blue-900/50'
+                      }`}
+                    >
+                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-current"></span>
+                      Local Only
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setProviderFilter('free')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors inline-flex items-center gap-1 ${
+                        providerFilter === 'free'
+                          ? 'bg-green-500 text-white'
+                          : 'bg-green-50 text-green-700 hover:bg-green-100 dark:bg-green-900/30 dark:text-green-300 dark:hover:bg-green-900/50'
+                      }`}
+                    >
+                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-current"></span>
+                      Free Tier
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setProviderFilter('cloud')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                        providerFilter === 'cloud'
+                          ? 'bg-purple-500 text-white'
+                          : 'bg-purple-50 text-purple-700 hover:bg-purple-100 dark:bg-purple-900/30 dark:text-purple-300 dark:hover:bg-purple-900/50'
+                      }`}
+                    >
+                      All Cloud
+                    </button>
+                  </div>
+                  
                   <div className="relative mb-3">
                     <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
                     <input
@@ -4159,13 +4274,33 @@ const ProcessButton = () => {
                       className="w-full pl-9 pr-3 py-2 rounded-lg bg-white/50 border border-gray-200 focus:outline-none focus:border-sakura-300 dark:bg-gray-800/50 dark:border-gray-700 dark:text-gray-100"
                     />
                   </div>
-                  <div className="space-y-2 max-h-64 overflow-auto pr-1">
+                  
+                  {/* Results count */}
+                  <div className="mb-2 text-xs text-gray-500 dark:text-gray-400 flex items-center justify-between">
+                    <span>{filteredPresets.length} provider{filteredPresets.length !== 1 ? 's' : ''} found</span>
+                    {(providerSearchQuery || providerFilter !== 'all') && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setProviderSearchQuery('');
+                          setProviderFilter('all');
+                        }}
+                        className="text-sakura-600 dark:text-sakura-400 hover:text-sakura-700 dark:hover:text-sakura-300"
+                      >
+                        Clear filters
+                      </button>
+                    )}
+                  </div>
+                  
+                  <div className="space-y-2 max-h-96 overflow-auto pr-1">
                     {/* Custom first */}
                     <button
                       type="button"
                       onClick={() => { setNewProviderForm(prev => ({ ...prev, type: 'openai_compatible', name: '', baseUrl: '' })); setAddProviderStep('configure'); }}
-                      className={`w-full flex items-center gap-3 p-3 rounded-lg border transition-colors text-left ${
-                        !newProviderForm.baseUrl && !newProviderForm.name ? 'border-sakura-300 bg-sakura-50/60 dark:bg-sakura-500/10' : 'border-gray-200 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-700/50'
+                      className={`w-full flex items-center gap-3 p-3 rounded-lg transition-colors text-left ${
+                        !newProviderForm.baseUrl && !newProviderForm.name 
+                          ? 'bg-sakura-50/60 dark:bg-sakura-500/10' 
+                          : 'hover:bg-gray-50/50 dark:hover:bg-gray-700/30'
                       }`}
                     >
                       <div className="w-7 h-7 rounded-md bg-white/70 dark:bg-gray-700 flex items-center justify-center">
@@ -4189,10 +4324,10 @@ const ProcessButton = () => {
                           key={preset.id}
                           type="button"
                           onClick={() => { handleSelectPreset(preset); setAddProviderStep('configure'); }}
-                          className={`w-full flex items-center gap-3 p-3 rounded-lg border transition-colors text-left ${
+                          className={`w-full flex items-center gap-3 p-3 rounded-lg transition-colors text-left ${
                             isSelected
-                              ? 'border-sakura-300 bg-sakura-50/60 dark:bg-sakura-500/10'
-                              : 'border-gray-200 hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-700/50'
+                              ? 'bg-sakura-50/60 dark:bg-sakura-500/10'
+                              : 'hover:bg-gray-50/50 dark:hover:bg-gray-700/30'
                           }`}
                         >
                           <div className="relative w-7 h-7 rounded-md overflow-hidden bg-white/70 dark:bg-gray-700 flex items-center justify-center">
@@ -4221,8 +4356,20 @@ const ProcessButton = () => {
                               )
                             )}
                           </div>
-                          <div className="min-w-0">
-                            <div className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">{preset.label}</div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-2">
+                              <div className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">{preset.label}</div>
+                              {preset.isLocal && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400 whitespace-nowrap">
+                                  LOCAL
+                                </span>
+                              )}
+                              {!preset.isLocal && preset.hasFree && (
+                                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400 whitespace-nowrap" title={preset.freeDetails || 'Free tier available'}>
+                                  FREE
+                                </span>
+                              )}
+                            </div>
                             <div className="text-xs text-gray-500 dark:text-gray-400 truncate">{preset.baseUrl}</div>
                           </div>
                           {isUp && (
@@ -4239,7 +4386,10 @@ const ProcessButton = () => {
                 <div className="space-y-4">
                   <button
                     type="button"
-                    onClick={() => setAddProviderStep('select')}
+                    onClick={() => {
+                      setAddProviderStep('select');
+                      setSelectedPreset(null);
+                    }}
                     className="-mt-2 -ml-2 inline-flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
                   >
                     <ChevronLeft className="w-3 h-3" /> Back
@@ -4279,6 +4429,22 @@ const ProcessButton = () => {
                       className="w-full px-4 py-2 rounded-lg bg-white/50 border border-gray-200 focus:outline-none focus:border-sakura-300 dark:bg-gray-800/50 dark:border-gray-700 dark:text-gray-100"
                       placeholder="Enter API key (optional)"
                     />
+                    {selectedPreset && selectedPreset.signupUrl && selectedPreset.hasFree && !selectedPreset.isLocal && (
+                      <p className="mt-2 text-xs">
+                        <a 
+                          href={selectedPreset.signupUrl} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="text-sakura-600 dark:text-sakura-400 hover:text-sakura-700 dark:hover:text-sakura-300 underline inline-flex items-center gap-1"
+                        >
+                          🎁 Get free API key from {selectedPreset.label}
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                          </svg>
+                        </a>
+                        <span className="ml-1 text-gray-500 dark:text-gray-400">({selectedPreset.freeDetails})</span>
+                      </p>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-2">
@@ -4298,9 +4464,14 @@ const ProcessButton = () => {
             <div className="flex gap-3 mt-6">
               <button
                 onClick={() => {
-                  if (addProviderStep === 'configure' && !editingProvider) { setAddProviderStep('select'); return; }
+                  if (addProviderStep === 'configure' && !editingProvider) { 
+                    setAddProviderStep('select'); 
+                    setSelectedPreset(null);
+                    return; 
+                  }
                   setShowAddProviderModal(false);
                   setEditingProvider(null);
+                  setSelectedPreset(null);
                 }}
                 className="flex-1 px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
               >
