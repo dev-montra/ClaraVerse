@@ -170,21 +170,13 @@ const PythonStartupModal: React.FC<PythonStartupModalProps> = ({
 
       if (pythonStatus.isHealthy) {
         setStatus(`Python backend is running and healthy (${pythonStatus.mode} mode)`);
-        setTimeout(() => {
-          onStartupComplete();
-          onClose();
-        }, 1000);
+        // Close immediately when healthy
+        onStartupComplete();
+        onClose();
       } else {
         // Show appropriate message based on deployment mode
         if (pythonStatus.mode === 'docker') {
           setStatus(pythonStatus.error || 'Python backend container is not running');
-          // Automatically check for updates when container is not running and Docker is available
-          if (dockerStatus.isRunning) {
-            console.log('Starting update check...');
-            setTimeout(() => {
-              checkForUpdates();
-            }, 500); // Small delay to let the UI update
-          }
         } else if (pythonStatus.mode === 'remote') {
           setStatus(pythonStatus.error || 'Remote Python backend is not responding');
           setError('Remote server is unreachable. You can start the Docker container as a fallback.');
@@ -219,10 +211,26 @@ const PythonStartupModal: React.FC<PythonStartupModalProps> = ({
       if (result.success) {
         setStatus('Python backend container started successfully');
         setStartupProgress(null);
-        // Wait a bit for the service to fully initialize
-        setTimeout(async () => {
-          await checkStatus();
-        }, 3000);
+        
+        // FIX: Use the status returned directly from start-python-container to avoid race condition
+        // Previously, we waited 3 seconds and called check-python-status, but CentralServiceManager
+        // state update wasn't guaranteed to propagate by then. Now start-python-container returns
+        // the status directly after updating CentralServiceManager, eliminating the race condition.
+        if (result.status) {
+          console.log('✅ Python backend status from start result:', result.status);
+          setServiceStatus(result.status);
+          
+          // If healthy, close the modal immediately
+          if (result.status.isHealthy) {
+            onStartupComplete();
+            onClose();
+          }
+        } else {
+          // Fallback: wait a bit for the service to fully initialize and check status
+          setTimeout(async () => {
+            await checkStatus();
+          }, 3000);
+        }
       } else {
         setError(result.error || 'Failed to start Python backend container');
         setStartupProgress(null);

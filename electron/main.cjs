@@ -144,7 +144,15 @@ const getPythonConfig = () => {
         // Keep backward compatibility for existing data paths
         'clara_python_models:/app/models'
       ],
-      volumeNames: ['clara_python_models']
+      volumeNames: ['clara_python_models'],
+      // Request GPU runtime for AI acceleration (e.g., Whisper, image generation)
+      runtime: 'nvidia',
+      // GPU-specific environment variables for Python AI libraries
+      gpuEnvironment: [
+        'CUDA_VISIBLE_DEVICES=0',
+        'TF_CPP_MIN_LOG_LEVEL=2',
+        'PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512'
+      ]
     };
     
     // Add the Python config back to the containers object
@@ -1647,55 +1655,103 @@ function registerPythonBackendHandlers() {
     }
   });
 
-  // Check Python backend service status
+  // Check Python backend service status (using unified service manager)
   ipcMain.handle('check-python-status', async () => {
     try {
+      // First check CentralServiceManager for current status
+      if (centralServiceManager) {
+        const serviceStatus = centralServiceManager.getServicesStatus()['python-backend'];
+        if (serviceStatus) {
+          const mode = serviceStatus.deploymentMode || 'docker';
+          const serviceUrl = serviceStatus.serviceUrl;
+          const stateIsRunning = serviceStatus.state === 'running';
+
+          log.info(`📊 Python Backend Status from CentralServiceManager: mode=${mode}, state=${serviceStatus.state}, url=${serviceUrl}`);
+
+          // CRITICAL FIX: Don't trust the state alone - actually verify health!
+          // The state might say 'running' but the container could be stopped/crashed
+          let actualHealthy = false;
+          
+          if (stateIsRunning) {
+            // Verify actual health based on mode
+            if (mode === 'docker') {
+              // Check Docker container health
+              actualHealthy = dockerSetup ? await dockerSetup.isPythonRunning() : false;
+              log.info(`🔍 Docker health check result: ${actualHealthy}`);
+            } else if (mode === 'remote' || mode === 'manual') {
+              // Check remote/manual endpoint health
+              try {
+                const { createManualHealthCheck } = require('./serviceDefinitions.cjs');
+                const healthCheck = createManualHealthCheck(serviceUrl, '/health');
+                actualHealthy = await healthCheck();
+                log.info(`🔍 ${mode} health check result: ${actualHealthy}`);
+              } catch (err) {
+                log.warn(`Health check failed for ${mode} mode:`, err);
+                actualHealthy = false;
+              }
+            }
+          }
+
+          // Return different messages based on deployment mode and ACTUAL health
+          if (mode === 'docker') {
+            if (!actualHealthy) {
+              // Check if Docker is available to provide better error message
+              const dockerRunning = dockerSetup ? await dockerSetup.isDockerRunning() : false;
+              if (!dockerRunning) {
+                return {
+                  isHealthy: false,
+                  serviceUrl: null,
+                  mode,
+                  error: 'Docker is not running. Please start Docker Desktop.'
+                };
+              }
+              return {
+                isHealthy: false,
+                serviceUrl: null,
+                mode,
+                error: 'Python Backend Docker container is not running'
+              };
+            }
+            return { isHealthy: true, serviceUrl: serviceUrl || 'http://localhost:5001', mode };
+          } else if (mode === 'remote') {
+            if (!actualHealthy) {
+              return {
+                isHealthy: false,
+                serviceUrl,
+                mode,
+                error: `Remote server at ${serviceUrl || 'unknown'} is unreachable. Would you like to start the Docker container instead?`
+              };
+            }
+            return { isHealthy: true, serviceUrl, mode };
+          } else if (mode === 'manual') {
+            if (!actualHealthy) {
+              return {
+                isHealthy: false,
+                serviceUrl,
+                mode,
+                error: `Manual server at ${serviceUrl || 'unknown'} is unreachable. Would you like to start the Docker container instead?`
+              };
+            }
+            return { isHealthy: true, serviceUrl, mode };
+          }
+        }
+      }
+
+      // Fallback to legacy check if CentralServiceManager is not available
       if (!dockerSetup) {
-        return { isHealthy: false, serviceUrl: null, mode: 'docker', error: 'Docker setup not initialized' };
+        return { isHealthy: false, serviceUrl: null, mode: 'docker', error: 'Service manager not initialized' };
       }
 
-      // Ensure service config manager is initialized
-      const configManager = ensureServiceConfigManager();
-      
-      // Get service configuration to determine mode (with fallback if service config manager is not available)
-      let mode = 'docker'; // Default mode
-      let manualUrl = null;
-      
-      if (configManager && typeof configManager.getServiceMode === 'function') {
-        try {
-          mode = configManager.getServiceMode('python-backend') || 'docker';
-          if (mode === 'manual' && typeof configManager.getServiceUrl === 'function') {
-            manualUrl = configManager.getServiceUrl('python-backend');
-          }
-        } catch (configError) {
-          log.warn('Error getting service config, using default mode:', configError.message);
-        }
-      }
-      
-      let serviceUrl = null;
-
-      if (mode === 'docker') {
-        // Check if Docker is running first
-        const dockerRunning = await dockerSetup.isDockerRunning();
-        if (dockerRunning) {
-          const healthResult = await dockerSetup.isPythonRunning();
-          if (dockerSetup.ports && dockerSetup.ports.python) {
-            serviceUrl = `http://localhost:${dockerSetup.ports.python}`;
-          }
-          return { isHealthy: healthResult, serviceUrl, mode };
-        } else {
-          return { isHealthy: false, serviceUrl: null, mode, error: 'Docker is not running' };
-        }
+      // Legacy Docker check
+      const dockerRunning = await dockerSetup.isDockerRunning();
+      if (dockerRunning) {
+        const healthResult = await dockerSetup.isPythonRunning();
+        const serviceUrl = dockerSetup.ports && dockerSetup.ports.python
+          ? `http://localhost:${dockerSetup.ports.python}`
+          : 'http://localhost:5001';
+        return { isHealthy: healthResult, serviceUrl, mode: 'docker' };
       } else {
-        // Manual mode - check configured URL
-        if (manualUrl) {
-          serviceUrl = manualUrl;
-          // For manual mode, we can try to ping the URL
-          const healthResult = await dockerSetup.isPythonRunning();
-          return { isHealthy: healthResult, serviceUrl, mode };
-        } else {
-          return { isHealthy: false, serviceUrl: null, mode, error: 'No manual URL configured' };
-        }
+        return { isHealthy: false, serviceUrl: null, mode: 'docker', error: 'Docker is not running' };
       }
     } catch (error) {
       log.error('Error checking Python backend status:', error);
@@ -1799,6 +1855,9 @@ function registerPythonBackendHandlers() {
   });
 
   // Start Python backend container
+  // Returns: { success: boolean, status?: ServiceStatus, error?: string }
+  // Where ServiceStatus = { isHealthy: boolean, serviceUrl: string, mode: 'docker' | 'remote' | 'manual' }
+  // The status object is returned directly to avoid race conditions with check-python-status
   ipcMain.handle('start-python-container', async () => {
     try {
       if (!dockerSetup) {
@@ -1858,7 +1917,27 @@ function registerPythonBackendHandlers() {
             });
           }
           log.info('Python backend container started and is healthy');
-          return { success: true };
+
+          // Update CentralServiceManager state
+          const serviceUrl = dockerSetup.ports && dockerSetup.ports.python
+            ? `http://localhost:${dockerSetup.ports.python}`
+            : 'http://localhost:5001';
+            
+          if (centralServiceManager) {
+            centralServiceManager.setServiceUrl('python-backend', serviceUrl);
+            centralServiceManager.setState('python-backend', centralServiceManager.states.RUNNING);
+            log.info('✅ Updated CentralServiceManager: python-backend is running');
+          }
+
+          // Return the status directly to avoid race condition with check-python-status
+          return { 
+            success: true,
+            status: {
+              isHealthy: true,
+              serviceUrl: serviceUrl,
+              mode: 'docker'
+            }
+          };
         }
         
         attempts++;

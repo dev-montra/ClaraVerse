@@ -2155,6 +2155,39 @@ class DockerSetup extends EventEmitter {
         networkMode = 'bridge';
       }
 
+      // Add host.docker.internal mapping for Linux
+      const isLinux = process.platform === 'linux';
+      const extraHosts = [];
+
+      if (isLinux) {
+        // On Linux, we need to get the gateway IP of clara_network
+        // host-gateway resolves to default bridge (172.17.0.1), but we use custom network
+        try {
+          const networks = await this.docker.listNetworks({ filters: { name: ['clara_network'] } });
+          if (networks && networks.length > 0) {
+            const network = await this.docker.getNetwork(networks[0].Id);
+            const networkInfo = await network.inspect();
+            const gatewayIP = networkInfo.IPAM?.Config?.[0]?.Gateway;
+
+            if (gatewayIP) {
+              extraHosts.push(`host.docker.internal:${gatewayIP}`);
+              console.log(`🐧 Linux detected: Adding host.docker.internal:${gatewayIP} mapping (clara_network gateway)`);
+            } else {
+              // Fallback to host-gateway if we can't detect gateway IP
+              extraHosts.push('host.docker.internal:host-gateway');
+              console.log('🐧 Linux detected: Adding host.docker.internal:host-gateway mapping (fallback)');
+            }
+          } else {
+            extraHosts.push('host.docker.internal:host-gateway');
+            console.log('🐧 Linux detected: Adding host.docker.internal:host-gateway mapping (network not found)');
+          }
+        } catch (err) {
+          console.error('❌ Failed to detect clara_network gateway:', err.message);
+          extraHosts.push('host.docker.internal:host-gateway');
+          console.log('🐧 Linux detected: Adding host.docker.internal:host-gateway mapping (error fallback)');
+        }
+      }
+
       const containerConfig = {
         Image: config.image,
         name: config.name,
@@ -2167,6 +2200,8 @@ class DockerSetup extends EventEmitter {
           },
           Binds: config.volumes,
           NetworkMode: networkMode,
+          // Add extra hosts for host.docker.internal on Linux
+          ...(extraHosts.length > 0 && { ExtraHosts: extraHosts }),
           // Add restart policy if specified
           ...(config.restartPolicy && { RestartPolicy: { Name: config.restartPolicy } }),
           // Add GPU device access using modern DeviceRequests API (works on both Linux and Windows)

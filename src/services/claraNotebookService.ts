@@ -335,6 +335,26 @@ export class ClaraNotebookService {
   }
 
   /**
+   * Manually set health status (for immediate updates from IPC events)
+   * This avoids race conditions when we already know the backend is healthy
+   */
+  public setHealthStatus(isHealthy: boolean, serviceUrl?: string): void {
+    const wasHealthy = this.isHealthy;
+    this.isHealthy = isHealthy;
+    
+    // Update base URL if provided
+    if (serviceUrl && serviceUrl !== this.baseUrl) {
+      console.log(`📚 Notebook Backend URL updated: ${serviceUrl}`);
+      this.baseUrl = serviceUrl;
+    }
+    
+    if (wasHealthy !== this.isHealthy) {
+      console.log(`📚 Notebook Backend health manually updated: ${this.isHealthy ? 'healthy' : 'unhealthy'}`);
+      this.notifyHealthCallbacks();
+    }
+  }
+
+  /**
    * Set backend as unhealthy
    */
   private setUnhealthy(): void {
@@ -380,6 +400,13 @@ export class ClaraNotebookService {
    */
   public isBackendHealthy(): boolean {
     return this.isHealthy;
+  }
+
+  /**
+   * Get current base URL
+   */
+  public getBaseUrl(): string {
+    return this.baseUrl;
   }
 
   /**
@@ -485,16 +512,13 @@ public async validateModels(config: NotebookCreate): Promise<{
     // Determine the host address based on platform
     let hostAddress = '';
     if (isPythonInDocker) {
-      if (isWindows || isMac) {
-        // Windows/Mac Docker Desktop provides host.docker.internal
-        hostAddress = 'host.docker.internal';
-      } else if (isLinux) {
-        // Linux: Use Docker bridge gateway IP (default is 172.17.0.1)
-        // Note: This assumes default Docker networking.
-        // Alternatively, containers can be started with --add-host=host.docker.internal:host-gateway
-        hostAddress = '172.17.0.1';
-        console.log('🐧 Linux detected: Using Docker bridge gateway IP for host access');
-      }
+      // Use host.docker.internal for all platforms
+      // On Windows/Mac: Docker Desktop provides this automatically
+      // On Linux: We add this via --add-host flag pointing to the correct gateway
+      hostAddress = 'host.docker.internal';
+
+      const platformName = isWindows ? 'Windows' : isMac ? 'macOS' : isLinux ? 'Linux' : 'Unknown';
+      console.log(`🐧 ${platformName} detected: Using host.docker.internal for host access`);
     }
 
     if (hostAddress && isPythonInDocker) {
@@ -552,7 +576,9 @@ public async validateModels(config: NotebookCreate): Promise<{
     // Clean up old cache entries (keep cache size manageable)
     if (this.validationCache.size > 10) {
       const oldestKey = this.validationCache.keys().next().value;
-      this.validationCache.delete(oldestKey);
+      if (oldestKey) {
+        this.validationCache.delete(oldestKey);
+      }
     }
 
     return result;
@@ -586,11 +612,10 @@ public async validateModels(config: NotebookCreate): Promise<{
       // Determine the host address based on platform
       let hostAddress = '';
       if (isPythonInDocker) {
-        if (isWindows || isMac) {
-          hostAddress = 'host.docker.internal';
-        } else if (isLinux) {
-          hostAddress = '172.17.0.1';
-        }
+        // Use host.docker.internal for all platforms
+        // On Windows/Mac: Docker Desktop provides this automatically
+        // On Linux: We add this via --add-host flag pointing to the correct gateway
+        hostAddress = 'host.docker.internal';
       }
 
       if (hostAddress && isPythonInDocker) {
