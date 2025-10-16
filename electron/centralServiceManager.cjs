@@ -340,17 +340,30 @@ class CentralServiceManager extends EventEmitter {
   setState(serviceName, state) {
     const previousState = this.serviceStates.get(serviceName);
     this.serviceStates.set(serviceName, state);
-    
+
     const service = this.services.get(serviceName);
     if (service) {
       service.state = state;
     }
-    
+
     this.emit('service-state-changed', {
       name: serviceName,
       previousState,
       currentState: state
     });
+  }
+
+  /**
+   * Set service URL (for remote/manual deployments)
+   */
+  setServiceUrl(serviceName, url) {
+    const service = this.services.get(serviceName);
+    if (service) {
+      service.serviceUrl = url;
+      log.info(`✅ Set ${serviceName} URL to: ${url}`);
+    } else {
+      log.warn(`⚠️ Service ${serviceName} not found when setting URL`);
+    }
   }
 
   /**
@@ -638,12 +651,15 @@ class CentralServiceManager extends EventEmitter {
   getStopMethod(service) {
     if (service.dockerContainer) {
       return this.stopDockerService.bind(this);
+    } else if (service.instance && service.instance.stopService) {
+      // Native service instance (like ClaraCore local binary)
+      return this.stopNativeService.bind(this);
     } else if (service.process) {
       return this.stopProcessService.bind(this);
     } else if (service.customStop) {
       return service.customStop;
     }
-    
+
     return () => Promise.resolve(); // No-op if no stop method
   }
 
@@ -677,6 +693,19 @@ class CentralServiceManager extends EventEmitter {
   async stopProcessService(service) {
     if (service.instance && service.instance.kill) {
       service.instance.kill('SIGTERM');
+    }
+  }
+
+  /**
+   * Native service stop (for ClaraCore local binary and similar)
+   */
+  async stopNativeService(service) {
+    if (service.instance && typeof service.instance.stopService === 'function') {
+      log.info(`🛑 Stopping native service instance: ${service.name}`);
+      await service.instance.stopService();
+      log.info(`✅ Native service instance stopped: ${service.name}`);
+    } else {
+      log.warn(`⚠️ Native service ${service.name} has no stopService method`);
     }
   }
 }

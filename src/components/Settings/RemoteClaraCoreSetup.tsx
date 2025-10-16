@@ -73,7 +73,7 @@ const RemoteClaraCoreSetup: React.FC = () => {
   const [deploymentUrl, setDeploymentUrl] = useState<string>('');
   const logsEndRef = useRef<HTMLDivElement>(null);
 
-  // Load remote server config on mount
+  // Load remote server config on mount (NO PASSWORD - security)
   useEffect(() => {
     const loadRemoteConfig = async () => {
       try {
@@ -85,7 +85,7 @@ const RemoteClaraCoreSetup: React.FC = () => {
               host: remoteServer.host || '',
               port: remoteServer.port || 22,
               username: remoteServer.username || '',
-              password: remoteServer.password || ''
+              password: '' // NEVER load password - security risk
             }));
           }
         }
@@ -244,6 +244,14 @@ const RemoteClaraCoreSetup: React.FC = () => {
             hardwareType: hardwareType,
             deployed: true
           });
+
+          // Automatically switch ClaraCore to remote mode
+          addLog('info', '⚙️ Automatically switching ClaraCore to Remote mode...');
+          await (window as any).electron.store.set('serviceConfigs.claracore', {
+            mode: 'remote',
+            manualUrl: url
+          });
+          addLog('success', '✓ ClaraCore switched to Remote mode');
         }
 
         setState('deployed');
@@ -272,7 +280,6 @@ const RemoteClaraCoreSetup: React.FC = () => {
 
   return (
     <div className="space-y-6">
-      {/* Header */}
 
       {/* Configuration Form */}
       <div className="glassmorphic rounded-xl p-6">

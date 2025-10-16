@@ -149,60 +149,111 @@ class ClaraCoreService {
    */
   async killExistingClaraCore() {
     try {
-      log.info('Attempting to kill existing ClaraCore process on port 8091...');
+      log.info('Attempting to gracefully shutdown existing ClaraCore process on port 8091...');
+
+      // First, try to shutdown gracefully via HTTP using ClaraCore's restart endpoint
+      try {
+        const axios = require('axios');
+        // Use the hard restart endpoint which actually shuts down the service
+        await axios.post('http://127.0.0.1:8091/api/server/restart/hard', {}, { timeout: 3000 });
+        log.info('✅ Sent hard restart/shutdown request to existing ClaraCore');
+        await new Promise(resolve => setTimeout(resolve, 2000));
+
+        // Check if it actually stopped
+        if (!(await this.isPortInUse(8091))) {
+          log.info('✅ ClaraCore gracefully shut down via HTTP');
+          return true;
+        }
+      } catch (shutdownError) {
+        // Graceful shutdown failed, continue with force kill
+        log.debug('HTTP shutdown failed, attempting force kill...', shutdownError.message);
+      }
 
       if (os.platform() === 'win32') {
         // Windows: Find PID using netstat and kill it
         const { execSync } = require('child_process');
-        const netstatOutput = execSync('netstat -ano | findstr :8091 | findstr LISTENING', { encoding: 'utf8' });
+        try {
+          const netstatOutput = execSync('netstat -ano | findstr :8091 | findstr LISTENING', { encoding: 'utf8' });
 
-        if (netstatOutput) {
-          // Extract PID from netstat output
-          const lines = netstatOutput.trim().split('\n');
+          if (netstatOutput) {
+            // Extract PID from netstat output
+            const lines = netstatOutput.trim().split('\n');
 
-          for (const line of lines) {
-            const parts = line.trim().split(/\s+/);
-            const pid = parts[parts.length - 1];
+            for (const line of lines) {
+              const parts = line.trim().split(/\s+/);
+              const pid = parts[parts.length - 1];
 
-            if (pid && !isNaN(pid)) {
-              try {
-                execSync(`taskkill /F /PID ${pid}`, { encoding: 'utf8' });
-                log.info(`✅ Killed existing ClaraCore process (PID: ${pid})`);
+              if (pid && !isNaN(pid)) {
+                try {
+                  execSync(`taskkill /F /PID ${pid}`, { encoding: 'utf8' });
+                  log.info(`✅ Killed existing ClaraCore process (PID: ${pid})`);
 
-                // Wait a bit for the port to be released
-                await new Promise(resolve => setTimeout(resolve, 1000));
-                return true;
-              } catch (killError) {
-                log.warn(`Failed to kill process ${pid}:`, killError.message);
+                  // Wait a bit for the port to be released
+                  await new Promise(resolve => setTimeout(resolve, 1000));
+                  return true;
+                } catch (killError) {
+                  log.warn(`Failed to kill process ${pid}:`, killError.message);
+                  // Don't throw - continue execution
+                }
               }
             }
           }
+        } catch (netstatError) {
+          log.debug('No process found on port 8091');
         }
       } else {
         // Unix-like systems: Use lsof
         const { execSync } = require('child_process');
-        const lsofOutput = execSync('lsof -ti:8091', { encoding: 'utf8' }).trim();
+        try {
+          const lsofOutput = execSync('lsof -ti:8091', { encoding: 'utf8' }).trim();
 
-        if (lsofOutput) {
-          const pids = lsofOutput.split('\n').filter(pid => pid);
-          for (const pid of pids) {
-            try {
-              execSync(`kill -9 ${pid}`, { encoding: 'utf8' });
-              log.info(`✅ Killed existing ClaraCore process (PID: ${pid})`);
+          if (lsofOutput) {
+            const pids = lsofOutput.split('\n').filter(pid => pid);
+            for (const pid of pids) {
+              try {
+                // First try SIGTERM (graceful)
+                execSync(`kill -15 ${pid}`, { encoding: 'utf8' });
+                log.info(`✅ Sent SIGTERM to ClaraCore process (PID: ${pid})`);
 
-              // Wait a bit for the port to be released
-              await new Promise(resolve => setTimeout(resolve, 1000));
-              return true;
-            } catch (killError) {
-              log.warn(`Failed to kill process ${pid}:`, killError.message);
+                // Wait for graceful shutdown
+                await new Promise(resolve => setTimeout(resolve, 2000));
+
+                // Check if still running
+                try {
+                  execSync(`kill -0 ${pid}`, { encoding: 'utf8' });
+                  // Still running, try SIGKILL
+                  execSync(`kill -9 ${pid}`, { encoding: 'utf8' });
+                  log.info(`✅ Force killed ClaraCore process (PID: ${pid})`);
+                } catch {
+                  // Process already dead, that's good
+                  log.info(`✅ ClaraCore process (PID: ${pid}) terminated`);
+                }
+
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                return true;
+              } catch (killError) {
+                if (killError.message.includes('Permission denied')) {
+                  log.error(`❌ Permission denied: Cannot kill ClaraCore process ${pid}`);
+                  log.error(`   The process may be owned by another user or started with sudo.`);
+                  log.error(`   Please manually stop ClaraCore or run: sudo kill ${pid}`);
+
+                  // Don't crash the app - return false to indicate failure
+                  return false;
+                } else {
+                  log.warn(`Failed to kill process ${pid}:`, killError.message);
+                }
+              }
             }
           }
+        } catch (lsofError) {
+          log.debug('No process found on port 8091');
         }
       }
 
       return false;
     } catch (error) {
       log.warn('Error while trying to kill existing ClaraCore:', error.message);
+      // Don't crash the app - return false to indicate failure
       return false;
     }
   }

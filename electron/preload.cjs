@@ -514,6 +514,20 @@ contextBridge.exposeInMainWorld('claraCoreRemote', {
   deploy: (config) => ipcRenderer.invoke('claracore-remote-deploy', config)
 });
 
+// Add unified service configuration API
+contextBridge.exposeInMainWorld('serviceConfig', {
+  // Get enhanced service status from central service manager
+  getEnhancedStatus: () => ipcRenderer.invoke('service-config:get-enhanced-status'),
+  // Get service configuration (mode, URL)
+  getServiceConfig: (serviceName) => ipcRenderer.invoke('service-config:get-config', serviceName),
+  // Update service configuration
+  updateServiceConfig: (serviceName, mode, url) => ipcRenderer.invoke('service-config:update', serviceName, mode, url),
+  // Test service connectivity
+  testService: (serviceName, url) => ipcRenderer.invoke('service-config:test-service', serviceName, url),
+  // Reset service to defaults
+  resetService: (serviceName) => ipcRenderer.invoke('service-config:reset', serviceName)
+});
+
 // Notify main process when preload script has loaded
 window.addEventListener('DOMContentLoaded', () => {
   ipcRenderer.send('app-ready', 'Preload script has loaded');

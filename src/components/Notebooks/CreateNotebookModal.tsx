@@ -1011,7 +1011,7 @@ const CreateNotebookModal: React.FC<CreateNotebookModalProps> = ({ onClose, onCr
               <span className="uppercase tracking-wider text-xs text-white/60">Notebook Tips</span>
               <h3 className="mt-2 text-xl font-semibold">Getting the best start</h3>
               <p className="mt-3 text-sm text-white/70 leading-relaxed">
-                Keep names short, describe your focus, and choose models that match your documents. You can always refine these settings after the notebook is created.
+                Keep names short, describe your focus, and choose models that match your documents. You can't change these settings after the notebook is created.
               </p>
             </div>
 
@@ -1047,11 +1047,10 @@ const CreateNotebookModal: React.FC<CreateNotebookModalProps> = ({ onClose, onCr
                 First-time guidance
               </div>
               <ul className="space-y-2 text-xs text-white/70 leading-relaxed">
-                <li>• Keep Clara Core running if you rely on local models for faster indexing.</li>
                 <li>• Large PDFs? Enable higher token limits in Advanced settings before import.</li>
                 <li>• Upload docs in chunks under 10k lines—huge files can take ~30 minutes each.</li>
                 <li>• Prefer smaller, non-"thinking" models for llama.cpp or Clara Core to avoid template mismatches.</li>
-                <li>• Break massive uploads into smaller batches; queue them rather than one giant drop.</li>
+                <li>• Break massive uploads into smaller batches</li>
               </ul>
               {isClaraCoreNotebook && (
                 <div className="text-[11px] text-sakura-200 bg-sakura-500/10 border border-sakura-500/30 rounded-xl px-3 py-2">
@@ -1064,7 +1063,7 @@ const CreateNotebookModal: React.FC<CreateNotebookModalProps> = ({ onClose, onCr
               <div className="rounded-2xl bg-gradient-to-br from-sakura-500/60 via-sakura-500/40 to-sakura-500/20 border border-sakura-400/40 p-4 text-white/90 shadow-lg shadow-sakura-500/20">
                 <p className="text-sm font-semibold">Before you launch</p>
                 <p className="mt-2 text-xs leading-relaxed">
-                  Processing uses streaming chunking. Watching the queue? Avoid stacking &gt;4 large docs at once for best throughput.
+                  <b>Set model that has large context window.</b> You can always adjust settings later in the notebook preferences.
                 </p>
               </div>
 
@@ -1083,10 +1082,6 @@ const CreateNotebookModal: React.FC<CreateNotebookModalProps> = ({ onClose, onCr
                   'Create Notebook'
                 )}
               </button>
-
-              <div className="text-[11px] text-white/40 leading-relaxed">
-                Notebook settings mirror Clara Assistant styling for a cohesive workspace. Need a custom preset? Save this configuration once created.
-              </div>
             </div>
           </aside>
         </div>
