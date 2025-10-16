@@ -300,6 +300,36 @@ const UnifiedServiceManager: React.FC = () => {
   // Fetch N8N status (from ServicesTab)
   const fetchN8nStatus = async () => {
     try {
+      const mode = serviceConfigs.n8n?.mode || 'docker';
+
+      if (mode === 'remote') {
+        // Remote mode - check remote server health
+        const remoteUrl = serviceConfigs.n8n?.url || remoteServerConfig?.services?.n8n?.url;
+        if (remoteUrl) {
+          try {
+            const response = await fetch(`${remoteUrl}/healthz`, {
+              method: 'GET',
+              signal: AbortSignal.timeout(5000)
+            });
+            const isHealthy = response.ok;
+            setN8nStatus({
+              running: isHealthy,
+              serviceUrl: remoteUrl,
+              error: isHealthy ? undefined : 'Remote service unhealthy'
+            });
+            return;
+          } catch (fetchError) {
+            setN8nStatus({
+              running: false,
+              serviceUrl: remoteUrl,
+              error: 'Cannot reach remote service'
+            });
+            return;
+          }
+        }
+      }
+
+      // Docker or Manual mode
       const result = await (window as any).electronAPI.invoke('n8n:check-service-status');
       setN8nStatus({
         running: result.running || false,
@@ -319,6 +349,36 @@ const UnifiedServiceManager: React.FC = () => {
   // Fetch ComfyUI status (from ServicesTab)
   const fetchComfyuiStatus = async () => {
     try {
+      const mode = serviceConfigs.comfyui?.mode || 'docker';
+
+      if (mode === 'remote') {
+        // Remote mode - check remote server health
+        const remoteUrl = serviceConfigs.comfyui?.url || remoteServerConfig?.services?.comfyui?.url;
+        if (remoteUrl) {
+          try {
+            const response = await fetch(`${remoteUrl}/system_stats`, {
+              method: 'GET',
+              signal: AbortSignal.timeout(5000)
+            });
+            const isHealthy = response.ok;
+            setComfyuiStatus({
+              running: isHealthy,
+              serviceUrl: remoteUrl,
+              error: isHealthy ? undefined : 'Remote service unhealthy'
+            });
+            return;
+          } catch (fetchError) {
+            setComfyuiStatus({
+              running: false,
+              serviceUrl: remoteUrl,
+              error: 'Cannot reach remote service'
+            });
+            return;
+          }
+        }
+      }
+
+      // Docker or Manual mode
       const result = await (window as any).electronAPI.invoke('comfyui:check-service-status');
       setComfyuiStatus({
         running: result.running || false,
@@ -338,6 +398,36 @@ const UnifiedServiceManager: React.FC = () => {
   // Fetch Python Backend status
   const fetchPythonBackendStatus = async () => {
     try {
+      const mode = serviceConfigs['python-backend']?.mode || 'docker';
+
+      if (mode === 'remote') {
+        // Remote mode - check remote server health
+        const remoteUrl = serviceConfigs['python-backend']?.url || remoteServerConfig?.services?.python?.url;
+        if (remoteUrl) {
+          try {
+            const response = await fetch(`${remoteUrl}/health`, {
+              method: 'GET',
+              signal: AbortSignal.timeout(5000)
+            });
+            const isHealthy = response.ok;
+            setPythonBackendStatus({
+              running: isHealthy,
+              serviceUrl: remoteUrl,
+              error: isHealthy ? undefined : 'Remote service unhealthy'
+            });
+            return;
+          } catch (fetchError) {
+            setPythonBackendStatus({
+              running: false,
+              serviceUrl: remoteUrl,
+              error: 'Cannot reach remote service'
+            });
+            return;
+          }
+        }
+      }
+
+      // Docker or Manual mode
       const result = await (window as any).electronAPI.invoke('python-backend:check-service-status');
       setPythonBackendStatus({
         running: result.running || false,
@@ -359,7 +449,7 @@ const UnifiedServiceManager: React.FC = () => {
     try {
       const mode = serviceConfigs.claracore?.mode || 'local';
       let result;
-      
+
       if (mode === 'docker') {
         // Docker mode - check Docker container status
         result = await (window as any).claraCore?.getDockerStatus();
@@ -375,6 +465,35 @@ const UnifiedServiceManager: React.FC = () => {
             running: false,
             serviceUrl: 'http://localhost:8091',
             error: result?.error || 'Docker container not running'
+          });
+        }
+      } else if (mode === 'remote') {
+        // Remote mode - check remote server health
+        const remoteUrl = serviceConfigs.claracore?.url || claraCoreRemoteConfig?.url || remoteServerConfig?.services?.claracore?.url;
+        if (remoteUrl) {
+          try {
+            const response = await fetch(`${remoteUrl}/health`, {
+              method: 'GET',
+              signal: AbortSignal.timeout(5000)
+            });
+            const isHealthy = response.ok;
+            setClaraCoreStatus({
+              running: isHealthy,
+              serviceUrl: remoteUrl,
+              error: isHealthy ? undefined : 'Remote service unhealthy'
+            });
+          } catch (fetchError) {
+            setClaraCoreStatus({
+              running: false,
+              serviceUrl: remoteUrl,
+              error: 'Cannot reach remote service'
+            });
+          }
+        } else {
+          setClaraCoreStatus({
+            running: false,
+            serviceUrl: 'http://localhost:8091',
+            error: 'Remote URL not configured'
           });
         }
       } else {
@@ -408,6 +527,16 @@ const UnifiedServiceManager: React.FC = () => {
   const handleN8nAction = async (action: 'start' | 'stop' | 'restart') => {
     setN8nLoading(true);
     try {
+      const mode = serviceConfigs.n8n?.mode || 'docker';
+
+      if (mode === 'remote') {
+        // Remote mode: Services are managed on remote server
+        alert(`⚠️ N8N is running on a remote server.\n\nTo control it, please ${action} the service on your remote server directly.\n\nRemote service management from the UI is coming soon!`);
+        setN8nLoading(false);
+        return;
+      }
+
+      // Docker or Manual mode
       let result;
       if (action === 'start' && (window as any).electronAPI) {
         result = await (window as any).electronAPI.invoke('n8n:start-container');
@@ -416,7 +545,7 @@ const UnifiedServiceManager: React.FC = () => {
       } else if (action === 'restart' && (window as any).electronAPI) {
         result = await (window as any).electronAPI.invoke('n8n:restart-container');
       }
-      
+
       if (result?.success) {
         setTimeout(() => fetchN8nStatus(), 3000);
       }
@@ -431,6 +560,16 @@ const UnifiedServiceManager: React.FC = () => {
   const handleComfyuiAction = async (action: 'start' | 'stop' | 'restart') => {
     setComfyuiLoading(true);
     try {
+      const mode = serviceConfigs.comfyui?.mode || 'docker';
+
+      if (mode === 'remote') {
+        // Remote mode: Services are managed on remote server
+        alert(`⚠️ ComfyUI is running on a remote server.\n\nTo control it, please ${action} the service on your remote server directly.\n\nRemote service management from the UI is coming soon!`);
+        setComfyuiLoading(false);
+        return;
+      }
+
+      // Docker or Manual mode
       let result;
       if (action === 'start' && (window as any).electronAPI) {
         result = await (window as any).electronAPI.invoke('comfyui-start');
@@ -455,6 +594,16 @@ const UnifiedServiceManager: React.FC = () => {
   const handlePythonBackendAction = async (action: 'start' | 'stop' | 'restart') => {
     setPythonBackendLoading(true);
     try {
+      const mode = serviceConfigs['python-backend']?.mode || 'docker';
+
+      if (mode === 'remote') {
+        // Remote mode: Services are managed on remote server
+        alert(`⚠️ Python Backend is running on a remote server.\n\nTo control it, please ${action} the service on your remote server directly.\n\nRemote service management from the UI is coming soon!`);
+        setPythonBackendLoading(false);
+        return;
+      }
+
+      // Docker or Manual mode
       let result;
       if (action === 'start' && (window as any).electronAPI) {
         result = await (window as any).electronAPI.invoke('start-python-container');
