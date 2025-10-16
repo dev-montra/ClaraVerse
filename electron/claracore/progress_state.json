@@ -3,12 +3,12 @@
     "status": "completed",
     "current_step": "Saving configuration file...",
     "progress": 100,
-    "total_models": 29,
-    "processed_models": 29,
-    "current_model": "Qwen3-Embedding-0.6B-Q8_0",
+    "total_models": 30,
+    "processed_models": 30,
+    "current_model": "Qwen3-0.6B-Q8_0",
     "error": "",
     "completed": true,
-    "started_at": "2025-10-15T16:04:16.0345859+05:30",
-    "updated_at": "2025-10-15T16:05:57.345366+05:30"
+    "started_at": "2025-10-16T12:37:26.693011+05:30",
+    "updated_at": "2025-10-16T12:39:10.3831133+05:30"
   }
 }

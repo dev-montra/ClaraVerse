@@ -428,10 +428,20 @@ contextBridge.exposeInMainWorld('modelManager', {
 
 // Add ClaraCore Service API
 contextBridge.exposeInMainWorld('claraCore', {
+  // Local binary mode
   start: () => ipcRenderer.invoke('claracore-start'),
   stop: () => ipcRenderer.invoke('claracore-stop'),
   restart: () => ipcRenderer.invoke('claracore-restart'),
-  getStatus: () => ipcRenderer.invoke('claracore-status')
+  getStatus: () => ipcRenderer.invoke('claracore-status'),
+  
+  // Docker mode
+  startDocker: (options) => ipcRenderer.invoke('claracore-docker-start', options),
+  stopDocker: () => ipcRenderer.invoke('claracore-docker-stop'),
+  restartDocker: () => ipcRenderer.invoke('claracore-docker-restart'),
+  getDockerStatus: () => ipcRenderer.invoke('claracore-docker-status'),
+  detectGPU: () => ipcRenderer.invoke('claracore-docker-detect-gpu'),
+  removeContainer: () => ipcRenderer.invoke('claracore-docker-remove'),
+  getLogs: (options) => ipcRenderer.invoke('claracore-docker-logs', options)
 });
 
 // Add MCP service API

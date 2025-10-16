@@ -147,10 +147,8 @@ const Onboarding = ({onComplete}: OnboardingProps) => {
     // Clean up any active downloads when component unmounts
     useEffect(() => {
         return () => {
-            if (downloadingModel && window.modelManager?.stopDownload) {
-                // Don't await this as it's cleanup
-                window.modelManager.stopDownload('qwen2.5-0.5b-instruct-q4_k_m.gguf').catch(console.error);
-            }
+            // Cleanup is handled by Clara Core API - downloads continue in background
+            console.log('Onboarding unmounting, downloads continue in Clara Core');
         };
     }, []);
 
@@ -337,17 +335,22 @@ const Onboarding = ({onComplete}: OnboardingProps) => {
         setDownloadError(null);
         
         try {
-            // Check for existing models using the same API as ModelManager
-            if (window.modelManager?.getLocalModels) {
-                const result = await window.modelManager.getLocalModels();
-                if (result.success && result.models) {
-                    const modelNames = result.models.map((model: any) => model.file || model.name);
+            // Use Clara Core API to check for existing models
+            const response = await fetch(`${formData.clara_core_url}/v1/models`);
+            
+            if (response.ok) {
+                const data = await response.json();
+                console.log('Clara Core models check:', data);
+                
+                // API returns: { object: "list", data: [{ id, object, created, owned_by, ... }] }
+                if (data.data && Array.isArray(data.data)) {
+                    const modelNames = data.data.map((model: any) => model.id);
                     setAvailableModels(modelNames);
                 } else {
                     setAvailableModels([]);
                 }
             } else {
-                // Fallback if modelManager not available
+                console.warn('Failed to fetch models from Clara Core:', response.statusText);
                 setAvailableModels([]);
             }
         } catch (error) {
@@ -373,69 +376,135 @@ const Onboarding = ({onComplete}: OnboardingProps) => {
     // };
 
     const handleModelDownload = async () => {
-        if (!window.modelManager?.downloadModel) {
-            setDownloadError('Model download not available - please ensure the desktop app is running');
-            return;
-        }
-
         setDownloadingModel(true);
         setDownloadProgress(0);
         setDownloadError(null);
 
         try {
-            // Download the recommended Qwen 0.6B model
-            // Using a popular small model that's good for onboarding
-            const modelId = 'Qwen/Qwen3-0.6B-GGUF';
+            // Use Clara Core API to download Qwen3 0.6B Q8_0 model from Unsloth
+            const modelUrl = 'https://huggingface.co/unsloth/Qwen3-0.6B-GGUF/resolve/main/Qwen3-0.6B-Q8_0.gguf';
+            const modelId = 'qwen3-0.6b';
             const fileName = 'Qwen3-0.6B-Q8_0.gguf';
             
-            // Set up progress listener
-            let progressUnsubscribe: (() => void) | null = null;
-            if (window.modelManager.onDownloadProgress) {
-                progressUnsubscribe = window.modelManager.onDownloadProgress((progress: any) => {
-                    if (progress.fileName === fileName) {
-                        setDownloadProgress(progress.progress || 0);
-                    }
-                });
+            // Start download via Clara Core API
+            const downloadResponse = await fetch(`${formData.clara_core_url}/api/models/download`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    url: modelUrl,
+                    modelId: modelId,
+                    filename: fileName
+                })
+            });
+
+            if (!downloadResponse.ok) {
+                const errorText = await downloadResponse.text();
+                throw new Error(`Download request failed (${downloadResponse.status}): ${errorText || downloadResponse.statusText}`);
             }
 
-            const result = await window.modelManager.downloadModel(modelId, fileName);
+            const downloadData = await downloadResponse.json();
+            console.log('Download API response:', downloadData);
             
-            if (progressUnsubscribe) {
-                progressUnsubscribe();
+            // API returns: { downloadId, status, modelId, filename }
+            const downloadId = downloadData.downloadId;
+
+            if (!downloadId) {
+                console.error('Invalid download response:', downloadData);
+                throw new Error('Failed to start download - no download ID returned');
             }
 
-            if (result.success) {
-                setDownloadProgress(100);
-                // Refresh available models
-                await checkModelsAfterDownload();
-            } else {
-                setDownloadError(result.error || 'Download failed');
-                setDownloadProgress(0);
-            }
+            console.log('Download started successfully. ID:', downloadId, 'Status:', downloadData.status);
+
+            // Poll for download progress
+            const pollInterval = setInterval(async () => {
+                try {
+                    const progressResponse = await fetch(`${formData.clara_core_url}/api/models/downloads/${downloadId}`);
+                    
+                    if (!progressResponse.ok) {
+                        clearInterval(pollInterval);
+                        setDownloadError('Failed to check download progress');
+                        setDownloadingModel(false);
+                        return;
+                    }
+
+                    const progressData = await progressResponse.json();
+                    console.log('Download progress data:', progressData);
+                    
+                    // Based on API docs, the response structure is:
+                    // { id, modelId, filename, url, status, progress, downloadedBytes, totalBytes, speed, eta }
+                    
+                    // Update progress - handle both percentage and 0-1 range
+                    if (progressData.progress !== undefined) {
+                        const progress = progressData.progress > 1 
+                            ? Math.round(progressData.progress) 
+                            : Math.round(progressData.progress * 100);
+                        setDownloadProgress(progress);
+                    }
+
+                    // Check if download is complete
+                    if (progressData.status === 'completed') {
+                        clearInterval(pollInterval);
+                        setDownloadProgress(100);
+                        setDownloadingModel(false);
+                        
+                        // Refresh available models
+                        await checkModelsAfterDownload();
+                    } else if (progressData.status === 'error' || progressData.status === 'failed') {
+                        clearInterval(pollInterval);
+                        setDownloadError(progressData.error || 'Download failed');
+                        setDownloadProgress(0);
+                        setDownloadingModel(false);
+                    }
+                } catch (error: any) {
+                    console.error('Error checking download progress:', error);
+                    clearInterval(pollInterval);
+                    setDownloadError(error.message || 'Failed to check download progress');
+                    setDownloadingModel(false);
+                }
+            }, 2000); // Poll every 2 seconds
+
+            // Set timeout for download (30 minutes)
+            setTimeout(() => {
+                clearInterval(pollInterval);
+                if (downloadingModel) {
+                    setDownloadError('Download timeout - please try again');
+                    setDownloadingModel(false);
+                }
+            }, 30 * 60 * 1000);
+
         } catch (error: any) {
             console.error('Model download error:', error);
             setDownloadError(error.message || 'Download failed');
             setDownloadProgress(0);
-        } finally {
             setDownloadingModel(false);
         }
     };
 
     const checkModelsAfterDownload = async () => {
-        // Brief delay to ensure file system has updated
+        // Brief delay to ensure model is registered in Clara Core
         setTimeout(async () => {
             try {
-                if (window.modelManager?.getLocalModels) {
-                    const result = await window.modelManager.getLocalModels();
-                    if (result.success && result.models) {
-                        const modelNames = result.models.map((model: any) => model.file || model.name);
+                // Use Clara Core API to get available models
+                const response = await fetch(`${formData.clara_core_url}/v1/models`);
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    console.log('Available models after download:', data);
+                    
+                    // API returns: { object: "list", data: [{ id, object, created, owned_by, ... }] }
+                    if (data.data && Array.isArray(data.data)) {
+                        const modelNames = data.data.map((model: any) => model.id);
                         setAvailableModels(modelNames);
                     }
+                } else {
+                    console.error('Failed to fetch models:', response.statusText);
                 }
             } catch (error) {
                 console.error('Error refreshing models after download:', error);
             }
-        }, 2000);
+        }, 3000); // Increased delay to give Clara Core time to register the model
     };
 
     const checkRealServiceAvailability = async () => {
@@ -585,12 +654,9 @@ const Onboarding = ({onComplete}: OnboardingProps) => {
                 if (config) {
                     setFeatureConfig(config);
                     
-                    // Update selected services based on feature config
-                    setSelectedServices({
-                        comfyui: config.comfyUI || false,
-                        tts: config.ragAndTts || false,
-                        n8n: config.n8n || false
-                    });
+                    // During onboarding, don't auto-check services based on existing config
+                    // Always start with unchecked services to let user make explicit choice
+                    // Services remain unchecked by default (as set in initial state)
                 }
             }
         } catch (error) {
@@ -1161,38 +1227,42 @@ const Onboarding = ({onComplete}: OnboardingProps) => {
     // Setup section - Enhanced version of the original form
     return (
         <div
-            className="fixed inset-0 bg-gradient-to-br from-white to-sakura-50 dark:from-gray-900 dark:to-gray-800 flex items-center justify-center z-50 overflow-y-auto py-6">
+            className="fixed inset-0 bg-gradient-to-br from-white to-sakura-50 dark:from-gray-900 dark:to-gray-800 flex items-center justify-center z-50 overflow-hidden p-6">
             <div
-                className={`glassmorphic rounded-2xl p-6 sm:p-8 max-w-md w-full mx-4 space-y-4 sm:space-y-6 shadow-2xl ${animationClass}`}>
-                <div className="text-center space-y-2">
-                    <h2 className="text-2xl font-semibold text-gray-900 dark:text-white">
-                        Let's Set Up Clara
-                    </h2>
-                    <p className="text-gray-600 dark:text-gray-400">
-                        {step === 1 ? "First, tell us a bit about yourself" :
-                            step === 2 ? "How can we reach you?" :
-                                step === 3 ? "Choose your preferred theme" :
-                                    step === 4 ? "Let's connect to Clara Core" :
-                                        step === 5 ? "Set up your AI service" :
-                                            step === 6 ? "Choose additional services" :
-                                                step === 7 ? "Configure your services" :
-                                                    "Final setup - timezone preferences"}
-                    </p>
+                className={`glassmorphic rounded-2xl max-w-4xl w-full h-[90vh] mx-4 shadow-2xl flex flex-col ${animationClass}`}>
+                {/* Header - Fixed */}
+                <div className="p-6 sm:p-8 pb-4 shrink-0">
+                    <div className="text-center space-y-2">
+                        <h2 className="text-2xl font-semibold text-gray-900 dark:text-white">
+                            Let's Set Up Clara
+                        </h2>
+                        <p className="text-gray-600 dark:text-gray-400">
+                            {step === 1 ? "First, tell us a bit about yourself" :
+                                step === 2 ? "How can we reach you?" :
+                                    step === 3 ? "Choose your preferred theme" :
+                                        step === 4 ? "Let's connect to Clara Core" :
+                                            step === 5 ? "Set up your AI service" :
+                                                step === 6 ? "Choose additional services" :
+                                                    step === 7 ? "Configure your services" :
+                                                        "Final setup - timezone preferences"}
+                        </p>
 
-                    {/* Progress indicator */}
-                    <div className="flex items-center justify-center gap-2 mt-4">
-                        {[1, 2, 3, 4, 5, 6, 7, 8].map((s) => (
-                            <div
-                                key={s}
-                                className={`h-2 rounded-full transition-all duration-300 ${
-                                    s === step ? 'w-8 bg-sakura-500' : s < step ? 'w-8 bg-green-500' : 'w-4 bg-gray-300 dark:bg-gray-600'
-                                }`}
-                            />
-                        ))}
+                        {/* Progress indicator */}
+                        <div className="flex items-center justify-center gap-2 mt-4">
+                            {[1, 2, 3, 4, 5, 6, 7, 8].map((s) => (
+                                <div
+                                    key={s}
+                                    className={`h-2 rounded-full transition-all duration-300 ${
+                                        s === step ? 'w-8 bg-sakura-500' : s < step ? 'w-8 bg-green-500' : 'w-4 bg-gray-300 dark:bg-gray-600'
+                                    }`}
+                                />
+                            ))}
+                        </div>
                     </div>
                 </div>
 
-                <div className="space-y-6">
+                {/* Content - Scrollable */}
+                <div className="px-6 sm:px-8 space-y-6 overflow-y-auto flex-1">
                     {step === 1 && (
                         <div className="space-y-4 animate-fadeIn">
                             <div className="flex items-center gap-3 mb-4">
@@ -1427,38 +1497,56 @@ const Onboarding = ({onComplete}: OnboardingProps) => {
                                             Where should Docker run?
                                         </p>
                                     </div>
+                                    
+                                    <p className="text-xs text-gray-600 dark:text-gray-400 mb-3">
+                                        Clara uses Docker to run AI services. Choose where to run these containers:
+                                    </p>
 
-                                    <div className="grid grid-cols-2 gap-2">
+                                    <div className="grid grid-cols-2 gap-3">
                                         <button
                                             onClick={() => setDockerMode('local')}
-                                            className={`flex flex-col items-center gap-2 p-3 rounded-lg border transition-all ${
+                                            className={`flex flex-col items-start gap-2 p-4 rounded-lg border transition-all ${
                                                 dockerMode === 'local'
                                                     ? 'border-sakura-500 bg-sakura-50 dark:bg-sakura-900/20'
                                                     : 'border-gray-200 dark:border-gray-700 hover:border-sakura-300'
                                             }`}
                                         >
-                                            <HardDrive className={`w-5 h-5 ${dockerMode === 'local' ? 'text-sakura-500' : 'text-gray-500'}`}/>
-                                            <div className="text-center">
-                                                <p className="text-sm font-medium text-gray-900 dark:text-white">Local</p>
-                                                <p className="text-xs text-gray-600 dark:text-gray-400">This computer</p>
+                                            <div className="flex items-center justify-between w-full">
+                                                <HardDrive className={`w-5 h-5 ${dockerMode === 'local' ? 'text-sakura-500' : 'text-gray-500'}`}/>
+                                                {dockerMode === 'local' && <Check className="w-4 h-4 text-sakura-500"/>}
                                             </div>
-                                            {dockerMode === 'local' && <Check className="w-4 h-4 text-sakura-500"/>}
+                                            <div className="text-left">
+                                                <p className="text-sm font-medium text-gray-900 dark:text-white mb-1">Local</p>
+                                                <p className="text-xs text-gray-600 dark:text-gray-400">Run on this computer</p>
+                                                <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">
+                                                    ✓ Easiest setup<br/>
+                                                    ✓ No network needed<br/>
+                                                    ✓ Best for most users
+                                                </p>
+                                            </div>
                                         </button>
 
                                         <button
                                             onClick={() => setDockerMode('remote')}
-                                            className={`flex flex-col items-center gap-2 p-3 rounded-lg border transition-all ${
+                                            className={`flex flex-col items-start gap-2 p-4 rounded-lg border transition-all ${
                                                 dockerMode === 'remote'
                                                     ? 'border-sakura-500 bg-sakura-50 dark:bg-sakura-900/20'
                                                     : 'border-gray-200 dark:border-gray-700 hover:border-sakura-300'
                                             }`}
                                         >
-                                            <Router className={`w-5 h-5 ${dockerMode === 'remote' ? 'text-sakura-500' : 'text-gray-500'}`}/>
-                                            <div className="text-center">
-                                                <p className="text-sm font-medium text-gray-900 dark:text-white">Remote</p>
-                                                <p className="text-xs text-gray-600 dark:text-gray-400">SSH server</p>
+                                            <div className="flex items-center justify-between w-full">
+                                                <Router className={`w-5 h-5 ${dockerMode === 'remote' ? 'text-sakura-500' : 'text-gray-500'}`}/>
+                                                {dockerMode === 'remote' && <Check className="w-4 h-4 text-sakura-500"/>}
                                             </div>
-                                            {dockerMode === 'remote' && <Check className="w-4 h-4 text-sakura-500"/>}
+                                            <div className="text-left">
+                                                <p className="text-sm font-medium text-gray-900 dark:text-white mb-1">Remote</p>
+                                                <p className="text-xs text-gray-600 dark:text-gray-400">Connect to SSH server</p>
+                                                <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">
+                                                    ✓ Use powerful server<br/>
+                                                    ✓ Work from anywhere<br/>
+                                                    ✓ Requires SSH access
+                                                </p>
+                                            </div>
                                         </button>
                                     </div>
 
@@ -1622,10 +1710,10 @@ const Onboarding = ({onComplete}: OnboardingProps) => {
                                             <div className="p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
                                                 <div className="flex items-center gap-2 mb-2">
                                                     <Download className="w-4 h-4 text-blue-600"/>
-                                                    <span className="text-sm font-medium text-blue-700 dark:text-blue-300">Quick Start (350MB)</span>
+                                                    <span className="text-sm font-medium text-blue-700 dark:text-blue-300">Quick Start (639MB)</span>
                                                 </div>
                                                 <p className="text-xs text-blue-600 dark:text-blue-400 mb-3">
-                                                    Download Qwen3 0.6B - fast and efficient for getting started
+                                                    Download Qwen3 0.6B Q8 - High quality, fast and efficient for getting started
                                                 </p>
                                                 <button 
                                                     onClick={handleModelDownload}
@@ -2293,62 +2381,65 @@ const Onboarding = ({onComplete}: OnboardingProps) => {
                     )}
                 </div>
 
-                <div className="flex justify-between pt-4">
-                    {section === 'setup' && (
-                        <>
-                            {step > 1 ? (
-                                <button
-                                    onClick={() => setStep(step - 1)}
-                                    className="px-6 py-2 rounded-lg text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white transition-colors"
-                                >
-                                    Back
-                                </button>
-                            ) : (
-                                <button
-                                    onClick={() => handleNextSection('welcome')}
-                                    className="px-6 py-2 rounded-lg text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white transition-colors"
-                                >
-                                    Back to Welcome
-                                </button>
-                            )}
+                {/* Footer - Fixed Navigation Buttons */}
+                <div className="p-6 sm:p-8 pt-4 shrink-0">
+                    <div className="flex justify-between">
+                        {section === 'setup' && (
+                            <>
+                                {step > 1 ? (
+                                    <button
+                                        onClick={() => setStep(step - 1)}
+                                        className="px-6 py-2 rounded-lg text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white transition-colors"
+                                    >
+                                        Back
+                                    </button>
+                                ) : (
+                                    <button
+                                        onClick={() => handleNextSection('welcome')}
+                                        className="px-6 py-2 rounded-lg text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white transition-colors"
+                                    >
+                                        Back to Welcome
+                                    </button>
+                                )}
 
-                            <button
-                                onClick={async () => {
-                                    if (step < 8) {
-                                        setStep(step + 1);
-                                    } else {
-                                        // Launch Clara with proper initialization waiting
-                                        await handleLaunchClara();
+                                <button
+                                    onClick={async () => {
+                                        if (step < 8) {
+                                            setStep(step + 1);
+                                        } else {
+                                            // Launch Clara with proper initialization waiting
+                                            await handleLaunchClara();
+                                        }
+                                    }}
+                                    disabled={
+                                        (step === 1 && !formData.name) ||
+                                        (step === 2 && !formData.email) ||
+                                        (step === 5 && !hasValidSetup() && !downloadingModel) ||
+                                        downloadingModel ||
+                                        loading
                                     }
-                                }}
-                                disabled={
-                                    (step === 1 && !formData.name) ||
-                                    (step === 2 && !formData.email) ||
-                                    (step === 5 && !hasValidSetup() && !downloadingModel) ||
-                                    downloadingModel ||
-                                    loading
-                                }
-                                className="ml-auto px-6 py-2 rounded-lg bg-sakura-500 text-white
-                transition-all disabled:bg-gray-400 disabled:cursor-not-allowed
-                hover:shadow-[0_0_20px_rgba(244,163,187,0.5)] hover:bg-sakura-400"
-                            >
-                                {step === 8 ? (
-                                    loading ? (
-                                        <span className="flex items-center justify-center gap-3">
-                                            <div className="relative">
-                                                <Loader className="w-4 h-4 animate-spin"/>
-                                                <div className="absolute inset-0 rounded-full border border-white/30 animate-pulse"></div>
-                                            </div>
-                                            <span className="flex flex-col items-start">
-                                                <span className="font-medium">Launching Clara...</span>
-                                                <span className="text-xs opacity-90">Setting up AI services</span>
+                                    className="ml-auto px-6 py-2 rounded-lg bg-sakura-500 text-white
+                    transition-all disabled:bg-gray-400 disabled:cursor-not-allowed
+                    hover:shadow-[0_0_20px_rgba(244,163,187,0.5)] hover:bg-sakura-400"
+                                >
+                                    {step === 8 ? (
+                                        loading ? (
+                                            <span className="flex items-center justify-center gap-3">
+                                                <div className="relative">
+                                                    <Loader className="w-4 h-4 animate-spin"/>
+                                                    <div className="absolute inset-0 rounded-full border border-white/30 animate-pulse"></div>
+                                                </div>
+                                                <span className="flex flex-col items-start">
+                                                    <span className="font-medium">Launching Clara...</span>
+                                                    <span className="text-xs opacity-90">Setting up AI services</span>
+                                                </span>
                                             </span>
-                                        </span>
-                                    ) : 'Launch Clara'
-                                ) : 'Continue'}
-                            </button>
-                        </>
-                    )}
+                                        ) : 'Launch Clara'
+                                    ) : 'Continue'}
+                                </button>
+                            </>
+                        )}
+                    </div>
                 </div>
             </div>
             

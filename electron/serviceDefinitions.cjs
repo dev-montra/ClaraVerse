@@ -116,14 +116,14 @@ const SERVICE_DEFINITIONS = {
     critical: true,
     autoRestart: true,
     priority: 3,
-    dependencies: [], // No dependencies - runs independently as a native binary
+    dependencies: ['docker'], // Docker dependency for docker mode
 
     // NEW: Deployment mode support
     deploymentModes: ['local', 'remote', 'docker'],
     platformSupport: {
       local: ['win32', 'darwin', 'linux'], // Native binary supported on all platforms
       remote: ['win32', 'darwin', 'linux'], // Remote server supported on all platforms
-      docker: ['win32', 'darwin', 'linux'] // Docker supported on all platforms
+      docker: ['win32', 'linux'] // Docker supported on Windows and Linux (GPU support)
     },
 
     // Binary paths for each platform
@@ -144,11 +144,56 @@ const SERVICE_DEFINITIONS = {
 
     ports: { main: 8091 },
 
+    // Docker container configuration
+    dockerContainer: {
+      name: 'clara_core',
+      imageBase: 'clara17verse/claracore', // Base image name, variant added based on GPU
+      ports: { '8091': '5890' }, // Host:Container (container runs on 5890, mapped to host 8091)
+      volumes: [
+        'claracore:/app/downloads' // Named volume for downloads persistence
+      ],
+      environment: [
+        'NODE_ENV=production',
+        'CLARA_PORT=5890' // Container internal port
+      ],
+      // GPU-specific configurations
+      gpuConfigs: {
+        cuda: {
+          image: 'clara17verse/claracore:cuda',
+          runtime: 'nvidia',
+          environment: [
+            'NVIDIA_VISIBLE_DEVICES=all',
+            'NVIDIA_DRIVER_CAPABILITIES=compute,utility'
+          ]
+        },
+        rocm: {
+          image: 'clara17verse/claracore:rocm',
+          devices: ['/dev/kfd', '/dev/dri'],
+          environment: [
+            'HSA_OVERRIDE_GFX_VERSION=10.3.0'
+          ]
+        },
+        vulkan: {
+          image: 'clara17verse/claracore:vulkan',
+          devices: ['/dev/dri'],
+          environment: [
+            'VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json'
+          ]
+        },
+        cpu: {
+          image: 'clara17verse/claracore:cpu',
+          environment: []
+        }
+      }
+    },
+
     // Health check
-    healthCheck: async () => {
+    healthCheck: async (serviceUrl = null) => {
       const http = require('http');
+      const url = serviceUrl || 'http://localhost:8091';
+      const endpoint = serviceUrl ? `${url}/health` : 'http://localhost:8091/health';
       return new Promise((resolve) => {
-        const req = http.get('http://localhost:8091/health', (res) => {
+        const req = http.get(endpoint, (res) => {
           resolve(res.statusCode === 200);
         });
         req.on('error', () => resolve(false));
@@ -159,7 +204,7 @@ const SERVICE_DEFINITIONS = {
       });
     },
 
-    // Custom start method
+    // Custom start method (for local mode)
     customStart: async () => {
       const ClaraCoreService = require('./claraCoreService.cjs');
       const service = new ClaraCoreService();
@@ -167,7 +212,7 @@ const SERVICE_DEFINITIONS = {
       return service;
     },
 
-    // Custom stop method
+    // Custom stop method (for local mode)
     customStop: async (service) => {
       if (service.instance && service.instance.stop) {
         await service.instance.stop();

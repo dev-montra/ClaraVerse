@@ -2642,6 +2642,98 @@ function registerHandlers() {
     }
   });
 
+  // ClaraCore Docker mode handlers
+  let claraCoreDockerService = null;
+  const getClaraCoreDockerService = () => {
+    if (!claraCoreDockerService) {
+      const ClaraCoreDockerService = require('./claraCoreDockerService.cjs');
+      claraCoreDockerService = new ClaraCoreDockerService();
+    }
+    return claraCoreDockerService;
+  };
+
+  ipcMain.handle('claracore-docker-start', async (event, options = {}) => {
+    try {
+      log.info('Starting ClaraCore in Docker mode...');
+      const service = getClaraCoreDockerService();
+      const result = await service.start(options);
+      return { success: true, ...result };
+    } catch (error) {
+      log.error('Error starting ClaraCore Docker:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('claracore-docker-stop', async () => {
+    try {
+      log.info('Stopping ClaraCore Docker container...');
+      const service = getClaraCoreDockerService();
+      const result = await service.stop();
+      return { success: true, ...result };
+    } catch (error) {
+      log.error('Error stopping ClaraCore Docker:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('claracore-docker-restart', async () => {
+    try {
+      log.info('Restarting ClaraCore Docker container...');
+      const service = getClaraCoreDockerService();
+      const result = await service.restart();
+      return { success: true, ...result };
+    } catch (error) {
+      log.error('Error restarting ClaraCore Docker:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('claracore-docker-status', async () => {
+    try {
+      const service = getClaraCoreDockerService();
+      const status = await service.getStatus();
+      return { success: true, status };
+    } catch (error) {
+      log.error('Error getting ClaraCore Docker status:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('claracore-docker-detect-gpu', async () => {
+    try {
+      log.info('Detecting GPU for ClaraCore Docker...');
+      const service = getClaraCoreDockerService();
+      const gpuInfo = await service.detectGPU();
+      return { success: true, gpuInfo };
+    } catch (error) {
+      log.error('Error detecting GPU:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('claracore-docker-remove', async () => {
+    try {
+      log.info('Removing ClaraCore Docker container...');
+      const service = getClaraCoreDockerService();
+      const result = await service.remove();
+      return { success: true, ...result };
+    } catch (error) {
+      log.error('Error removing ClaraCore Docker container:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('claracore-docker-logs', async (event, options = {}) => {
+    try {
+      const service = getClaraCoreDockerService();
+      const logs = await service.getLogs(options);
+      return { success: true, logs };
+    } catch (error) {
+      log.error('Error getting ClaraCore Docker logs:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
   // System information handlers
   ipcMain.handle('get-system-info', async () => {
     try {
@@ -4029,8 +4121,27 @@ async function initializeInBackground(selectedFeatures) {
       // ClaraCore is essential and should always run
       try {
         sendStatusUpdate('starting-claracore', { message: 'Starting Clara Core AI Engine...' });
-        await centralServiceManager.startService('claracore');
-        log.info('✅ Clara Core AI Engine started successfully');
+        
+        // Check which mode Clara Core was last used in
+        const claraCoreMode = serviceConfigManager.getServiceMode('claracore') || 'local';
+        log.info(`🔍 Clara Core deployment mode: ${claraCoreMode}`);
+        
+        if (claraCoreMode === 'docker') {
+          // Start in Docker mode
+          log.info('Starting Clara Core in Docker mode...');
+          const ClaraCoreDockerService = require('./claraCoreDockerService.cjs');
+          const dockerService = new ClaraCoreDockerService();
+          await dockerService.start();
+          log.info('✅ Clara Core AI Engine started in Docker mode');
+        } else if (claraCoreMode === 'remote') {
+          // Remote mode - don't start, just log
+          log.info('Clara Core is configured in Remote mode, skipping local startup');
+        } else {
+          // Start in Local binary mode (default)
+          log.info('Starting Clara Core in Local binary mode...');
+          await centralServiceManager.startService('claracore');
+          log.info('✅ Clara Core AI Engine started in Local mode');
+        }
       } catch (claraCoreError) {
         log.error('❌ Failed to start Clara Core AI Engine:', claraCoreError);
         // Continue with app startup even if ClaraCore fails

@@ -113,6 +113,11 @@ const UnifiedServiceManager: React.FC = () => {
   const [pythonBackendLoading, setPythonBackendLoading] = useState(false);
   const [claraCoreLoading, setClaraCoreLoading] = useState(false);
   
+  // Clara Core Docker-specific states
+  const [claraCoreDockerStatus, setClaraCoreDockerStatus] = useState<any>(null);
+  const [claraCoreGPUInfo, setClaraCoreGPUInfo] = useState<any>(null);
+  const [detectingGPU, setDetectingGPU] = useState(false);
+  
   // Feature Configuration State
   const [featureConfig, setFeatureConfig] = useState({
     comfyUI: true,
@@ -235,6 +240,23 @@ const UnifiedServiceManager: React.FC = () => {
     fetchPythonBackendStatus();
     fetchClaraCoreStatus();
 
+    // Auto-detect GPU for Clara Core Docker mode if configured
+    const checkClaraCoreDockerMode = async () => {
+      try {
+        if ((window as any).electronAPI?.invoke) {
+          const configs = await (window as any).electronAPI.invoke('service-config:get-all-configs');
+          if (configs?.claracore?.currentMode === 'docker') {
+            // Auto-detect GPU on mount
+            handleDetectGPU();
+            fetchClaraCoreDockerStatus();
+          }
+        }
+      } catch (error) {
+        console.error('Error checking Clara Core Docker mode:', error);
+      }
+    };
+    checkClaraCoreDockerMode();
+
     const interval = setInterval(() => {
       checkDockerServices();
     }, 60000);
@@ -330,19 +352,42 @@ const UnifiedServiceManager: React.FC = () => {
   // Fetch ClaraCore status
   const fetchClaraCoreStatus = async () => {
     try {
-      const result = await (window as any).claraCore?.getStatus();
-      if (result && result.success) {
-        setClaraCoreStatus({
-          running: result.status.isRunning || false,
-          serviceUrl: result.status.url || 'http://localhost:8091',
-          error: result.error
-        });
+      const mode = serviceConfigs.claracore?.mode || 'local';
+      let result;
+      
+      if (mode === 'docker') {
+        // Docker mode - check Docker container status
+        result = await (window as any).claraCore?.getDockerStatus();
+        if (result && result.success) {
+          setClaraCoreStatus({
+            running: result.status.running || false,
+            serviceUrl: 'http://localhost:8091',
+            error: result.error
+          });
+          setClaraCoreDockerStatus(result.status);
+        } else {
+          setClaraCoreStatus({
+            running: false,
+            serviceUrl: 'http://localhost:8091',
+            error: result?.error || 'Docker container not running'
+          });
+        }
       } else {
-        setClaraCoreStatus({
-          running: false,
-          serviceUrl: 'http://localhost:8091',
-          error: result?.error || 'Failed to check status'
-        });
+        // Local binary mode - check native binary status
+        result = await (window as any).claraCore?.getStatus();
+        if (result && result.success) {
+          setClaraCoreStatus({
+            running: result.status.isRunning || false,
+            serviceUrl: result.status.url || 'http://localhost:8091',
+            error: result.error
+          });
+        } else {
+          setClaraCoreStatus({
+            running: false,
+            serviceUrl: 'http://localhost:8091',
+            error: result?.error || 'Failed to check status'
+          });
+        }
       }
     } catch (error) {
       console.error('Error fetching ClaraCore status:', error);
@@ -432,13 +477,27 @@ const UnifiedServiceManager: React.FC = () => {
   const handleClaraCoreAction = async (action: 'start' | 'stop' | 'restart') => {
     setClaraCoreLoading(true);
     try {
+      const mode = serviceConfigs.claracore?.mode || 'local';
       let result;
-      if (action === 'start' && (window as any).claraCore) {
-        result = await (window as any).claraCore.start();
-      } else if (action === 'stop' && (window as any).claraCore) {
-        result = await (window as any).claraCore.stop();
-      } else if (action === 'restart' && (window as any).claraCore) {
-        result = await (window as any).claraCore.restart();
+      
+      if (mode === 'docker') {
+        // Docker mode
+        if (action === 'start' && (window as any).claraCore) {
+          result = await (window as any).claraCore.startDocker();
+        } else if (action === 'stop' && (window as any).claraCore) {
+          result = await (window as any).claraCore.stopDocker();
+        } else if (action === 'restart' && (window as any).claraCore) {
+          result = await (window as any).claraCore.restartDocker();
+        }
+      } else {
+        // Local binary mode
+        if (action === 'start' && (window as any).claraCore) {
+          result = await (window as any).claraCore.start();
+        } else if (action === 'stop' && (window as any).claraCore) {
+          result = await (window as any).claraCore.stop();
+        } else if (action === 'restart' && (window as any).claraCore) {
+          result = await (window as any).claraCore.restart();
+        }
       }
 
       if (result?.success) {
@@ -449,6 +508,33 @@ const UnifiedServiceManager: React.FC = () => {
       console.error('Error performing ClaraCore action:', error);
     } finally {
       setClaraCoreLoading(false);
+    }
+  };
+
+  // Detect GPU for Clara Core Docker
+  const handleDetectGPU = async () => {
+    setDetectingGPU(true);
+    try {
+      const result = await (window as any).claraCore.detectGPU();
+      if (result?.success) {
+        setClaraCoreGPUInfo(result.gpuInfo);
+      }
+    } catch (error) {
+      console.error('Error detecting GPU:', error);
+    } finally {
+      setDetectingGPU(false);
+    }
+  };
+
+  // Fetch Clara Core Docker status
+  const fetchClaraCoreDockerStatus = async () => {
+    try {
+      const result = await (window as any).claraCore.getDockerStatus();
+      if (result?.success) {
+        setClaraCoreDockerStatus(result.status);
+      }
+    } catch (error) {
+      console.error('Error fetching Clara Core Docker status:', error);
     }
   };
 
@@ -640,7 +726,7 @@ const UnifiedServiceManager: React.FC = () => {
       remoteUrl: remoteServerConfig?.services?.claracore?.url,
       platformSupport: {
         local: true,  // ClaraCore native binary
-        docker: false, // ClaraCore doesn't support docker mode
+        docker: currentPlatform === 'win32' || currentPlatform === 'linux', // Docker supported on Windows and Linux
         manual: false, // Use "local" instead of "manual" for Clara Core
         remote: true
       },
@@ -888,7 +974,15 @@ const UnifiedServiceManager: React.FC = () => {
     const config = serviceConfigs[service.id] || { mode: service.id === 'claracore' ? 'local' : 'docker', url: null };
     const testResult = serviceTestResults[service.id];
     const isRunning = service.status === 'running';
-    const isManualOnly = (service.id === 'comfyui' && currentPlatform !== 'win32') || service.id === 'claracore';
+    // ComfyUI Docker is only supported on Windows
+    const isManualOnly = (service.id === 'comfyui' && currentPlatform !== 'win32');
+    
+    // Docker disabled reason for tooltip
+    const dockerDisabledReason = service.id === 'claracore' && currentPlatform === 'darwin' 
+      ? 'Docker mode not supported on macOS. Use Local or Remote mode instead.' 
+      : service.id === 'comfyui' && currentPlatform !== 'win32'
+      ? 'ComfyUI Docker mode is only supported on Windows'
+      : '';
 
     return (
       <div key={service.id} className="p-6 bg-white/50 dark:bg-gray-800/50 rounded-xl border border-gray-200 dark:border-gray-700">
@@ -950,8 +1044,9 @@ const UnifiedServiceManager: React.FC = () => {
             <div className="flex items-center gap-2">
               <Bot className="w-4 h-4 text-blue-600 dark:text-blue-400" />
               <p className="text-sm text-blue-700 dark:text-blue-300">
-                <strong>Local Binary Service:</strong> ClaraCore runs as a native binary on your system for maximum performance.
-                You can also connect to a remote ClaraCore instance if needed.
+                <strong>Flexible Deployment:</strong> ClaraCore supports 3 modes - <strong>Local</strong> (native binary for max performance), 
+                <strong> Docker</strong> (containerized with auto GPU detection{currentPlatform === 'darwin' ? ', macOS not supported' : ''}), 
+                and <strong>Remote</strong> (connect to external instance).
               </p>
             </div>
           </div>
@@ -1023,6 +1118,7 @@ const UnifiedServiceManager: React.FC = () => {
                     }
                   }}
                   disabled={isManualOnly}
+                  title={isManualOnly ? dockerDisabledReason || `Docker mode not available for ${service.name} on this platform` : 'Run in Docker container with automatic GPU detection'}
                   className={`flex-1 p-3 rounded-lg border-2 transition-all relative ${
                     config.mode === 'docker'
                       ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 shadow-md'
@@ -1182,6 +1278,90 @@ const UnifiedServiceManager: React.FC = () => {
               </button>
             </div>
           </div>
+
+          {/* Docker GPU Detection - Clara Core Only */}
+          {service.id === 'claracore' && config.mode === 'docker' && (
+            <div className="space-y-3">
+              <div className="p-4 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                <div className="flex items-start gap-3">
+                  <HardDrive className="w-5 h-5 text-blue-600 dark:text-blue-400 mt-0.5" />
+                  <div className="flex-1 space-y-3">
+                    <div>
+                      <h4 className="font-medium text-blue-900 dark:text-blue-100 mb-2">
+                        Docker Container with GPU Acceleration
+                      </h4>
+                      <p className="text-sm text-blue-700 dark:text-blue-300">
+                        Clara Core will run in a Docker container with automatic GPU detection and acceleration.
+                      </p>
+                    </div>
+
+                    {/* GPU Detection Button */}
+                    <button
+                      onClick={handleDetectGPU}
+                      disabled={detectingGPU}
+                      className="px-4 py-2 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 hover:bg-blue-200 dark:hover:bg-blue-900/50 rounded-lg transition-all flex items-center gap-2 font-medium border border-blue-200 dark:border-blue-700 disabled:opacity-50"
+                    >
+                      {detectingGPU ? (
+                        <>
+                          <div className="w-3 h-3 border-2 border-current border-t-transparent rounded-full animate-spin"></div>
+                          Detecting GPU...
+                        </>
+                      ) : (
+                        <>
+                          <Monitor className="w-4 h-4" />
+                          Detect GPU
+                        </>
+                      )}
+                    </button>
+
+                    {/* GPU Info Display */}
+                    {claraCoreGPUInfo && (
+                      <div className="mt-3 p-3 bg-white dark:bg-gray-800 rounded-lg border border-blue-200 dark:border-blue-700">
+                        <div className="flex items-center gap-2 mb-2">
+                          <div className={`w-2 h-2 rounded-full ${
+                            claraCoreGPUInfo.type === 'cuda' ? 'bg-green-500' :
+                            claraCoreGPUInfo.type === 'rocm' ? 'bg-red-500' :
+                            claraCoreGPUInfo.type === 'vulkan' ? 'bg-purple-500' :
+                            'bg-gray-500'
+                          }`}></div>
+                          <span className="font-medium text-gray-900 dark:text-white">
+                            {claraCoreGPUInfo.type === 'cuda' ? '🎮 NVIDIA CUDA' :
+                             claraCoreGPUInfo.type === 'rocm' ? '🔴 AMD ROCm' :
+                             claraCoreGPUInfo.type === 'vulkan' ? '🟣 Vulkan' :
+                             '🖥️ CPU Only'}
+                          </span>
+                        </div>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">
+                          {claraCoreGPUInfo.name}
+                        </p>
+                        <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">
+                          Image: <code className="bg-gray-100 dark:bg-gray-900 px-1 py-0.5 rounded">
+                            clara17verse/claracore:{claraCoreGPUInfo.type}
+                          </code>
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Docker Status */}
+                    {claraCoreDockerStatus && claraCoreDockerStatus.exists && (
+                      <div className="mt-3 p-3 bg-white dark:bg-gray-800 rounded-lg border border-blue-200 dark:border-blue-700">
+                        <p className="text-sm text-gray-700 dark:text-gray-300">
+                          <strong>Container Status:</strong> {claraCoreDockerStatus.running ? '✅ Running' : '⚪ Stopped'}
+                        </p>
+                        {claraCoreDockerStatus.image && (
+                          <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">
+                            Image: <code className="bg-gray-100 dark:bg-gray-900 px-1 py-0.5 rounded">
+                              {claraCoreDockerStatus.image}
+                            </code>
+                          </p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Remote Server Info */}
           {config.mode === 'remote' && remoteServerConfig && (

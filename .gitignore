@@ -153,3 +153,4 @@ settings.json
 /binaries/*
 electron/claracore/progress_state.json
 electron/claracore/progress_state.json
+downloads/*
