@@ -88,7 +88,7 @@ const RemoteServerSetup: React.FC = () => {
             host: saved.host || '',
             port: saved.port || 22,
             username: saved.username || '',
-            password: saved.password || '',
+            password: '', // NEVER load password - security risk
             deployServices: saved.deployServices || {
               comfyui: true,
               python: true,
@@ -157,12 +157,12 @@ const RemoteServerSetup: React.FC = () => {
 
         setIsConnected(true);
 
-        // Save connection config (including password for convenience)
+        // Save connection config (NO PASSWORD - security)
         const configToSave = {
           host: config.host,
           port: config.port,
           username: config.username,
-          password: config.password, // Save for convenience
+          // NEVER save password - it's a security risk
           deployServices: config.deployServices,
           services: result.runningServices || {},
           isConnected: true
@@ -240,13 +240,13 @@ const RemoteServerSetup: React.FC = () => {
           addLog('success', `  ✓ N8N: http://${config.host}:5678`);
         }
 
-        // Save configuration
+        // Save configuration (NO PASSWORD - security)
         if ((window as any).electron?.store?.set) {
           await (window as any).electron.store.set('remoteServer', {
             host: config.host,
             port: config.port,
             username: config.username,
-            password: config.password, // Save for persistence
+            // NEVER save password - it's a security risk
             services: result.services,
             isConnected: true
           });

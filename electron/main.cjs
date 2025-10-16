@@ -935,6 +935,40 @@ function registerServiceConfigurationHandlers() {
       const savedUrl = configManager.getServiceUrl(serviceName);
       log.info(`🔍 [Config] Verification - saved mode=${savedMode}, saved url=${savedUrl}`);
 
+      // Update CentralServiceManager if the service exists
+      if (centralServiceManager) {
+        const service = centralServiceManager.services.get(serviceName);
+        if (service) {
+          service.deploymentMode = mode;
+          log.info(`✅ Updated CentralServiceManager: ${serviceName} deploymentMode=${mode}`);
+
+          // If switching to remote/manual mode with a URL, check if it's running
+          if ((mode === 'remote' || mode === 'manual') && url) {
+            try {
+              // Test the health of the remote service
+              const healthCheck = await configManager.testManualService(serviceName, url, '/health');
+              if (healthCheck.success) {
+                centralServiceManager.setState(serviceName, centralServiceManager.states.RUNNING);
+                centralServiceManager.setServiceUrl(serviceName, url);
+                service.serviceUrl = url;
+                log.info(`✅ Remote service ${serviceName} is running at ${url}`);
+              } else {
+                centralServiceManager.setState(serviceName, centralServiceManager.states.STOPPED);
+                log.warn(`⚠️  Remote service ${serviceName} at ${url} is not healthy`);
+              }
+            } catch (error) {
+              log.warn(`⚠️  Could not verify remote service ${serviceName}:`, error.message);
+              // Don't fail the config change, just warn
+              centralServiceManager.setState(serviceName, centralServiceManager.states.STOPPED);
+            }
+          } else if (mode === 'local' || mode === 'docker') {
+            // If switching back to local/docker, mark as stopped (user needs to start it)
+            centralServiceManager.setState(serviceName, centralServiceManager.states.STOPPED);
+            service.serviceUrl = null;
+          }
+        }
+      }
+
       return { success: true };
     } catch (error) {
       log.error(`❌ [Config] Error setting service configuration for ${serviceName}:`, error);
@@ -3689,6 +3723,12 @@ function registerHandlers() {
 
           // Update CentralServiceManager state
           if (centralServiceManager) {
+            // Get the service to update its deployment mode from config
+            const service = centralServiceManager.services.get('claracore');
+            if (service) {
+              service.deploymentMode = 'remote';
+            }
+
             centralServiceManager.setServiceUrl('claracore', result.url);
             centralServiceManager.setState('claracore', centralServiceManager.states.RUNNING);
             log.info('✅ CentralServiceManager updated: ClaraCore is now RUNNING in remote mode');
@@ -5106,7 +5146,10 @@ app.whenReady().then(async () => {
   // Initialize isolated startup settings manager first
   startupSettingsManager = new StartupSettingsManager();
   log.info('🔒 Isolated startup settings manager initialized on app ready');
-  
+
+  // SECURITY: Clean up any stored passwords from previous versions
+  await cleanupStoredPasswords();
+
   await initialize();
   
   // Create system tray
@@ -5401,6 +5444,38 @@ async function getStore() {
   })();
 
   return storeInitPromise;
+}
+
+/**
+ * SECURITY: Clean up any passwords that may have been stored in previous versions
+ * This runs on app startup to ensure no passwords are persisted
+ */
+async function cleanupStoredPasswords() {
+  try {
+    const store = await getStore();
+
+    // Check and clean remoteServer config
+    const remoteServer = store.get('remoteServer');
+    if (remoteServer && remoteServer.password) {
+      log.warn('🔒 [Security] Found password in remoteServer config - removing it');
+      delete remoteServer.password;
+      store.set('remoteServer', remoteServer);
+      log.info('✅ [Security] Password removed from remoteServer config');
+    }
+
+    // Check and clean claraCoreRemote config (shouldn't have password but check anyway)
+    const claraCoreRemote = store.get('claraCoreRemote');
+    if (claraCoreRemote && claraCoreRemote.password) {
+      log.warn('🔒 [Security] Found password in claraCoreRemote config - removing it');
+      delete claraCoreRemote.password;
+      store.set('claraCoreRemote', claraCoreRemote);
+      log.info('✅ [Security] Password removed from claraCoreRemote config');
+    }
+
+    log.info('✅ [Security] Password cleanup complete');
+  } catch (error) {
+    log.error('❌ [Security] Failed to cleanup stored passwords:', error);
+  }
 }
 
 // electron-store IPC handlers for configuration persistence

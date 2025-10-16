@@ -78,8 +78,8 @@ const Settings = () => {
   
   // Sub-tabs for each main category
   const [activeInterfaceTab, setActiveInterfaceTab] = useState<'appearance' | 'ui-preferences'>('appearance');
-  const [activeAITab, setActiveAITab] = useState<'api' | 'mcp' | 'toolbelt' | 'models'>('api');
-  const [activeSystemTab, setActiveSystemTab] = useState<'startup' | 'services' | 'updates' | 'remote-server' | 'monitor'>('startup');
+  const [activeAITab, setActiveAITab] = useState<'api' | 'mcp' | 'toolbelt' | 'models'>('models');
+  const [activeSystemTab, setActiveSystemTab] = useState<'startup' | 'services' | 'updates' | 'remote-server' | 'monitor'>('services');
   
   // Keep legacy activeTab for backward compatibility during transition
   const [activeTab, setActiveTab] = useState<'personal' | 'api' | 'preferences' | 'mcp' | 'toolbelt' | 'updates' | 'sdk-demo' | 'servers' | 'startup'>('api');
@@ -89,9 +89,9 @@ const Settings = () => {
     if (activeMainTab === 'interface') {
       setActiveInterfaceTab('appearance');
     } else if (activeMainTab === 'ai-models') {
-      setActiveAITab('api');
+      setActiveAITab('models');
     } else if (activeMainTab === 'system') {
-      setActiveSystemTab('startup');
+      setActiveSystemTab('services');
     }
   }, [activeMainTab]);
 
@@ -105,12 +105,12 @@ const Settings = () => {
     }
     if (activeMainTab === 'ai-models') {
       // Default to first sub-tab when main tab is selected
-      const selected = activeAITab || 'api';
+      const selected = activeAITab || 'models';
       return selected as 'api' | 'mcp' | 'toolbelt';
     }
     if (activeMainTab === 'system') {
       // Default to first sub-tab when main tab is selected
-      const selected = activeSystemTab || 'startup';
+      const selected = activeSystemTab || 'services';
       if (selected === 'startup') return 'startup';
       if (selected === 'services') return 'servers';
       if (selected === 'remote-server') return 'remote-server' as any;

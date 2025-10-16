@@ -73,7 +73,7 @@ const RemoteClaraCoreSetup: React.FC = () => {
   const [deploymentUrl, setDeploymentUrl] = useState<string>('');
   const logsEndRef = useRef<HTMLDivElement>(null);
 
-  // Load remote server config on mount
+  // Load remote server config on mount (NO PASSWORD - security)
   useEffect(() => {
     const loadRemoteConfig = async () => {
       try {
@@ -85,7 +85,7 @@ const RemoteClaraCoreSetup: React.FC = () => {
               host: remoteServer.host || '',
               port: remoteServer.port || 22,
               username: remoteServer.username || '',
-              password: remoteServer.password || ''
+              password: '' // NEVER load password - security risk
             }));
           }
         }
