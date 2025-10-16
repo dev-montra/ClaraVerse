@@ -8,6 +8,7 @@ import ToolBelt from './ToolBelt';
 import UnifiedServiceManager from './Settings/UnifiedServiceManager';
 import StartupTab from './Settings/StartupTab';
 import RemoteServerSetup from './Settings/RemoteServerSetup';
+import MonitorTab from './Settings/MonitorTab';
 import ClaraCoreModels from './ClaraCoreModels';
 import { 
   DEFAULT_UI_PREFERENCES, 
@@ -78,7 +79,7 @@ const Settings = () => {
   // Sub-tabs for each main category
   const [activeInterfaceTab, setActiveInterfaceTab] = useState<'appearance' | 'ui-preferences'>('appearance');
   const [activeAITab, setActiveAITab] = useState<'api' | 'mcp' | 'toolbelt' | 'models'>('api');
-  const [activeSystemTab, setActiveSystemTab] = useState<'startup' | 'services' | 'updates' | 'remote-server'>('startup');
+  const [activeSystemTab, setActiveSystemTab] = useState<'startup' | 'services' | 'updates' | 'remote-server' | 'monitor'>('startup');
   
   // Keep legacy activeTab for backward compatibility during transition
   const [activeTab, setActiveTab] = useState<'personal' | 'api' | 'preferences' | 'mcp' | 'toolbelt' | 'updates' | 'sdk-demo' | 'servers' | 'startup'>('api');
@@ -248,11 +249,36 @@ const Settings = () => {
     isEnabled: true
   });
   const [addProviderStep, setAddProviderStep] = useState<'select' | 'configure'>('select');
+  const [remoteServers, setRemoteServers] = useState<Array<any>>([]);
+
   useEffect(() => {
     if (showAddProviderModal) {
       setAddProviderStep(editingProvider ? 'configure' : 'select');
     }
   }, [showAddProviderModal, editingProvider]);
+
+  // Load remote server configs for Monitor tab (no passwords, just deployed services)
+  useEffect(() => {
+    const loadRemoteServers = async () => {
+      try {
+        const saved = await (window as any).electron.store.get('remoteServer');
+        if (saved && saved.deployed) {
+          // Only include servers that have services deployed
+          // We do health checks via HTTP, no SSH credentials needed
+          setRemoteServers([{
+            name: saved.name || 'Remote Server',
+            host: saved.host,
+            serviceUrl: saved.deployedUrl || `http://${saved.host}:5890`,
+            hardwareType: saved.hardwareType || 'unknown',
+            deployedAt: saved.deployedAt
+          }]);
+        }
+      } catch (error) {
+        console.error('Failed to load remote server config:', error);
+      }
+    };
+    loadRemoteServers();
+  }, []);
 
   // Provider presets for OpenAI-compatible backends
   const [providerSearchQuery, setProviderSearchQuery] = useState('');
@@ -1885,6 +1911,16 @@ const Settings = () => {
                     }`}
                   >
                     Remote Server
+                  </button>
+                  <button
+                    onClick={() => setActiveSystemTab('monitor')}
+                    className={`flex items-center px-2.5 py-1.5 rounded-md text-sm transition-colors ${
+                      activeSystemTab === 'monitor'
+                        ? 'text-sakura-600 dark:text-sakura-300 font-medium'
+                        : 'text-gray-700 dark:text-gray-200 hover:text-gray-900 dark:hover:text-gray-100'
+                    }`}
+                  >
+                    Monitor
                   </button>
                 </div>
               )}
@@ -4038,6 +4074,11 @@ const ProcessButton = () => {
           {/* Remote Server Tab */}
           {effectiveActiveTab === 'remote-server' && (
             <RemoteServerSetup />
+          )}
+
+          {/* Monitor Tab */}
+          {effectiveActiveTab === 'monitor' && (
+            <MonitorTab remoteServers={remoteServers} />
           )}
         </div>
       </div>
