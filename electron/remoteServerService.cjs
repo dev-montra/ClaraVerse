@@ -349,9 +349,11 @@ class RemoteServerService {
             return { success: false, error: cpuResult.stderr };
           }
 
+          // For host network mode, report the actual port the service runs on
+          const actualPort = serviceName === 'python' ? internalPort : config.port;
           return {
             success: true,
-            port: config.port,
+            port: actualPort,
             containerId: cpuResult.stdout.trim()
           };
         }
@@ -359,9 +361,11 @@ class RemoteServerService {
         return { success: false, error: runResult.stderr };
       }
 
+      // For host network mode, report the actual port the service runs on
+      const actualPort = serviceName === 'python' ? internalPort : config.port;
       return {
         success: true,
-        port: config.port,
+        port: actualPort,
         containerId: runResult.stdout.trim()
       };
 
