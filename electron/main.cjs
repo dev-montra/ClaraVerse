@@ -2270,6 +2270,11 @@ let startupSettingsManager;
 // Register handlers for various app functions
 function registerHandlers() {
   console.log('[main] Registering IPC handlers...');
+  
+  // Setup activity tracking for adaptive health checks (MUST BE FIRST)
+  const { setupActivityTracking } = require('./activityTracking.cjs');
+  setupActivityTracking();
+  
   registerDockerContainerHandlers();
   registerMCPHandlers();
   registerServiceConfigurationHandlers(); // NEW: Add service configuration handlers

@@ -1,5 +1,6 @@
 const { EventEmitter } = require('events');
 const log = require('electron-log');
+const { getAdaptiveHealthCheckManager } = require('./adaptiveHealthCheckManager.cjs');
 
 /**
  * Central Service Manager
@@ -10,6 +11,9 @@ const log = require('electron-log');
 class CentralServiceManager extends EventEmitter {
   constructor(configManager = null) {
     super();
+    
+    // Get adaptive health check manager
+    this.adaptiveHealthManager = getAdaptiveHealthCheckManager();
     
     // Service registry - single source of truth
     this.services = new Map();
@@ -29,13 +33,14 @@ class CentralServiceManager extends EventEmitter {
       RESTARTING: 'restarting'
     };
     
-    // Global configuration
+    // Global configuration (now with adaptive health checks)
     this.config = {
       startupTimeout: 30000,
       shutdownTimeout: 15000,
-      healthCheckInterval: 30000,
+      baseHealthCheckInterval: 30000, // Base interval when active
       maxRestartAttempts: 3,
-      restartDelay: 5000
+      restartDelay: 5000,
+      useAdaptiveChecks: true // Enable adaptive health checking
     };
     
     this.isShuttingDown = false;
@@ -103,6 +108,12 @@ class CentralServiceManager extends EventEmitter {
           this.setState(serviceName, this.states.ERROR);
           service.lastError = error;
         }
+      }
+      
+      // Start adaptive health monitoring
+      if (this.config.useAdaptiveChecks) {
+        this.adaptiveHealthManager.startMonitoring();
+        log.info('🔋 Adaptive health monitoring enabled', this.adaptiveHealthManager.getStatus());
       }
       
       // Start health monitoring
@@ -180,6 +191,17 @@ class CentralServiceManager extends EventEmitter {
    */
   async stopAllServices() {
     this.isShuttingDown = true;
+    
+    // Stop adaptive monitoring
+    if (this.adaptiveHealthManager) {
+      this.adaptiveHealthManager.stopMonitoring();
+    }
+    
+    // Clear health check timer
+    if (this.healthCheckTimer) {
+      clearTimeout(this.healthCheckTimer);
+      this.healthCheckTimer = null;
+    }
     
     try {
       log.info('🛑 Stopping all ClaraVerse services...');
@@ -425,14 +447,67 @@ class CentralServiceManager extends EventEmitter {
   }
 
   /**
-   * Health monitoring for all services (Enhanced for deployment modes)
+   * Schedule next adaptive health check
+   */
+  scheduleNextHealthCheck() {
+    if (this.isShuttingDown) return;
+
+    // Get adaptive interval
+    let nextInterval = this.config.baseHealthCheckInterval;
+    
+    if (this.config.useAdaptiveChecks && this.adaptiveHealthManager) {
+      // Use the most conservative interval (longest) from all services
+      for (const [serviceName] of this.services) {
+        const serviceInterval = this.adaptiveHealthManager.getHealthCheckInterval(
+          serviceName,
+          this.config.baseHealthCheckInterval
+        );
+        nextInterval = Math.max(nextInterval, serviceInterval);
+      }
+
+      // Log adaptive interval changes
+      const status = this.adaptiveHealthManager.getStatus();
+      if (status.mode !== 'ACTIVE') {
+        log.debug(`🔋 Adaptive health check: next in ${nextInterval / 1000}s (${status.mode} mode)`);
+      }
+    }
+
+    // Clear existing timer
+    if (this.healthCheckTimer) {
+      clearTimeout(this.healthCheckTimer);
+    }
+
+    // Schedule next check
+    this.healthCheckTimer = setTimeout(async () => {
+      await this.performHealthMonitoring();
+      this.scheduleNextHealthCheck(); // Schedule next one after this completes
+    }, nextInterval);
+  }
+
+  /**
+   * Health monitoring for all services (Enhanced for deployment modes and adaptive checking)
    */
   startHealthMonitoring() {
-    setInterval(async () => {
-      if (this.isShuttingDown) return;
+    // Start the first health check cycle
+    this.scheduleNextHealthCheck();
+  }
+
+  /**
+   * Perform health monitoring on all services
+   */
+  async performHealthMonitoring() {
+    if (this.isShuttingDown) return;
       
       for (const [serviceName, service] of this.services) {
         if (service.state === this.states.RUNNING) {
+          // Skip services during deep idle if adaptive checking is enabled
+          if (this.config.useAdaptiveChecks && 
+              this.adaptiveHealthManager && 
+              this.adaptiveHealthManager.shouldSkipHealthCheck(serviceName)) {
+            log.debug(`⏭️ Skipping ${serviceName} health check - deep idle mode`);
+            continue;
+          }
+
           try {
             // Determine health check method based on deployment mode
             let healthCheck;
@@ -452,6 +527,11 @@ class CentralServiceManager extends EventEmitter {
             }
             
             service.lastHealthCheck = Date.now();
+            
+            // Record service activity for adaptive checking when healthy
+            if (isHealthy && this.adaptiveHealthManager) {
+              this.adaptiveHealthManager.recordServiceActivity(serviceName);
+            }
             
             if (!isHealthy) {
               log.warn(`⚠️  Service ${serviceName} health check failed (${service.deploymentMode || 'docker'} mode)`);
@@ -483,7 +563,6 @@ class CentralServiceManager extends EventEmitter {
           }
         }
       }
-    }, this.config.healthCheckInterval);
   }
 
   /**

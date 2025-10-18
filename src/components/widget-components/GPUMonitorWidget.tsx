@@ -36,9 +36,21 @@ const GPUMonitorWidget: React.FC<GPUMonitorWidgetProps> = ({ id, onRemove, width
   useEffect(() => {
     let ws: WebSocket | null = null;
     let reconnectTimeout: NodeJS.Timeout;
+    let isServiceAvailable = false;
 
     const initializeWidget = async () => {
       try {
+        // Check if widget service is available first
+        const statusCheck = await widgetServiceClient.getStatus();
+        if (!statusCheck.success || !statusCheck.status?.running) {
+          console.log('Widget service not available, cannot initialize GPU monitor widget');
+          setError('Widget service is not running');
+          setIsLoading(false);
+          return;
+        }
+
+        isServiceAvailable = true;
+
         // Register this widget with the service
         const result = await widgetServiceClient.registerWidget('gpu-monitor');
         if (!result.success) {
@@ -54,12 +66,17 @@ const GPUMonitorWidget: React.FC<GPUMonitorWidgetProps> = ({ id, onRemove, width
         setTimeout(connectWebSocket, 1000);
       } catch (err) {
         console.error('Error initializing widget:', err);
-        setError('Failed to initialize widget service');
+        setError('Widget service unavailable');
         setIsLoading(false);
       }
     };
 
     const connectWebSocket = () => {
+      // Only connect if service is available
+      if (!isServiceAvailable) {
+        return;
+      }
+
       try {
         // Try to connect to the widgets service
         ws = new WebSocket('ws://localhost:8765/ws/stats');
@@ -86,8 +103,24 @@ const GPUMonitorWidget: React.FC<GPUMonitorWidgetProps> = ({ id, onRemove, width
           setIsConnected(false);
           setError('Connection lost to monitoring service');
           
-          // Attempt to reconnect after 5 seconds
-          reconnectTimeout = setTimeout(connectWebSocket, 5000);
+          // Only attempt to reconnect if service is still available
+          if (isServiceAvailable) {
+            reconnectTimeout = setTimeout(async () => {
+              // Re-check if service is still running before reconnecting
+              try {
+                const statusCheck = await widgetServiceClient.getStatus();
+                if (statusCheck.success && statusCheck.status?.running) {
+                  connectWebSocket();
+                } else {
+                  isServiceAvailable = false;
+                  console.log('Widget service no longer available, stopping reconnection attempts');
+                }
+              } catch (err) {
+                isServiceAvailable = false;
+                console.log('Widget service check failed, stopping reconnection attempts');
+              }
+            }, 5000);
+          }
         };
 
         ws.onerror = (error) => {
