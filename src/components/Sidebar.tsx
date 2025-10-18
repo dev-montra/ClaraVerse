@@ -146,40 +146,19 @@ const Sidebar = ({ activePage = 'dashboard', onPageChange }: SidebarProps) => {
     };
   }, []);
 
-  // Enhanced service status monitoring with watchdog integration
+  // Enhanced service status monitoring (uses service-aware health checks)
   useEffect(() => {
     const loadServiceStatus = async () => {
       try {
         if ((window as any).electronAPI?.invoke) {
-          // First get enhanced status from service config
+          // Get enhanced status from central service manager
+          // This includes proper health checks for remote/manual/docker services
           const enhancedStatus = await (window as any).electronAPI.invoke('service-config:get-enhanced-status');
-          
-          // Then get real-time status from watchdog service
-          const watchdogResult = await (window as any).electronAPI.invoke('watchdog-get-services-status');
-          
-          if (watchdogResult?.success && watchdogResult?.services) {
-            // Merge watchdog status with enhanced status for complete picture
-            const mergedStatus = { ...enhancedStatus };
-            
-            Object.entries(watchdogResult.services).forEach(([serviceName, watchdogData]: [string, any]) => {
-              if (mergedStatus[serviceName]) {
-                mergedStatus[serviceName] = {
-                  ...mergedStatus[serviceName],
-                  state: watchdogData.isHealthy ? 'running' : 'stopped',
-                  lastHealthCheck: watchdogData.lastCheck || Date.now(),
-                  uptime: watchdogData.uptime || 0
-                };
-              }
-            });
-            
-            console.log('🔍 Sidebar - Merged service status (enhanced + watchdog):', mergedStatus);
-            console.log('🔍 Sidebar - LlamaSwap specific status:', mergedStatus.llamaswap);
-            setEnhancedServiceStatus(mergedStatus);
-          } else {
-            // Fallback to enhanced status only
-            console.log('🔍 Sidebar - Enhanced service status only:', enhancedStatus);
-            setEnhancedServiceStatus(enhancedStatus || {});
-          }
+
+          // Use enhanced status directly - it already includes proper health checks
+          // for all deployment modes (docker, remote, manual)
+          console.log('🔍 Sidebar - Enhanced service status:', enhancedStatus);
+          setEnhancedServiceStatus(enhancedStatus || {});
         }
       } catch (error) {
         console.error('Failed to load service status:', error);
@@ -188,58 +167,14 @@ const Sidebar = ({ activePage = 'dashboard', onPageChange }: SidebarProps) => {
     };
 
     loadServiceStatus();
-    
+
     // Set up periodic health checking every 30 seconds
     const healthCheckInterval = setInterval(() => {
-      console.log('🔄 Sidebar - Periodic health check refresh');
       loadServiceStatus();
     }, 30000);
 
-    // Also attempt direct health checks for critical services
-    const performDirectHealthChecks = async () => {
-      const servicesToCheck = [
-        { name: 'comfyui', url: 'http://localhost:8188/' },
-        { name: 'n8n', url: 'http://localhost:5678/' },
-        { name: 'python-backend', url: 'http://localhost:5001/health' }
-      ];
-
-      for (const service of servicesToCheck) {
-        try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 5000);
-          
-          const response = await fetch(service.url, { 
-            method: 'GET',
-            signal: controller.signal
-          });
-          
-          clearTimeout(timeoutId);
-          
-          if (response.ok) {
-            console.log(`✅ Direct health check: ${service.name} is responding (${response.status})`);
-            // Update the status to reflect the service is actually running
-            setEnhancedServiceStatus(prev => ({
-              ...prev,
-              [service.name]: {
-                ...prev[service.name],
-                state: 'running',
-                lastHealthCheck: Date.now()
-              }
-            }));
-          }
-        } catch (error) {
-          console.log(`❌ Direct health check: ${service.name} is not responding:`, error);
-        }
-      }
-    };
-
-    // Run direct health checks initially and then every 60 seconds
-    performDirectHealthChecks();
-    const directHealthCheckInterval = setInterval(performDirectHealthChecks, 60000);
-
     return () => {
       clearInterval(healthCheckInterval);
-      clearInterval(directHealthCheckInterval);
     };
   }, []);
 

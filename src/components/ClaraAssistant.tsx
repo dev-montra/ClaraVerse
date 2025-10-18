@@ -67,6 +67,7 @@ import ClaraArtifactPane from './Clara_Components/ClaraArtifactPane';
 
 interface ClaraAssistantProps {
   onPageChange: (page: string) => void;
+  onProcessingChange?: (isProcessing: boolean) => void;
 }
 
 /**
@@ -443,7 +444,7 @@ const useIsVisible = () => {
   return isVisible;
 };
 
-const ClaraAssistant: React.FC<ClaraAssistantProps> = ({ onPageChange }) => {
+const ClaraAssistant: React.FC<ClaraAssistantProps> = ({ onPageChange, onProcessingChange }) => {
   // Check if Clara is currently visible (for background operation)
   const isVisible = useIsVisible();
 
@@ -986,13 +987,33 @@ export default Counter;`,
           console.debug('Mermaid error cleanup failed:', error);
         }
       };
-      
-      // Run error removal periodically
-      const errorCleanupInterval = setInterval(removeMermaidErrors, 1000);
-      
+
+      // Run error removal only when new content appears, not continuously
+      // Use MutationObserver to detect when Mermaid renders new content
+      let observer: MutationObserver | null = null;
+
+      try {
+        observer = new MutationObserver(() => {
+          removeMermaidErrors();
+        });
+
+        observer.observe(document.body, {
+          childList: true,
+          subtree: true
+        });
+      } catch (error) {
+        console.debug('Could not set up Mermaid error observer:', error);
+        // Fallback: run cleanup less frequently (every 10 seconds instead of every 1 second)
+        const errorCleanupInterval = setInterval(removeMermaidErrors, 10000);
+        return () => clearInterval(errorCleanupInterval);
+      }
+
+      // Initial cleanup
+      removeMermaidErrors();
+
       // Cleanup on unmount
       return () => {
-        clearInterval(errorCleanupInterval);
+        observer?.disconnect();
       };
     };
     
@@ -1003,6 +1024,14 @@ export default Counter;`,
       cleanup?.();
     };
   }, []);
+
+  // Notify parent component when processing state changes
+  // This keeps ClaraAssistant mounted in background when streaming/processing
+  useEffect(() => {
+    if (onProcessingChange) {
+      onProcessingChange(isLoading);
+    }
+  }, [isLoading, onProcessingChange]);
 
   // Load wallpaper from database
   useEffect(() => {

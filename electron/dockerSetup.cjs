@@ -2795,27 +2795,20 @@ class DockerSetup extends EventEmitter {
   async isPythonRunning() {
     try {
       if (!this.ports.python) {
-        console.log('Python port not set');
         return false;
       }
 
-      console.log(`Checking Python health at http://localhost:${this.ports.python}/health`);
-      
       const response = await new Promise((resolve, reject) => {
         const req = http.get(`http://localhost:${this.ports.python}/health`, (res) => {
-          console.log(`Python health check status code: ${res.statusCode}`);
-          
           if (res.statusCode === 200) {
             let data = '';
             res.on('data', chunk => {
               data += chunk;
             });
             res.on('end', () => {
-              console.log('Python health check response:', data);
               try {
                 const jsonResponse = JSON.parse(data);
                 const isHealthy = jsonResponse.status === 'healthy' || jsonResponse.status === 'ok';
-                console.log(`Python health parsed result: ${isHealthy}`);
                 resolve(isHealthy);
               } catch (e) {
                 console.error('Failed to parse health check JSON:', e);
@@ -2828,12 +2821,15 @@ class DockerSetup extends EventEmitter {
         });
 
         req.on('error', (error) => {
-          console.error('Python health check request error:', error);
+          // Only log non-connection errors (ECONNREFUSED is expected when service is down)
+          if (error.code !== 'ECONNREFUSED') {
+            console.error('Python health check request error:', error);
+          }
           resolve(false);
         });
 
         req.setTimeout(5000, () => {
-          console.error('Python health check timeout');
+          // Timeout is expected when service is not responding
           req.destroy();
           resolve(false);
         });
@@ -2841,7 +2837,10 @@ class DockerSetup extends EventEmitter {
 
       return response;
     } catch (error) {
-      console.error('Python health check error:', error);
+      // Only log unexpected errors
+      if (error.code !== 'ECONNREFUSED') {
+        console.error('Python health check error:', error);
+      }
       return false;
     }
   }
@@ -2855,7 +2854,14 @@ class DockerSetup extends EventEmitter {
           } else {
             reject(new Error(`N8N health check failed with status ${res.statusCode}`));
           }
-        }).on('error', (error) => reject(error));
+        }).on('error', (error) => {
+          // Only log non-connection errors (ECONNREFUSED is expected when service is down)
+          if (error.code !== 'ECONNREFUSED') {
+            reject(error);
+          } else {
+            resolve({ success: false, error: 'Service not running' });
+          }
+        });
       });
       return response;
     } catch (error) {
@@ -3122,16 +3128,11 @@ class DockerSetup extends EventEmitter {
   async isComfyUIRunning() {
     try {
       if (!this.ports.comfyui) {
-        console.log('ComfyUI port not set');
         return false;
       }
 
-      console.log(`Checking ComfyUI health at http://localhost:${this.ports.comfyui}/`);
-      
-      const response = await new Promise((resolve, reject) => {
+      const response = await new Promise((resolve, _reject) => {
         const req = http.get(`http://localhost:${this.ports.comfyui}/`, (res) => {
-          console.log(`ComfyUI health check status code: ${res.statusCode}`);
-          
           // ComfyUI returns 200 for the main page when running
           if (res.statusCode === 200) {
             resolve(true);
@@ -3141,12 +3142,15 @@ class DockerSetup extends EventEmitter {
         });
 
         req.on('error', (error) => {
-          console.error('ComfyUI health check request error:', error);
+          // Only log non-connection errors (ECONNREFUSED is expected when service is down)
+          if (error.code !== 'ECONNREFUSED') {
+            console.error('ComfyUI health check request error:', error);
+          }
           resolve(false);
         });
 
         req.setTimeout(5000, () => {
-          console.error('ComfyUI health check timeout');
+          // Timeout is expected when service is not responding
           req.destroy();
           resolve(false);
         });
@@ -3154,7 +3158,10 @@ class DockerSetup extends EventEmitter {
 
       return response;
     } catch (error) {
-      console.error('ComfyUI health check error:', error);
+      // Only log unexpected errors
+      if (error.code !== 'ECONNREFUSED') {
+        console.error('ComfyUI health check error:', error);
+      }
       return false;
     }
   }

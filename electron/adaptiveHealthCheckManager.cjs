@@ -21,7 +21,7 @@ class AdaptiveHealthCheckManager {
     this.lastUserActivity = Date.now();
     this.lastServiceActivity = new Map(); // Track per-service activity
     this.systemIdleTime = 0;
-    this.currentMode = 'ACTIVE';
+    this.currentMode = 'LIGHT_IDLE'; // Start in LIGHT_IDLE instead of ACTIVE to save battery
     
     // Service activity thresholds (minutes)
     this.thresholds = {
@@ -34,11 +34,26 @@ class AdaptiveHealthCheckManager {
     this.isMonitoring = false;
     this.activityCheckInterval = null;
     
-    // Battery state awareness
+    // Battery state awareness - check immediately on init
     this.isOnBattery = false;
     this.batteryLevel = 100;
-    
-    log.info('🔋 Adaptive Health Check Manager initialized');
+
+    // Initialize battery state synchronously if possible
+    if (powerMonitor && powerMonitor.isOnBatteryPower) {
+      try {
+        this.isOnBattery = powerMonitor.isOnBatteryPower();
+        if (this.isOnBattery) {
+          this.currentMode = 'MEDIUM_IDLE'; // More aggressive power saving on battery
+          log.info('🔋 Adaptive Health Check Manager initialized (on battery - starting in MEDIUM_IDLE mode)');
+        } else {
+          log.info('🔋 Adaptive Health Check Manager initialized (on AC power - starting in LIGHT_IDLE mode)');
+        }
+      } catch (error) {
+        log.info('🔋 Adaptive Health Check Manager initialized (battery state unknown - starting in LIGHT_IDLE mode)');
+      }
+    } else {
+      log.info('🔋 Adaptive Health Check Manager initialized (starting in LIGHT_IDLE mode)');
+    }
   }
 
   /**

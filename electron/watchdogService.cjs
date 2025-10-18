@@ -251,11 +251,12 @@ class WatchdogService extends EventEmitter {
 
     this.isRunning = true;
     this.isStarting = true;
-    
-    this.logEvent('WATCHDOG_START', 'INFO', 'Starting Watchdog Service', {
+
+    this.logEvent('WATCHDOG_START', 'INFO', 'Starting Watchdog Service (health check errors for stopped services are suppressed)', {
       checkInterval: this.config.checkInterval,
       startupDelay: this.config.startupDelay,
-      gracePeriod: this.config.gracePeriod
+      gracePeriod: this.config.gracePeriod,
+      note: 'ECONNREFUSED errors are expected when services are not running and will not be logged'
     });
     
     // Set enabled services to "starting" state during startup (after consent checks)

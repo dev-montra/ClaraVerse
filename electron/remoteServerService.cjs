@@ -140,6 +140,30 @@ class RemoteServerService {
 
       this.sendLog(webContents, 'success', '✓ Docker daemon is running');
 
+      // Step 2.5: Ensure clara_network exists and get gateway IP
+      this.sendLog(webContents, 'info', 'Setting up Clara network...');
+
+      const networkCheck = await this.ssh.execCommand('docker network ls --filter name=clara_network --format "{{.Name}}"');
+      if (!networkCheck.stdout || !networkCheck.stdout.includes('clara_network')) {
+        // Create clara_network with same configuration as docker-compose
+        const createNetwork = await this.ssh.execCommand('docker network create clara_network --driver bridge --subnet 172.25.0.0/16');
+        if (createNetwork.code === 0) {
+          this.sendLog(webContents, 'success', '✓ Clara network created');
+        } else {
+          this.sendLog(webContents, 'warning', '⚠ Failed to create network, using existing or default');
+        }
+      } else {
+        this.sendLog(webContents, 'success', '✓ Clara network exists');
+      }
+
+      // Get clara_network gateway IP for host.docker.internal mapping
+      const gatewayResult = await this.ssh.execCommand('docker network inspect clara_network --format "{{range .IPAM.Config}}{{.Gateway}}{{end}}"');
+      const claraNetworkGateway = gatewayResult.stdout ? gatewayResult.stdout.trim() : '172.25.0.1';
+      this.sendLog(webContents, 'info', `Clara network gateway: ${claraNetworkGateway}`);
+
+      // Store gateway for use in container deployment
+      this.claraNetworkGateway = claraNetworkGateway;
+
       // Step 3: Check for existing containers
       const servicesToDeploy = Object.entries(config.services)
         .filter(([_, enabled]) => enabled)
@@ -253,7 +277,9 @@ class RemoteServerService {
         image: 'clara17verse/clara-backend:latest',
         port: 5001,
         environment: [
-          'PYTHONUNBUFFERED=1'
+          'PYTHONUNBUFFERED=1',
+          'PORT=5001',  // Host network mode - bind to port 5001 directly
+          'HOST=0.0.0.0'
         ],
         runtime: ''
       },
@@ -300,7 +326,15 @@ class RemoteServerService {
       const runtime = config.runtime || '';
       const containerName = `clara_${serviceName}`;
 
-      const runCommand = `docker run -d --name ${containerName} -p ${config.port}:${config.port === 5001 ? 5000 : config.port} ${envVars} ${runtime} --restart unless-stopped ${config.image}`;
+      // Determine internal port (container port) - Python backend runs on 5000 internally
+      const internalPort = config.port === 5001 ? 5000 : config.port;
+
+      // Python backend uses host network to access ClaraCore via host IP
+      // Other services use clara_network for container-to-container communication
+      const networkMode = serviceName === 'python' ? 'host' : 'clara_network';
+      const portMapping = serviceName === 'python' ? '' : `-p ${config.port}:${internalPort}`;
+
+      const runCommand = `docker run -d --name ${containerName} --network ${networkMode} ${portMapping} ${envVars} ${runtime} --restart unless-stopped ${config.image}`;
 
       const runResult = await this.ssh.execCommand(runCommand);
 

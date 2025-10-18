@@ -229,6 +229,16 @@ class ClaraCoreRemoteService {
             await this.installDocker(conn);
           }
 
+          // 1.5. Ensure clara_network exists
+          log.info('Setting up Clara network...');
+          const networkCheck = await this.execCommand(conn, 'docker network ls --filter name=clara_network --format "{{.Name}}"');
+          if (!networkCheck || !networkCheck.includes('clara_network')) {
+            await this.execCommand(conn, 'docker network create clara_network --driver bridge --subnet 172.25.0.0/16');
+            log.info('✓ Clara network created');
+          } else {
+            log.info('✓ Clara network exists');
+          }
+
           // 2. Install hardware-specific prerequisites (with CPU fallback option)
           let actualHardwareType = hardwareType;
           let gpuAvailable = false;
@@ -401,7 +411,9 @@ class ClaraCoreRemoteService {
    * Handles different contexts (Docker Desktop vs Docker Engine)
    */
   buildDockerRunCommand(hardwareType, containerName, imageName) {
-    const baseCmd = `docker run -d --name ${containerName} --restart unless-stopped -p 5890:5890`;
+    // Use clara_network and expose on both ports (8091 standard, 5890 legacy)
+    // Use 172.17.0.1 (default bridge gateway) to access host services from custom network
+    const baseCmd = `docker run -d --name ${containerName} --network clara_network --restart unless-stopped -p 8091:5890 -p 5890:5890 --add-host=host.docker.internal:172.17.0.1`;
     const volume = `-v claracore-${hardwareType}-downloads:/app/downloads`;
 
     switch (hardwareType) {

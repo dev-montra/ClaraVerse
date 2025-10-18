@@ -10,6 +10,7 @@ class SchedulerBridge {
     this.schedulerInstance = null;
     this.checkInterval = null;
     this.mainWindow = null; // Reference to main window for IPC communication
+    this.lastSchedulerAvailable = true; // Track scheduler availability state
   }
 
   setMainWindow(window) {
@@ -78,8 +79,6 @@ class SchedulerBridge {
     if (!this.isRunning) return;
 
     try {
-      console.log('🔍 Checking for scheduled tasks...');
-      
       // Request the renderer process to check and execute tasks
       // since IndexedDB and ClaraFlowRunner are only available there
       if (this.mainWindow && this.mainWindow.webContents) {
@@ -196,7 +195,6 @@ class SchedulerBridge {
                   
                   return { success: true, tasksExecuted: tasksDue.length };
                 } else {
-                  console.log('⚠️ schedulerStorage not available in renderer context');
                   return { success: false, error: 'schedulerStorage not available' };
                 }
               } catch (error) {
@@ -205,12 +203,28 @@ class SchedulerBridge {
               }
             })();
           `);
-          
+
           if (result.success) {
-            console.log('📊 Task check completed, executed:', result.tasksExecuted, 'tasks');
+            // Only log when tasks are actually executed
+            if (result.tasksExecuted > 0) {
+              console.log('📊 Executed', result.tasksExecuted, 'scheduled task(s)');
+            }
             this.activeExecutions = result.tasksExecuted || 0;
+
+            // Update scheduler availability state (now available)
+            if (!this.lastSchedulerAvailable) {
+              console.log('✅ Scheduler storage is now available');
+              this.lastSchedulerAvailable = true;
+            }
           } else {
-            console.log('⚠️ Task check failed:', result.error);
+            // Only log scheduler unavailability on state change
+            if (this.lastSchedulerAvailable && result.error === 'schedulerStorage not available') {
+              console.log('⚠️ Scheduler storage not yet available, will retry...');
+              this.lastSchedulerAvailable = false;
+            } else if (result.error !== 'schedulerStorage not available') {
+              // Log other errors always
+              console.log('⚠️ Task check failed:', result.error);
+            }
           }
         } catch (jsError) {
           console.error('❌ JavaScript execution failed:', jsError);

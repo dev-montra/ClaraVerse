@@ -34,6 +34,9 @@ function App() {
   const [editingAgentId, setEditingAgentId] = useState<string | null>(null);
   const [runningAgentId, setRunningAgentId] = useState<string | null>(null);
 
+  // Track Clara's processing state to keep it mounted when active
+  const [isClaraProcessing, setIsClaraProcessing] = useState(false);
+
   useEffect(() => {
     const checkUserInfo = async () => {
       const info = await db.getPersonalInfo();
@@ -263,13 +266,29 @@ function App() {
             <Onboarding onComplete={handleOnboardingComplete} />
           ) : (
             <>
-              {/* Always render Clara in background - visible when activePage is 'clara' */}
-              <div className={activePage === 'clara' ? 'block' : 'hidden'} data-clara-container>
-                <ClaraAssistant onPageChange={setActivePage} />
-              </div>
+              {/* Smart rendering: Keep Clara mounted when processing, unmount when idle */}
+              {(activePage === 'clara' || isClaraProcessing) && (
+                <div
+                  className={activePage === 'clara' ? 'block' : 'hidden'}
+                  data-clara-container
+                >
+                  <ClaraAssistant
+                    onPageChange={setActivePage}
+                    onProcessingChange={setIsClaraProcessing}
+                  />
+                </div>
+              )}
 
               {/* Render other content when not on Clara page */}
               {activePage !== 'clara' && renderContent()}
+
+              {/* Background processing indicator */}
+              {isClaraProcessing && activePage !== 'clara' && (
+                <div className="fixed bottom-4 right-4 z-50 flex items-center gap-2 px-4 py-2 bg-sakura-500 text-white rounded-full shadow-lg animate-pulse">
+                  <div className="w-2 h-2 bg-white rounded-full animate-ping"></div>
+                  <span className="text-sm font-medium">Clara is processing in background...</span>
+                </div>
+              )}
             </>
           )}
         </div>

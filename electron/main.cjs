@@ -1070,19 +1070,39 @@ function registerServiceConfigurationHandlers() {
       const http = require('http');
       const https = require('https');
 
+      // Define service-specific health endpoints
+      const healthEndpoints = {
+        'comfyui': '/',           // ComfyUI uses root endpoint
+        'n8n': '/healthz',        // N8N uses /healthz
+        'python-backend': '/health', // Python backend uses /health
+        'claracore': '/health',   // ClaraCore uses /health
+        'mcp': '/health'          // MCP uses /health
+      };
+
       for (const [serviceName, serviceStatus] of Object.entries(status)) {
         if ((serviceStatus.deploymentMode === 'remote' || serviceStatus.deploymentMode === 'manual') && serviceStatus.serviceUrl) {
           try {
-            // Quick health check for remote services
+            // Get service-specific health endpoint
+            const healthPath = healthEndpoints[serviceName] || '/health';
             const url = new URL(serviceStatus.serviceUrl);
             const protocol = url.protocol === 'https:' ? https : http;
-            const healthEndpoint = `${serviceStatus.serviceUrl}/health`;
+
+            // Build health endpoint URL
+            const baseUrl = serviceStatus.serviceUrl.replace(/\/$/, ''); // Remove trailing slash
+            const healthEndpoint = `${baseUrl}${healthPath}`;
 
             const isHealthy = await new Promise((resolve) => {
               const req = protocol.get(healthEndpoint, { timeout: 3000 }, (res) => {
-                resolve(res.statusCode === 200);
+                // Accept 200-299 status codes as healthy
+                resolve(res.statusCode >= 200 && res.statusCode < 300);
               });
-              req.on('error', () => resolve(false));
+              req.on('error', (err) => {
+                // Only log non-connection errors
+                if (err.code !== 'ECONNREFUSED' && err.code !== 'ETIMEDOUT') {
+                  log.debug(`Health check error for ${serviceName}:`, err.message);
+                }
+                resolve(false);
+              });
               req.on('timeout', () => {
                 req.destroy();
                 resolve(false);
@@ -1093,12 +1113,16 @@ function registerServiceConfigurationHandlers() {
             if (isHealthy) {
               centralServiceManager.setState(serviceName, centralServiceManager.states.RUNNING);
               status[serviceName].state = 'running';
+              status[serviceName].lastHealthCheck = Date.now();
             } else {
               centralServiceManager.setState(serviceName, centralServiceManager.states.STOPPED);
               status[serviceName].state = 'stopped';
             }
           } catch (error) {
             // If health check fails, mark as stopped
+            if (error.code !== 'ECONNREFUSED' && error.code !== 'ETIMEDOUT') {
+              log.debug(`Health check exception for ${serviceName}:`, error.message);
+            }
             centralServiceManager.setState(serviceName, centralServiceManager.states.STOPPED);
             status[serviceName].state = 'stopped';
           }
