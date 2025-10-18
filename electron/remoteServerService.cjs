@@ -275,10 +275,10 @@ class RemoteServerService {
       },
       python: {
         image: 'clara17verse/clara-backend:latest',
-        port: 5001,
+        port: 5001,  // External port for reference (not used in host network mode)
         environment: [
           'PYTHONUNBUFFERED=1',
-          'PORT=5001',  // Host network mode - bind to port 5001 directly
+          'PORT=5000',  // Host network mode - container binds to port 5000
           'HOST=0.0.0.0'
         ],
         runtime: ''

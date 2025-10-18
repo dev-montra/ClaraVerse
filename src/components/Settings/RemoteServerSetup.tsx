@@ -12,6 +12,9 @@ import {
   Zap
 } from 'lucide-react';
 import RemoteClaraCoreSetup from './RemoteClaraCoreSetup';
+import { claraNotebookService } from '../../services/claraNotebookService';
+import { claraTTSService } from '../../services/claraTTSService';
+import { claraVoiceService } from '../../services/claraVoiceService';
 
 interface RemoteServerConfig {
   host: string;
@@ -231,13 +234,16 @@ const RemoteServerSetup: React.FC = () => {
         addLog('success', '🎉 Deployment complete!');
         addLog('info', 'Services:');
         if (result.services?.comfyui) {
-          addLog('success', `  ✓ ComfyUI: http://${config.host}:8188`);
+          const comfyuiPort = result.services.comfyui.port || 8188;
+          addLog('success', `  ✓ ComfyUI: http://${config.host}:${comfyuiPort}`);
         }
         if (result.services?.python) {
-          addLog('success', `  ✓ Python Backend: http://${config.host}:5001`);
+          const pythonPort = result.services.python.port || 5001;
+          addLog('success', `  ✓ Python Backend: http://${config.host}:${pythonPort}`);
         }
         if (result.services?.n8n) {
-          addLog('success', `  ✓ N8N: http://${config.host}:5678`);
+          const n8nPort = result.services.n8n.port || 5678;
+          addLog('success', `  ✓ N8N: http://${config.host}:${n8nPort}`);
         }
 
         // Save configuration (NO PASSWORD - security)
@@ -253,6 +259,50 @@ const RemoteServerSetup: React.FC = () => {
 
           // Enable remote mode
           await (window as any).electron.store.set('serverMode', 'remote');
+        }
+
+        // Update service configs to reflect remote deployment URLs
+        if ((window as any).electronAPI?.invoke && result.services) {
+          // Update Python backend config
+          if (result.services.python) {
+            await (window as any).electronAPI.invoke(
+              'service-config:set-config',
+              'python-backend',
+              'remote',
+              result.services.python.url
+            );
+          }
+
+          // Update ComfyUI config
+          if (result.services.comfyui) {
+            await (window as any).electronAPI.invoke(
+              'service-config:set-config',
+              'comfyui',
+              'remote',
+              result.services.comfyui.url
+            );
+          }
+
+          // Update N8N config
+          if (result.services.n8n) {
+            await (window as any).electronAPI.invoke(
+              'service-config:set-config',
+              'n8n',
+              'remote',
+              result.services.n8n.url
+            );
+          }
+
+          // Refresh all Python backend dependent service URLs
+          if (result.services.python) {
+            console.log('🔄 [RemoteSetup] Refreshing Python backend dependent service URLs...');
+            await Promise.all([
+              claraNotebookService.refreshBaseUrl(),
+              claraTTSService.refreshBaseUrl(),
+              claraVoiceService.refreshBaseUrl()
+            ]);
+            console.log('✅ [RemoteSetup] All Python backend service URLs refreshed');
+          }
         }
 
         setIsConnected(true);

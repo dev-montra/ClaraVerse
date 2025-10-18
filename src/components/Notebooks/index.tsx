@@ -112,6 +112,14 @@ const NotebooksContent: React.FC<{ onPageChange: (page: string) => void; userNam
       }
     };
 
+    // Refresh notebook service URL to ensure we have the latest configuration
+    console.log('🔄 [Notebooks] Refreshing Python backend URL in notebook service...');
+    claraNotebookService.refreshBaseUrl().then(() => {
+      console.log('✅ [Notebooks] Notebook service URL refreshed');
+    }).catch(err => {
+      console.error('❌ [Notebooks] Failed to refresh notebook service URL:', err);
+    });
+
     // Initial check
     checkPythonBackendMode();
 
