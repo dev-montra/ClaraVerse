@@ -12,6 +12,7 @@ import {
   Zap
 } from 'lucide-react';
 import RemoteClaraCoreSetup from './RemoteClaraCoreSetup';
+import N8NDeploymentWarningModal from './N8NDeploymentWarningModal';
 import { claraNotebookService } from '../../services/claraNotebookService';
 import { claraTTSService } from '../../services/claraTTSService';
 import { claraVoiceService } from '../../services/claraVoiceService';
@@ -27,6 +28,7 @@ interface RemoteServerConfig {
     python: boolean;
     n8n: boolean;
   };
+  n8nSecureCookie?: boolean; // Optional flag for N8N secure cookie setting
 }
 
 interface LogEntry {
@@ -68,6 +70,9 @@ const RemoteServerSetup: React.FC = () => {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isConnected, setIsConnected] = useState(false);
   const logsEndRef = useRef<HTMLDivElement>(null);
+
+  // N8N deployment warning modal state
+  const [showN8NWarning, setShowN8NWarning] = useState(false);
 
   // Auto-scroll logs
   useEffect(() => {
@@ -188,11 +193,37 @@ const RemoteServerSetup: React.FC = () => {
     }
   };
 
-  const startDeployment = async () => {
+  const handleDeployClick = () => {
+    // Check if N8N is selected for deployment
+    if (config.deployServices.n8n) {
+      // Show N8N warning modal
+      setShowN8NWarning(true);
+    } else {
+      // Deploy directly without warning
+      startDeployment();
+    }
+  };
+
+  const handleN8NDeployWithFix = () => {
+    setShowN8NWarning(false);
+    // Disable secure cookies for HTTP deployment - pass directly to deployment
+    startDeployment(false);
+  };
+
+  const handleN8NDeployWithoutFix = () => {
+    setShowN8NWarning(false);
+    // Keep secure cookies enabled for HTTPS (user will configure SSL)
+    startDeployment(true);
+  };
+
+  const startDeployment = async (n8nSecureCookie?: boolean) => {
     setIsDeploying(true);
     setLogs([]);
-  setDeploymentStep('connecting');
-  setCompletedSteps(new Set());
+    setDeploymentStep('connecting');
+    setCompletedSteps(new Set());
+
+    // Debug: Log the n8n secure cookie setting
+    console.log('[RemoteServerSetup] Starting deployment with n8nSecureCookie:', n8nSecureCookie);
 
     try {
       // Listen for deployment logs
@@ -217,10 +248,11 @@ const RemoteServerSetup: React.FC = () => {
         }
       });
 
-      // Start deployment
+      // Start deployment - pass n8nSecureCookie flag to backend
       const result = await window.remoteServer.deploy({
         ...config,
-        services: config.deployServices
+        services: config.deployServices,
+        n8nSecureCookie: n8nSecureCookie !== undefined ? n8nSecureCookie : config.n8nSecureCookie
       });
 
       if (result.success) {
@@ -555,6 +587,25 @@ const RemoteServerSetup: React.FC = () => {
             </div>
           </div>
 
+          {/* N8N HTTPS Warning Info Box */}
+          {config.deployServices.n8n && (
+            <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">
+              <div className="flex items-start gap-3">
+                <Info className="w-5 h-5 text-yellow-600 dark:text-yellow-400 mt-0.5 flex-shrink-0" />
+                <div>
+                  <h4 className="font-medium text-yellow-900 dark:text-yellow-100 mb-1">
+                    N8N HTTPS Configuration Notice
+                  </h4>
+                  <p className="text-sm text-yellow-800 dark:text-yellow-200">
+                    N8N requires HTTPS by default. When you click "Deploy Backend", you'll be asked
+                    how to handle this. We can automatically configure it to work over HTTP, or you
+                    can setup HTTPS yourself.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Action Buttons */}
           <div className="flex gap-3 pt-4 border-t border-gray-200 dark:border-gray-700">
             <button
@@ -566,7 +617,7 @@ const RemoteServerSetup: React.FC = () => {
               Test Connection
             </button>
             <button
-              onClick={startDeployment}
+              onClick={handleDeployClick}
               disabled={isDeploying || !config.host || !config.username || !config.password}
               className="flex items-center gap-2 px-6 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-50 dark:disabled:bg-gray-800 disabled:text-gray-400 dark:disabled:text-gray-600 text-white rounded-lg transition-colors font-medium"
             >
@@ -667,6 +718,14 @@ const RemoteServerSetup: React.FC = () => {
       )}
         </>
       )}
+
+      {/* N8N Deployment Warning Modal */}
+      <N8NDeploymentWarningModal
+        isOpen={showN8NWarning}
+        onClose={() => setShowN8NWarning(false)}
+        onDeployWithFix={handleN8NDeployWithFix}
+        onDeployWithoutFix={handleN8NDeployWithoutFix}
+      />
     </div>
   );
 };

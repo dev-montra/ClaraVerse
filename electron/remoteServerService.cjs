@@ -208,7 +208,7 @@ class RemoteServerService {
           this.sendLog(webContents, 'info', `Deploying ${service}...`);
         }
 
-        const deployment = await this.deployService(service, webContents);
+        const deployment = await this.deployService(service, webContents, config);
         if (deployment.success) {
           deployedServices[service] = {
             url: `http://${config.host}:${deployment.port}`,
@@ -262,7 +262,7 @@ class RemoteServerService {
   /**
    * Deploy individual service
    */
-  async deployService(serviceName, webContents) {
+  async deployService(serviceName, webContents, deployConfig = {}) {
     const serviceConfigs = {
       comfyui: {
         image: 'clara17verse/clara-comfyui:with-custom-nodes',
@@ -289,7 +289,11 @@ class RemoteServerService {
         environment: [
           'N8N_BASIC_AUTH_ACTIVE=true',
           'N8N_BASIC_AUTH_USER=admin',
-          'N8N_BASIC_AUTH_PASSWORD=clara123'
+          'N8N_BASIC_AUTH_PASSWORD=clara123',
+          'N8N_HOST=0.0.0.0',
+          'N8N_PORT=5678',
+          'N8N_PROTOCOL=http'
+          // N8N_SECURE_COOKIE will be added conditionally based on user choice
         ],
         runtime: ''
       }
@@ -298,6 +302,21 @@ class RemoteServerService {
     const config = serviceConfigs[serviceName];
     if (!config) {
       return { success: false, error: 'Unknown service' };
+    }
+
+    // Handle N8N secure cookie configuration
+    if (serviceName === 'n8n') {
+      log.info(`[RemoteServer] N8N deployment - n8nSecureCookie setting: ${deployConfig.n8nSecureCookie}`);
+
+      // If n8nSecureCookie is explicitly false, disable secure cookies for HTTP
+      // If n8nSecureCookie is true or undefined, use default (secure cookies enabled)
+      if (deployConfig.n8nSecureCookie === false) {
+        config.environment.push('N8N_SECURE_COOKIE=false');
+        this.sendLog(webContents, 'info', `  → Configuring N8N for HTTP (secure cookies disabled)`);
+      } else {
+        config.environment.push('N8N_SECURE_COOKIE=true');
+        this.sendLog(webContents, 'info', `  → Configuring N8N with secure cookies (HTTPS required)`);
+      }
     }
 
     try {

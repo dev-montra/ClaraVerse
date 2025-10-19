@@ -26,6 +26,7 @@ export interface RemoteServerAPI {
       python?: boolean;
       n8n?: boolean;
     };
+    n8nSecureCookie?: boolean; // Optional flag to control N8N secure cookie setting
   }) => Promise<{
     success: boolean;
     services?: Record<string, {
