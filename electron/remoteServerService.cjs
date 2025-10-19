@@ -271,7 +271,15 @@ class RemoteServerService {
           'NVIDIA_VISIBLE_DEVICES=all',
           'CUDA_VISIBLE_DEVICES=0'
         ],
-        runtime: '--gpus all' // Will fail gracefully on non-GPU systems
+        runtime: '--gpus all', // Will fail gracefully on non-GPU systems
+        volumes: [
+          'clara_comfyui_models:/app/ComfyUI/models',
+          'clara_comfyui_output:/app/ComfyUI/output',
+          'clara_comfyui_input:/app/ComfyUI/input',
+          'clara_comfyui_custom_nodes:/app/ComfyUI/custom_nodes',
+          'clara_comfyui_temp:/app/ComfyUI/temp',
+          'clara_comfyui_user:/app/ComfyUI/user'
+        ]
       },
       python: {
         image: 'clara17verse/clara-backend:latest',
@@ -281,7 +289,11 @@ class RemoteServerService {
           'PORT=5000',  // Host network mode - container binds to port 5000
           'HOST=0.0.0.0'
         ],
-        runtime: ''
+        runtime: '',
+        volumes: [
+          'clara_python_data:/home/clara',
+          'clara_python_models:/app/models'
+        ]
       },
       n8n: {
         image: 'n8nio/n8n:latest',
@@ -295,7 +307,10 @@ class RemoteServerService {
           'N8N_PROTOCOL=http'
           // N8N_SECURE_COOKIE will be added conditionally based on user choice
         ],
-        runtime: ''
+        runtime: '',
+        volumes: [
+          'clara_n8n_data:/home/node/.n8n'
+        ]
       }
     };
 
@@ -353,7 +368,13 @@ class RemoteServerService {
       const networkMode = serviceName === 'python' ? 'host' : 'clara_network';
       const portMapping = serviceName === 'python' ? '' : `-p ${config.port}:${internalPort}`;
 
-      const runCommand = `docker run -d --name ${containerName} --network ${networkMode} ${portMapping} ${envVars} ${runtime} --restart unless-stopped ${config.image}`;
+      // Build volume mounts for data persistence
+      const volumeMounts = config.volumes ? config.volumes.map(v => `-v ${v}`).join(' ') : '';
+      if (volumeMounts) {
+        this.sendLog(webContents, 'info', `  → Configuring persistent storage (${config.volumes.length} volumes)`);
+      }
+
+      const runCommand = `docker run -d --name ${containerName} --network ${networkMode} ${portMapping} ${volumeMounts} ${envVars} ${runtime} --restart unless-stopped ${config.image}`;
 
       const runResult = await this.ssh.execCommand(runCommand);
 
