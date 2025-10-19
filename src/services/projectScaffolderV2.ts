@@ -269,8 +269,6 @@ export default {
           noEmit: true,
           jsx: 'react-jsx',
           strict: true,
-          noUnusedLocals: true,
-          noUnusedParameters: true,
           noFallthroughCasesInSwitch: true
         },
         include: ['src'],

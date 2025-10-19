@@ -213,9 +213,25 @@ const MonacoEditor: React.FC<MonacoEditorProps> = ({
         setDiagnostics(newDiagnostics);
       }, 2000);
 
+      // Manual layout handling since automaticLayout is disabled
+      // This prevents Monaco from expanding parent containers
+      const resizeObserver = new ResizeObserver(() => {
+        if (editor) {
+          // Only update layout, don't let it change container size
+          editor.layout();
+        }
+      });
+
+      // Observe the editor container
+      const editorElement = editor.getDomNode();
+      if (editorElement && editorElement.parentElement) {
+        resizeObserver.observe(editorElement.parentElement);
+      }
+
       // Cleanup on unmount
       return () => {
         clearInterval(diagnosticsInterval);
+        resizeObserver.disconnect();
       };
     } catch (error) {
       console.error('❌ Error during Monaco Editor mount:', error);
@@ -270,7 +286,7 @@ const MonacoEditor: React.FC<MonacoEditorProps> = ({
   );
 
   return (
-    <div className="h-full w-full flex flex-col overflow-hidden glassmorphic">
+    <div className="h-full w-full max-w-full min-w-0 flex flex-col overflow-hidden glassmorphic">
       {/* Clean, Professional Header */}
       <div className="glassmorphic-card px-3 py-2 flex items-center justify-between shrink-0 overflow-hidden">
         {/* File Info Section */}
@@ -362,9 +378,9 @@ const MonacoEditor: React.FC<MonacoEditorProps> = ({
       </div>
 
       {/* Editor Content - Full Height with Proper Constraints */}
-      <div className="flex-1 min-h-0 bg-white dark:bg-gray-900">
+      <div className="flex-1 min-h-0 min-w-0 w-full max-w-full overflow-hidden bg-white dark:bg-gray-900">
         {fileName ? (
-          <div className="h-full w-full relative">
+          <div className="h-full w-full max-w-full relative overflow-hidden">
             {(editorError || loadingTimeout) ? (
               <FallbackEditor />
             ) : (
@@ -404,7 +420,7 @@ const MonacoEditor: React.FC<MonacoEditorProps> = ({
                   minimap: { enabled: editorSettings.minimap },
                   
                   // Essential functionality
-                  automaticLayout: true,
+                  automaticLayout: false,
                   scrollBeyondLastLine: false,
                   folding: true,
                   autoIndent: 'full',

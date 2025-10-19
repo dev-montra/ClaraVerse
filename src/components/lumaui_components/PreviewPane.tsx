@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Globe, Play, Loader2, RefreshCw, ExternalLink, Monitor, Zap, Eye, Terminal, ChevronDown, Trash2 } from 'lucide-react';
+import { Globe, Play, Loader2, RefreshCw, ExternalLink, Monitor, Zap, Eye, Terminal, ChevronDown, Trash2, Cloud, Send } from 'lucide-react';
 import { Project } from '../../types';
+import { NetlifyDeployModal } from './NetlifyDeployModal';
+import type { WebContainer } from '@webcontainer/api';
 
 interface PreviewPaneProps {
   project: Project;
@@ -8,6 +10,8 @@ interface PreviewPaneProps {
   onStartProject: (project: Project) => void;
   terminalOutput?: Array<{id: string; text: string; timestamp: Date}>;
   onClearTerminal?: () => void;
+  webContainer?: WebContainer | null;
+  writeToTerminal?: (data: string) => void;
 }
 
 const PreviewPane: React.FC<PreviewPaneProps> = ({
@@ -15,18 +19,24 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({
   isStarting,
   onStartProject,
   terminalOutput = [],
-  onClearTerminal
+  onClearTerminal,
+  webContainer,
+  writeToTerminal
 }) => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showConsole, setShowConsole] = useState(false);
   const [consoleHeight, setConsoleHeight] = useState(300);
   const [hasAutoStarted, setHasAutoStarted] = useState(false);
+  const [showDeployModal, setShowDeployModal] = useState(false);
+  const [commandInput, setCommandInput] = useState('');
+  const [isRunningCommand, setIsRunningCommand] = useState(false);
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const consoleEndRef = useRef<HTMLDivElement>(null);
   const resizeRef = useRef<HTMLDivElement>(null);
   const isResizing = useRef(false);
   const startButtonRef = useRef<HTMLButtonElement>(null);
+  const commandInputRef = useRef<HTMLInputElement>(null);
 
   // Auto-start project when preview opens (if idle)
   useEffect(() => {
@@ -90,6 +100,56 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({
         }
         setIsRefreshing(false);
       }, 300);
+    }
+  };
+
+  const handleCommandSubmit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+
+    if (!commandInput.trim() || !webContainer || isRunningCommand) {
+      return;
+    }
+
+    const command = commandInput.trim();
+    setCommandInput('');
+    setIsRunningCommand(true);
+
+    try {
+      // Write command to terminal
+      if (writeToTerminal) {
+        writeToTerminal(`\x1b[36m$ ${command}\x1b[0m\n`);
+      }
+
+      // Parse command and arguments
+      const parts = command.split(' ');
+      const cmd = parts[0];
+      const args = parts.slice(1);
+
+      // Execute command in WebContainer
+      const process = await webContainer.spawn(cmd, args);
+
+      // Stream output to terminal
+      if (writeToTerminal) {
+        process.output.pipeTo(new WritableStream({
+          write(data) {
+            writeToTerminal(data);
+          }
+        }));
+      }
+
+      // Wait for process to complete
+      const exitCode = await process.exit;
+
+      if (writeToTerminal && exitCode !== 0) {
+        writeToTerminal(`\x1b[31mCommand exited with code ${exitCode}\x1b[0m\n`);
+      }
+    } catch (error: any) {
+      if (writeToTerminal) {
+        writeToTerminal(`\x1b[31m❌ Error executing command: ${error.message}\x1b[0m\n`);
+      }
+      console.error('Command execution failed:', error);
+    } finally {
+      setIsRunningCommand(false);
     }
   };
 
@@ -184,6 +244,13 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({
           <div className="flex items-center gap-2">
             {project.status === 'running' && project.previewUrl && (
               <>
+                <button
+                  onClick={() => setShowDeployModal(true)}
+                  className="p-2 glassmorphic-card border border-white/30 dark:border-gray-700/50 rounded-lg transition-all duration-200 hover:shadow-md transform hover:scale-105 text-gray-600 dark:text-gray-400 hover:text-[#00C7B7] dark:hover:text-[#00C7B7]"
+                  title="Deploy to Netlify"
+                >
+                  <Cloud className="w-4 h-4" />
+                </button>
                 <button
                   onClick={() => setShowConsole(!showConsole)}
                   className={`p-2 glassmorphic-card border border-white/30 dark:border-gray-700/50 rounded-lg transition-all duration-200 hover:shadow-md transform hover:scale-105 ${
@@ -319,6 +386,32 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({
                     <div ref={consoleEndRef} />
                   </div>
 
+                  {/* Command Input */}
+                  {webContainer && (
+                    <div className="border-t border-gray-700 bg-gray-900">
+                      <form onSubmit={handleCommandSubmit} className="flex items-center gap-2 px-3 py-2">
+                        <span className="text-blue-400 font-mono text-sm">$</span>
+                        <input
+                          ref={commandInputRef}
+                          type="text"
+                          value={commandInput}
+                          onChange={(e) => setCommandInput(e.target.value)}
+                          placeholder="Enter command (e.g., npm run build, ls, pwd)..."
+                          disabled={isRunningCommand || !webContainer}
+                          className="flex-1 bg-transparent text-gray-100 font-mono text-sm placeholder-gray-500 focus:outline-none disabled:opacity-50"
+                        />
+                        <button
+                          type="submit"
+                          disabled={!commandInput.trim() || isRunningCommand || !webContainer}
+                          className="p-1.5 text-blue-400 hover:text-blue-300 hover:bg-gray-800 rounded transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          title="Execute command"
+                        >
+                          <Send className="w-4 h-4" />
+                        </button>
+                      </form>
+                    </div>
+                  )}
+
                   {/* Info Footer */}
                   <div className="border-t border-gray-700 px-4 py-2 bg-gray-800 text-xs text-gray-400">
                     <div className="flex items-center justify-between">
@@ -387,6 +480,16 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({
           </div>
         )}
       </div>
+
+      {/* Netlify Deploy Modal */}
+      <NetlifyDeployModal
+        isOpen={showDeployModal}
+        onClose={() => setShowDeployModal(false)}
+        webContainer={webContainer || null}
+        projectId={project.id}
+        projectName={project.name}
+        writeToTerminal={writeToTerminal}
+      />
     </div>
   );
 };

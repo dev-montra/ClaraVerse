@@ -56,12 +56,20 @@ export class WebContainerManager {
   private shellProcess: any = null;
   private containerInfo: ContainerInfo | null = null;
   private isInitialized = false;
+  private onContainerDestroyed: (() => void) | null = null;
 
   static getInstance(): WebContainerManager {
     if (!WebContainerManager.instance) {
       WebContainerManager.instance = new WebContainerManager();
     }
     return WebContainerManager.instance;
+  }
+
+  /**
+   * Set a callback for when container is destroyed
+   */
+  setDestroyCallback(callback: () => void): void {
+    this.onContainerDestroyed = callback;
   }
 
   /**
@@ -164,6 +172,11 @@ export class WebContainerManager {
     this.currentContainer = null;
     this.currentProjectId = null;
     this.containerInfo = null;
+
+    // Notify listeners that container was destroyed
+    if (this.onContainerDestroyed) {
+      this.onContainerDestroyed();
+    }
 
     // Wait for resources to be fully released
     onLog?.('\x1b[90m⏳ Waiting for resources to be released...\x1b[0m\n');

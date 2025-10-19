@@ -35,6 +35,9 @@ const ClaraCoreRemoteService = require('./claraCoreRemoteService.cjs');
 // Network Service Manager to prevent UI refreshes during crashes
 const NetworkServiceManager = require('./networkServiceManager.cjs');
 
+// Netlify OAuth Handler
+const NetlifyOAuthHandler = require('./netlifyOAuthHandler.cjs');
+
 // Immutable Startup Settings Manager
 const { getStartupSettingsManager } = require('./startupSettingsManager.cjs');
 
@@ -6741,6 +6744,40 @@ ipcMain.handle('comfyui-local:get-storage-info', async () => {
     return { success: false, error: error.message, storage: null };
   }
 });
+
+// ============================================================================
+// Netlify OAuth IPC Handlers
+// ============================================================================
+
+let netlifyOAuthHandler = null;
+
+ipcMain.handle('netlify-oauth:authenticate', async (event, authUrl) => {
+  try {
+    if (!netlifyOAuthHandler) {
+      netlifyOAuthHandler = new NetlifyOAuthHandler();
+    }
+
+    const accessToken = await netlifyOAuthHandler.authenticate(authUrl);
+    return { success: true, accessToken };
+  } catch (error) {
+    log.error('Netlify OAuth error:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('netlify-oauth:cancel', async () => {
+  try {
+    if (netlifyOAuthHandler) {
+      netlifyOAuthHandler.cancel();
+    }
+    return { success: true };
+  } catch (error) {
+    log.error('Error canceling Netlify OAuth:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================================
 
 // Find the initializeServicesInBackground function and add central service manager integration
 async function initializeServicesInBackground() {

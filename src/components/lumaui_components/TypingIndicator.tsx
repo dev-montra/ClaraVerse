@@ -105,24 +105,24 @@ const TypingIndicator: React.FC<TypingIndicatorProps> = ({
   if (!isVisible) return null;
 
   return (
-    <div className="flex justify-start mb-4">
-      <div 
+    <div className="flex justify-start mb-4 max-w-full overflow-hidden">
+      <div
         ref={containerRef}
-        className="glassmorphic-card border border-white/30 dark:border-gray-700/50 rounded-xl px-4 py-3 flex items-center gap-3 shadow-sm backdrop-blur-sm"
+        className="glassmorphic-card border border-white/30 dark:border-gray-700/50 rounded-xl px-4 py-3 flex items-center gap-3 shadow-sm backdrop-blur-sm max-w-full overflow-hidden"
       >
         {/* Animated brain/thinking icon */}
-        <div 
+        <div
           ref={iconRef}
-          className="w-6 h-6 bg-gradient-to-br from-sakura-400 to-pink-500 rounded-full flex items-center justify-center shadow-md"
+          className="w-6 h-6 bg-gradient-to-br from-sakura-400 to-pink-500 rounded-full flex items-center justify-center shadow-md shrink-0"
         >
           <MessageCircle className="w-3 h-3 text-white" />
         </div>
 
         {/* Thinking message */}
-        <div className="flex items-center gap-3">
-          <span 
+        <div className="flex items-center gap-3 max-w-full overflow-hidden">
+          <span
             ref={textRef}
-            className="text-sm text-gray-700 dark:text-gray-300 font-medium"
+            className="text-sm text-gray-700 dark:text-gray-300 font-medium break-words max-w-full truncate"
           >
             {message}
           </span>

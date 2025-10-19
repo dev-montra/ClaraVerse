@@ -28,6 +28,9 @@ interface RightPanelWorkspaceProps {
   onDeleteFolder?: (path: string) => Promise<void>;
   onRenameFile?: (oldPath: string, newPath: string) => Promise<void>;
   onDuplicateFile?: (path: string) => Promise<void>;
+  onUploadFile?: (parentPath: string, files: FileList) => Promise<void>;
+  onCopyFile?: (sourcePath: string, targetPath: string) => Promise<void>;
+  onCutFile?: (sourcePath: string, targetPath: string) => Promise<void>;
 
   // Monaco Editor props
   selectedFileContent: string;
@@ -53,6 +56,9 @@ interface RightPanelWorkspaceProps {
   // Terminal output for preview console
   terminalOutput?: Array<{id: string; text: string; timestamp: Date}>;
   onClearTerminal?: () => void;
+
+  // Terminal writer for deployment logs
+  writeToTerminal?: (data: string) => void;
 }
 
 const RightPanelWorkspace: React.FC<RightPanelWorkspaceProps> = ({
@@ -69,6 +75,9 @@ const RightPanelWorkspace: React.FC<RightPanelWorkspaceProps> = ({
   onDeleteFolder,
   onRenameFile,
   onDuplicateFile,
+  onUploadFile,
+  onCopyFile,
+  onCutFile,
   selectedFileContent,
   onFileContentChange,
   terminalRef,
@@ -81,10 +90,11 @@ const RightPanelWorkspace: React.FC<RightPanelWorkspaceProps> = ({
   onResetProject,
   viewMode = 'edit',
   terminalOutput = [],
-  onClearTerminal
+  onClearTerminal,
+  writeToTerminal
 }) => {
   return (
-    <div className="h-full w-full flex flex-col overflow-hidden">
+    <div className="h-full w-full max-w-full flex flex-col overflow-hidden">
       {/* Mode Toggle Buttons - Hidden in play mode */}
       {viewMode === 'edit' && (
         <div className="glassmorphic shrink-0 h-12 flex items-center px-4">
@@ -132,11 +142,11 @@ const RightPanelWorkspace: React.FC<RightPanelWorkspaceProps> = ({
       )}
 
       {/* Content Area - Switches Based on Mode */}
-      <div className="flex-1 min-h-0 w-full overflow-hidden relative">
+      <div className="flex-1 min-h-0 min-w-0 w-full overflow-hidden relative">
         {/* Editor Mode */}
-        <div className={`h-full w-full flex flex-col overflow-hidden ${mode === 'editor' ? '' : 'hidden'}`}>
+        <div className={`h-full w-full min-w-0 flex flex-col overflow-hidden ${mode === 'editor' ? '' : 'hidden'}`}>
           {/* Top: File Explorer + Editor Side-by-Side */}
-          <div className="flex-1 min-h-0 flex overflow-hidden w-full">
+          <div className="flex-1 min-h-0 min-w-0 flex overflow-hidden w-full">
             {/* File Explorer - Fixed 250px width */}
             <div
               className="h-full glassmorphic overflow-hidden flex flex-col shrink-0"
@@ -154,11 +164,14 @@ const RightPanelWorkspace: React.FC<RightPanelWorkspaceProps> = ({
                 onDeleteFolder={onDeleteFolder}
                 onRenameFile={onRenameFile}
                 onDuplicateFile={onDuplicateFile}
+                onUploadFile={onUploadFile}
+                onCopyFile={onCopyFile}
+                onCutFile={onCutFile}
               />
             </div>
 
             {/* Monaco Editor - Take remaining space */}
-            <div className="flex-1 h-full overflow-hidden min-w-0">
+            <div className="flex-1 h-full overflow-hidden min-w-0 max-w-full">
               <MonacoEditor
                 content={selectedFileContent}
                 fileName={selectedFile || ''}
@@ -191,6 +204,8 @@ const RightPanelWorkspace: React.FC<RightPanelWorkspaceProps> = ({
               onStartProject={onStartProject}
               terminalOutput={terminalOutput}
               onClearTerminal={onClearTerminal}
+              webContainer={webContainer}
+              writeToTerminal={writeToTerminal}
             />
           </div>
         )}

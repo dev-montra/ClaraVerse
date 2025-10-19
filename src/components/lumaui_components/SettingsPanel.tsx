@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
-import { Download, Settings, Zap, FileText, Code, RefreshCw, Trash2 } from 'lucide-react';
+import { Download, Settings, Zap, FileText, Code, RefreshCw, Trash2, Cloud } from 'lucide-react';
 import { Project, FileNode } from '../../types';
+import { NetlifySettings } from './NetlifySettings';
 
 interface SettingsPanelProps {
   project: Project | null;
@@ -9,6 +10,8 @@ interface SettingsPanelProps {
   onResetProject?: () => void;
 }
 
+type SettingsTab = 'general' | 'deployment';
+
 const SettingsPanel: React.FC<SettingsPanelProps> = ({
   project,
   files,
@@ -16,6 +19,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
   onResetProject
 }) => {
   const [downloading, setDownloading] = useState(false);
+  const [activeTab, setActiveTab] = useState<SettingsTab>('general');
 
   // Download project as ZIP
   const handleDownloadProject = async () => {
@@ -105,7 +109,7 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
       <div className="max-w-4xl mx-auto space-y-6">
         {/* Header */}
         <div className="glassmorphic-card p-6 rounded-xl">
-          <div className="flex items-center gap-3 mb-2">
+          <div className="flex items-center gap-3 mb-4">
             <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-sakura-500 to-pink-500 flex items-center justify-center">
               <Settings className="w-6 h-6 text-white" />
             </div>
@@ -118,10 +122,39 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
               </p>
             </div>
           </div>
+
+          {/* Tabs */}
+          <div className="flex gap-2 border-t border-gray-200 dark:border-gray-700 pt-4">
+            <button
+              onClick={() => setActiveTab('general')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
+                activeTab === 'general'
+                  ? 'bg-sakura-100 dark:bg-sakura-900/30 text-sakura-700 dark:text-sakura-300'
+                  : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+              }`}
+            >
+              <Settings className="w-4 h-4" />
+              General
+            </button>
+            <button
+              onClick={() => setActiveTab('deployment')}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
+                activeTab === 'deployment'
+                  ? 'bg-sakura-100 dark:bg-sakura-900/30 text-sakura-700 dark:text-sakura-300'
+                  : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+              }`}
+            >
+              <Cloud className="w-4 h-4" />
+              Deployment
+            </button>
+          </div>
         </div>
 
-        {/* Project Info */}
-        {project && (
+        {/* General Tab Content */}
+        {activeTab === 'general' && (
+          <>
+            {/* Project Info */}
+            {project && (
           <div className="glassmorphic-card p-6 rounded-xl">
             <h3 className="text-lg font-semibold text-gray-800 dark:text-gray-100 mb-4 flex items-center gap-2">
               <FileText className="w-5 h-5 text-sakura-600" />
@@ -274,12 +307,19 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({
           </div>
         </div>
 
-        {/* Info */}
-        <div className="glassmorphic-card p-4 rounded-xl">
-          <p className="text-sm text-center text-gray-600 dark:text-gray-400">
-            More settings coming soon. AI settings can be accessed from the chat panel.
-          </p>
-        </div>
+            {/* Info */}
+            <div className="glassmorphic-card p-4 rounded-xl">
+              <p className="text-sm text-center text-gray-600 dark:text-gray-400">
+                More settings coming soon. AI settings can be accessed from the chat panel.
+              </p>
+            </div>
+          </>
+        )}
+
+        {/* Deployment Tab Content */}
+        {activeTab === 'deployment' && (
+          <NetlifySettings />
+        )}
       </div>
     </div>
   );

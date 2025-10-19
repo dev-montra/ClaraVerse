@@ -75,6 +75,23 @@ const LumaUICore: React.FC = () => {
         console.log('[LumaUI] Force cleaning up any zombie WebContainer instances...');
         await webContainerManager.forceCleanup();
 
+        // Set up callback for when container is destroyed
+        webContainerManager.setDestroyCallback(() => {
+          console.log('[LumaUI] WebContainer destroyed, updating all running projects to idle...');
+          // Update all projects that might be running back to idle
+          setProjects(prev => prev.map(p =>
+            p.status === 'running' ? { ...p, status: 'idle' as const, previewUrl: undefined } : p
+          ));
+          // Update selected project if it was running
+          setSelectedProject(prev =>
+            prev && prev.status === 'running'
+              ? { ...prev, status: 'idle' as const, previewUrl: undefined }
+              : prev
+          );
+          // Also clear the webContainer state
+          setWebContainer(null);
+        });
+
         console.log('[LumaUI] ✅ WebContainerManager ready');
 
         // Write to terminal if available
@@ -1330,31 +1347,136 @@ This is a browser security requirement for WebContainer.`;
     try {
       // Read the current content
       const content = await webContainer.fs.readFile(path, 'utf-8');
-      
+
       // Generate new filename
       const pathParts = path.split('/');
       const fileName = pathParts.pop() || '';
       const dir = pathParts.join('/');
-      
+
       const nameParts = fileName.split('.');
       const ext = nameParts.length > 1 ? nameParts.pop() : '';
       const baseName = nameParts.join('.');
-      
+
       const newFileName = ext ? `${baseName}_copy.${ext}` : `${baseName}_copy`;
       const newPath = dir ? `${dir}/${newFileName}` : newFileName;
-      
+
       // Create the duplicate
       await webContainer.fs.writeFile(newPath, content);
-      
+
       writeToTerminal(`\x1b[32m✅ Duplicated: ${path} → ${newPath}\x1b[0m\n`);
-      
+
       // Refresh file tree
       await refreshFileTree();
-      
+
       // Auto-select the new file
       handleFileSelect(newPath, content);
     } catch (error) {
       writeToTerminal(`\x1b[31m❌ Failed to duplicate file: ${error}\x1b[0m\n`);
+      throw error;
+    }
+  };
+
+  const handleUploadFile = async (parentPath: string, files: FileList) => {
+    if (!webContainer) {
+      writeToTerminal('\x1b[31m❌ WebContainer not available\x1b[0m\n');
+      return;
+    }
+
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const targetPath = parentPath ? `${parentPath}/${file.name}` : file.name;
+
+        // Read file content
+        const content = await file.text();
+
+        // Write to WebContainer
+        await webContainer.fs.writeFile(targetPath, content);
+
+        writeToTerminal(`\x1b[32m✅ Uploaded: ${file.name} → ${targetPath}\x1b[0m\n`);
+      }
+
+      // Refresh file tree
+      await refreshFileTree();
+
+      writeToTerminal(`\x1b[32m✅ Uploaded ${files.length} file(s) successfully\x1b[0m\n`);
+    } catch (error) {
+      writeToTerminal(`\x1b[31m❌ Failed to upload files: ${error}\x1b[0m\n`);
+      throw error;
+    }
+  };
+
+  const handleCopyFile = async (sourcePath: string, targetPath: string) => {
+    if (!webContainer) {
+      writeToTerminal('\x1b[31m❌ WebContainer not available\x1b[0m\n');
+      return;
+    }
+
+    try {
+      // Read source file
+      const content = await webContainer.fs.readFile(sourcePath, 'utf-8');
+
+      // Generate destination path
+      const fileName = sourcePath.split('/').pop() || '';
+      const destPath = targetPath ? `${targetPath}/${fileName}` : fileName;
+
+      // Check if file already exists
+      try {
+        await webContainer.fs.readFile(destPath, 'utf-8');
+        // File exists, create copy with _copy suffix
+        const nameParts = fileName.split('.');
+        const ext = nameParts.length > 1 ? nameParts.pop() : '';
+        const baseName = nameParts.join('.');
+        const newFileName = ext ? `${baseName}_copy.${ext}` : `${baseName}_copy`;
+        const finalPath = targetPath ? `${targetPath}/${newFileName}` : newFileName;
+        await webContainer.fs.writeFile(finalPath, content);
+        writeToTerminal(`\x1b[32m✅ Copied: ${sourcePath} → ${finalPath}\x1b[0m\n`);
+      } catch {
+        // File doesn't exist, use original name
+        await webContainer.fs.writeFile(destPath, content);
+        writeToTerminal(`\x1b[32m✅ Copied: ${sourcePath} → ${destPath}\x1b[0m\n`);
+      }
+
+      // Refresh file tree
+      await refreshFileTree();
+    } catch (error) {
+      writeToTerminal(`\x1b[31m❌ Failed to copy file: ${error}\x1b[0m\n`);
+      throw error;
+    }
+  };
+
+  const handleCutFile = async (sourcePath: string, targetPath: string) => {
+    if (!webContainer) {
+      writeToTerminal('\x1b[31m❌ WebContainer not available\x1b[0m\n');
+      return;
+    }
+
+    try {
+      // Read source file
+      const content = await webContainer.fs.readFile(sourcePath, 'utf-8');
+
+      // Generate destination path
+      const fileName = sourcePath.split('/').pop() || '';
+      const destPath = targetPath ? `${targetPath}/${fileName}` : fileName;
+
+      // Write to destination
+      await webContainer.fs.writeFile(destPath, content);
+
+      // Delete source
+      await webContainer.fs.rm(sourcePath);
+
+      writeToTerminal(`\x1b[32m✅ Moved: ${sourcePath} → ${destPath}\x1b[0m\n`);
+
+      // Refresh file tree
+      await refreshFileTree();
+
+      // Clear selection if the moved file was selected
+      if (selectedFilePath === sourcePath) {
+        setSelectedFilePath(null);
+        setSelectedFileContent('');
+      }
+    } catch (error) {
+      writeToTerminal(`\x1b[31m❌ Failed to move file: ${error}\x1b[0m\n`);
       throw error;
     }
   };
@@ -1577,10 +1699,10 @@ This is a browser security requirement for WebContainer.`;
         )}
 
         {/* Main Content - Flex grow, contains chat and workspace */}
-        <main className="flex-1 flex overflow-hidden min-h-0">
+        <main className="w-full flex-1 flex overflow-hidden min-h-0">
           {/* Left Panel - Chat (25% width, fixed) - Hidden in play mode */}
           {projectViewMode === 'edit' && (
-            <aside className="w-1/4 h-full shrink-0 border-r border-white/10 dark:border-gray-800/50">
+            <aside className="w-1/4 max-w-[25%] h-full shrink-0 overflow-hidden border-r border-white/10 dark:border-gray-800/50">
               <ChatWindow
                 selectedFile={selectedFile}
                 fileContent={selectedFileContent}
@@ -1597,7 +1719,7 @@ This is a browser security requirement for WebContainer.`;
           )}
 
           {/* Right Panel - Workspace (75% width in edit mode, 100% in play mode) */}
-          <section className={projectViewMode === 'play' ? 'w-full h-full flex-1 min-w-0' : 'w-3/4 h-full flex-1 min-w-0'}>
+          <section className={projectViewMode === 'play' ? 'w-full h-full min-w-0 max-w-full overflow-hidden' : 'w-3/4 h-full min-w-0 max-w-[75%] overflow-hidden'}>
             <RightPanelWorkspace
               mode={projectViewMode === 'play' ? 'preview' : rightPanelMode}
               onModeChange={setRightPanelMode}
@@ -1612,6 +1734,9 @@ This is a browser security requirement for WebContainer.`;
               onDeleteFolder={handleDeleteFolder}
               onRenameFile={handleRenameFile}
               onDuplicateFile={handleDuplicateFile}
+              onUploadFile={handleUploadFile}
+              onCopyFile={handleCopyFile}
+              onCutFile={handleCutFile}
               selectedFileContent={selectedFileContent}
               onFileContentChange={handleFileContentChange}
               terminalRef={terminalRef}
@@ -1625,6 +1750,7 @@ This is a browser security requirement for WebContainer.`;
               viewMode={projectViewMode}
               terminalOutput={terminalOutput}
               onClearTerminal={() => setTerminalOutput([])}
+              writeToTerminal={writeToTerminal}
             />
           </section>
         </main>

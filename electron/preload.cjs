@@ -163,6 +163,12 @@ contextBridge.exposeInMainWorld('electron', {
     delete: (key) => ipcRenderer.invoke('store:delete', key),
     has: (key) => ipcRenderer.invoke('store:has', key),
     clear: () => ipcRenderer.invoke('store:clear')
+  },
+
+  // Netlify OAuth
+  netlifyOAuth: {
+    authenticate: (authUrl) => ipcRenderer.invoke('netlify-oauth:authenticate', authUrl),
+    cancel: () => ipcRenderer.invoke('netlify-oauth:cancel')
   }
 });
 

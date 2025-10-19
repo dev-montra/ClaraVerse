@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Send, Loader2, Bot, Trash2, Settings, ChevronDown, Wand2, Scissors } from 'lucide-react';
+import { Send, Loader2, Bot, Trash2, Settings, ChevronDown, Wand2, Scissors, StopCircle, ChevronRight } from 'lucide-react';
 import { useProviders } from '../../contexts/ProvidersContext';
 import { LumaUIAPIClient, ChatMessage as LumaChatMessage } from './services/lumaUIApiClient';
 import type { Tool } from '../../db';
@@ -680,7 +680,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
   ];
 
   const [messages, setMessages] = useState<Message[]>(defaultMessages);
-  
+
   const [inputMessage, setInputMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [currentTask, setCurrentTask] = useState('');
@@ -689,8 +689,9 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
   const [showLiveExecution, setShowLiveExecution] = useState(false);
   const [currentPlanning, setCurrentPlanning] = useState<PlanningExecution | null>(null);
   const [showPlanning, setShowPlanning] = useState(false);
-  
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   
   // Provider context
   const { providers, primaryProvider } = useProviders();
@@ -1069,16 +1070,63 @@ ${reflection.nextSteps.map((step, i) => `${i + 1}. ${step}`).join('\n')}
     return null;
   };
 
+  // Timeout wrapper for tool execution
+  const executeWithTimeout = async <T,>(
+    promise: Promise<T>,
+    timeoutMs: number = 60000,
+    toolName: string
+  ): Promise<T> => {
+    let timeoutId: NodeJS.Timeout;
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        reject(new Error(`Tool "${toolName}" timed out after ${timeoutMs / 1000}s`));
+      }, timeoutMs);
+    });
+
+    try {
+      const result = await Promise.race([promise, timeoutPromise]);
+      clearTimeout(timeoutId!);
+      return result;
+    } catch (error) {
+      clearTimeout(timeoutId!);
+      throw error;
+    }
+  };
+
   // Execute tool calls from OpenAI function calling with live animations and retry logic
   const executeTools = async (toolCalls: any[], retryCount: number = 0): Promise<Array<{id: string, result: string, success: boolean}>> => {
     const results: Array<{id: string, result: string, success: boolean}> = [];
     const maxRetries = 2;
-    
+    const toolTimeout = 60000; // 60 seconds timeout for each tool
+
     for (const toolCall of toolCalls) {
+      // Check if operation was cancelled before starting this tool
+      if (abortControllerRef.current?.signal.aborted) {
+        console.log('🛑 Tool execution cancelled by user');
+        results.push({
+          id: toolCall.id,
+          result: '⚠️ Cancelled by user',
+          success: false
+        });
+        continue; // Skip to next tool
+      }
+
       let lastError: string = '';
       let success = false;
-      
+
       for (let attempt = 0; attempt <= maxRetries && !success; attempt++) {
+        // Check abort signal before each retry
+        if (abortControllerRef.current?.signal.aborted) {
+          console.log('🛑 Tool execution cancelled during retry');
+          results.push({
+            id: toolCall.id,
+            result: '⚠️ Cancelled by user',
+            success: false
+          });
+          break; // Exit retry loop
+        }
+
         try {
           const functionName = toolCall.function.name;
           let parameters;
@@ -1117,9 +1165,24 @@ ${reflection.nextSteps.map((step, i) => `${i + 1}. ${step}`).join('\n')}
           execution.status = 'executing';
           setCurrentToolExecution({...execution});
 
-          // Execute the actual tool with retry logic
-          const result = await lumaTools[functionName](parameters);
-          
+          // Execute the actual tool with timeout
+          const result = await executeWithTimeout(
+            lumaTools[functionName](parameters),
+            toolTimeout,
+            functionName
+          );
+
+          // Check if cancelled after tool execution
+          if (abortControllerRef.current?.signal.aborted) {
+            console.log('🛑 Operation cancelled after tool execution');
+            results.push({
+              id: toolCall.id,
+              result: '⚠️ Cancelled by user',
+              success: false
+            });
+            break; // Exit retry loop
+          }
+
           if (result.success) {
             const filePath = result.data?.path || parameters.path || 'completed';
             execution.status = 'completed';
@@ -1129,7 +1192,39 @@ ${reflection.nextSteps.map((step, i) => `${i + 1}. ${step}`).join('\n')}
             // For read_file, include the actual content in the result
             let toolResultContent = execution.result;
             if (functionName === 'read_file' && result.data?.content) {
-              toolResultContent = `✅ ${functionName}: ${filePath}\n\nFile content:\n\`\`\`\n${result.data.content}\n\`\`\``;
+              // Detect language from file extension
+              const fileExt = filePath.split('.').pop()?.toLowerCase() || '';
+              const langMap: Record<string, string> = {
+                'ts': 'typescript',
+                'tsx': 'tsx',
+                'js': 'javascript',
+                'jsx': 'jsx',
+                'py': 'python',
+                'java': 'java',
+                'cpp': 'cpp',
+                'c': 'c',
+                'cs': 'csharp',
+                'go': 'go',
+                'rs': 'rust',
+                'rb': 'ruby',
+                'php': 'php',
+                'html': 'html',
+                'css': 'css',
+                'scss': 'scss',
+                'json': 'json',
+                'xml': 'xml',
+                'yaml': 'yaml',
+                'yml': 'yaml',
+                'md': 'markdown',
+                'sh': 'bash',
+                'bash': 'bash',
+                'sql': 'sql',
+                'graphql': 'graphql',
+                'vue': 'vue',
+                'svelte': 'svelte'
+              };
+              const language = langMap[fileExt] || fileExt || 'text';
+              toolResultContent = `✅ ${functionName}: ${filePath}\n\nFile content:\n\`\`\`${language}\n${result.data.content}\n\`\`\``;
             } else if (functionName === 'list_files' && result.data) {
               toolResultContent = `✅ ${functionName}: ${filePath}\n\nFiles:\n${JSON.stringify(result.data, null, 2)}`;
             } else if (functionName === 'get_all_files' && result.data) {
@@ -1206,8 +1301,11 @@ ${reflection.nextSteps.map((step, i) => `${i + 1}. ${step}`).join('\n')}
 
         } catch (error) {
           lastError = error instanceof Error ? error.message : String(error);
-          
-          if (attempt === maxRetries) {
+
+          // Check if it's a timeout error - don't retry timeouts
+          const isTimeout = lastError.includes('timed out');
+
+          if (attempt === maxRetries || isTimeout) {
             const execution: ToolExecution = {
               id: toolCall.id,
               toolName: toolCall.function?.name || 'unknown',
@@ -1219,10 +1317,11 @@ ${reflection.nextSteps.map((step, i) => `${i + 1}. ${step}`).join('\n')}
             };
 
             setCurrentToolExecution(execution);
-            
+
+            const attemptText = isTimeout ? '' : ` (failed after ${maxRetries + 1} attempts)`;
             results.push({
               id: toolCall.id,
-              result: `❌ ${execution.toolName}: ${lastError} (failed after ${maxRetries + 1} attempts)`,
+              result: `❌ ${execution.toolName}: ${lastError}${attemptText}`,
               success: false
             });
 
@@ -1233,13 +1332,41 @@ ${reflection.nextSteps.map((step, i) => `${i + 1}. ${step}`).join('\n')}
           }
         }
       }
+      // Check if we should stop processing more tools
+      if (abortControllerRef.current?.signal.aborted) {
+        console.log('🛑 Stopping tool execution loop due to cancellation');
+        break; // Exit the outer loop of tool calls
+      }
     }
-    
+
     // Hide live execution when all tools are done
     setShowLiveExecution(false);
     setCurrentToolExecution(null);
-    
+
     return results;
+  };
+
+  // Function to stop/cancel the current AI operation
+  const handleStopGeneration = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setIsLoading(false);
+    setCurrentTask('');
+    setCurrentToolExecution(null);
+    setShowLiveExecution(false);
+    setCurrentPlanning(null);
+    setShowPlanning(false);
+
+    // Add a system message indicating cancellation
+    const cancelMessage: Message = {
+      id: Date.now().toString(),
+      type: 'assistant',
+      content: '⚠️ Operation cancelled by user.',
+      timestamp: new Date()
+    };
+    setMessages(prev => [...prev, cancelMessage]);
   };
 
   const handleSendMessage = async () => {
@@ -1271,6 +1398,9 @@ ${reflection.nextSteps.map((step, i) => `${i + 1}. ${step}`).join('\n')}
     setInputMessage('');
     setIsLoading(true);
     setCurrentTask('Analyzing request...');
+
+    // Create new abort controller for this operation
+    abortControllerRef.current = new AbortController();
 
     try {
       // Calculate dynamic tokens for this session and merge with user parameters
@@ -1485,6 +1615,12 @@ Follow this plan systematically, but adapt as needed based on actual results.`;
       };
 
       while (conversationIteration < maxConversationTurns && totalToolCalls < maxToolCalls) {
+        // Check if operation was cancelled
+        if (abortControllerRef.current?.signal.aborted) {
+          console.log('🛑 Operation cancelled by user');
+          break;
+        }
+
         conversationIteration++;
         currentPlanning.currentStep = totalToolCalls;
         currentPlanning.status = 'executing';
@@ -1493,9 +1629,21 @@ Follow this plan systematically, but adapt as needed based on actual results.`;
         // Sanitize conversation history before sending
         const sanitizedHistory = sanitizeConversationHistory(conversationHistory);
 
+        // Check for abort before making AI call
+        if (abortControllerRef.current?.signal.aborted) {
+          console.log('🛑 Operation cancelled before AI call');
+          break;
+        }
+
         // Get AI response
         const currentResponse = await provider.sendMessage(sanitizedHistory);
-        
+
+        // Check for abort after AI response
+        if (abortControllerRef.current?.signal.aborted) {
+          console.log('🛑 Operation cancelled after AI response');
+          break;
+        }
+
         // Check if AI wants to use tools
         if (currentResponse.message?.tool_calls && currentResponse.message.tool_calls.length > 0) {
           // Check if we would exceed tool call limit
@@ -1534,7 +1682,13 @@ Follow this plan systematically, but adapt as needed based on actual results.`;
           // Execute tools
           setCurrentTask(`Executing ${currentResponse.message.tool_calls.length} operation${currentResponse.message.tool_calls.length > 1 ? 's' : ''}... (Tool calls: ${totalToolCalls}/${maxToolCalls})`);
           const toolResults = await executeTools(currentResponse.message.tool_calls);
-          
+
+          // Check if cancelled after tool execution
+          if (abortControllerRef.current?.signal.aborted) {
+            console.log('🛑 Operation cancelled after tools executed');
+            break;
+          }
+
           // Add tool result messages following OpenAI format
           for (const toolResult of toolResults) {
             // Add tool message to conversation history (OpenAI format)
@@ -2059,7 +2213,7 @@ Please check your request and try again. Make sure the file exists and your inst
       </div>
 
       {/* Messages - Clara Style */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-4 overflow-x-hidden"
+      <div className="w-full flex-1 overflow-y-auto p-4 space-y-4 overflow-x-hidden"
         style={{
           scrollbarWidth: 'thin',
           scrollbarColor: 'rgba(252, 165, 165, 0.3) transparent'
@@ -2081,7 +2235,7 @@ Please check your request and try again. Make sure the file exists and your inst
           const isLatestCheckpoint = checkpoint && checkpoint === checkpoints[checkpoints.length - 1];
           
           return (
-            <div key={message.id} className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div key={message.id} className={`w-full flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}>
               <div className={`group max-w-[85%] relative ${
                 message.type === 'user'
                   ? `${hasCheckpoint
@@ -2090,78 +2244,112 @@ Please check your request and try again. Make sure the file exists and your inst
                   : message.type === 'tool'
                   ? 'glassmorphic-card text-gray-800 dark:text-gray-100'
                   : 'bg-white/60 dark:bg-gray-800/60 backdrop-blur-sm text-gray-800 dark:text-gray-100'
-              } rounded-xl px-4 py-3 ${message.type === 'user' && hasCheckpoint ? 'mt-6' : ''}`}>
-              <div className="text-sm leading-relaxed overflow-x-auto">
+              } rounded-xl px-4 py-3 ${message.type === 'user' && hasCheckpoint ? 'mt-6' : ''} max-w-full overflow-hidden`}>
+              <div className="text-sm leading-relaxed max-w-full overflow-hidden">
                 {message.type === 'user' ? (
-                  <div className="whitespace-pre-wrap break-words">
+                  <div className="whitespace-pre-wrap break-words max-w-full overflow-wrap-anywhere">
                     {message.content}
                   </div>
                 ) : (
                   <ReactMarkdown
-                    className={`prose prose-sm max-w-none ${
-                      message.type === 'tool' 
-                        ? 'prose-emerald dark:prose-invert' 
+                    className={`prose prose-sm max-w-full overflow-hidden ${
+                      message.type === 'tool'
+                        ? 'prose-emerald dark:prose-invert'
                         : 'dark:prose-invert'
                     }`}
                     components={{
                       code(props: any) {
                         const {node, inline, className, children, ...rest} = props;
                         const match = /language-(\w+)/.exec(className || '');
-                        return !inline && match ? (
-                          <SyntaxHighlighter
-                            style={vscDarkPlus}
-                            language={match[1]}
-                            PreTag="div"
-                            className="rounded-lg !mt-2 !mb-2 overflow-x-auto"
-                            customStyle={{
-                              margin: 0,
-                              padding: '1rem',
-                              backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                              fontSize: '0.875rem',
-                              overflowX: 'auto',
-                              maxWidth: '100%'
-                            }}
-                            wrapLongLines={false}
-                          >
-                            {String(children).replace(/\n$/, '')}
-                          </SyntaxHighlighter>
-                        ) : (
+                        const [isExpanded, setIsExpanded] = useState(false);
+
+                        if (!inline && match) {
+                          const codeContent = String(children).replace(/\n$/, '');
+                          const lineCount = codeContent.split('\n').length;
+                          const shouldCollapse = lineCount > 5; // Collapse if more than 5 lines
+
+                          return (
+                            <div className="my-2 max-w-full">
+                              <div className="flex items-center justify-between bg-gray-800 rounded-t-lg px-3 py-2 border-b border-gray-700">
+                                <span className="text-xs text-gray-400 font-mono">{match[1]}</span>
+                                {shouldCollapse && (
+                                  <button
+                                    onClick={() => setIsExpanded(!isExpanded)}
+                                    className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-200 transition-colors"
+                                  >
+                                    <ChevronRight className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                                    <span>{isExpanded ? 'Collapse' : `Expand (${lineCount} lines)`}</span>
+                                  </button>
+                                )}
+                              </div>
+                              {(!shouldCollapse || isExpanded) && (
+                                <div className="overflow-x-auto max-w-full">
+                                  <SyntaxHighlighter
+                                    style={vscDarkPlus}
+                                    language={match[1]}
+                                    PreTag="div"
+                                    className="!mt-0 !rounded-t-none"
+                                    customStyle={{
+                                      margin: 0,
+                                      padding: '1rem',
+                                      backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                                      fontSize: '0.875rem',
+                                      maxWidth: '100%',
+                                      overflowX: 'auto'
+                                    }}
+                                    wrapLongLines={false}
+                                    showLineNumbers={lineCount > 10}
+                                  >
+                                    {codeContent}
+                                  </SyntaxHighlighter>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        }
+
+                        return (
                           <code
-                            className={`${className} px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-xs font-mono`}
+                            className={`${className} px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-xs font-mono break-all`}
                             {...rest}
                           >
                             {children}
                           </code>
                         );
                       },
-                      p: ({children}) => <p className="mb-2 last:mb-0">{children}</p>,
-                      ul: ({children}) => <ul className="list-disc pl-4 mb-2 space-y-1">{children}</ul>,
-                      ol: ({children}) => <ol className="list-decimal pl-4 mb-2 space-y-1">{children}</ol>,
-                      li: ({children}) => <li className="text-sm">{children}</li>,
-                      h1: ({children}) => <h1 className="text-lg font-bold mb-2 text-gray-900 dark:text-gray-100">{children}</h1>,
-                      h2: ({children}) => <h2 className="text-base font-bold mb-2 text-gray-900 dark:text-gray-100">{children}</h2>,
-                      h3: ({children}) => <h3 className="text-sm font-bold mb-1 text-gray-900 dark:text-gray-100">{children}</h3>,
+                      p: ({children}) => <p className="mb-2 last:mb-0 break-words max-w-full overflow-wrap-anywhere">{children}</p>,
+                      ul: ({children}) => <ul className="list-disc pl-4 mb-2 space-y-1 max-w-full">{children}</ul>,
+                      ol: ({children}) => <ol className="list-decimal pl-4 mb-2 space-y-1 max-w-full">{children}</ol>,
+                      li: ({children}) => <li className="text-sm break-words">{children}</li>,
+                      h1: ({children}) => <h1 className="text-lg font-bold mb-2 text-gray-900 dark:text-gray-100 break-words">{children}</h1>,
+                      h2: ({children}) => <h2 className="text-base font-bold mb-2 text-gray-900 dark:text-gray-100 break-words">{children}</h2>,
+                      h3: ({children}) => <h3 className="text-sm font-bold mb-1 text-gray-900 dark:text-gray-100 break-words">{children}</h3>,
                       blockquote: ({children}) => (
-                        <blockquote className="border-l-4 border-sakura-300 dark:border-sakura-600 pl-4 py-2 bg-sakura-50/50 dark:bg-sakura-900/20 rounded-r-lg mb-2">
+                        <blockquote className="border-l-4 border-sakura-300 dark:border-sakura-600 pl-4 py-2 bg-sakura-50/50 dark:bg-sakura-900/20 rounded-r-lg mb-2 break-words max-w-full overflow-hidden">
                           {children}
                         </blockquote>
                       ),
                       table: ({children}) => (
-                        <div className="overflow-x-auto mb-2">
+                        <div className="overflow-x-auto mb-2 max-w-full">
                           <table className="min-w-full border border-gray-200 dark:border-gray-700 rounded-lg">
                             {children}
                           </table>
                         </div>
                       ),
                       th: ({children}) => (
-                        <th className="px-3 py-2 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 text-left text-xs font-semibold">
+                        <th className="px-3 py-2 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 text-left text-xs font-semibold break-words">
                           {children}
                         </th>
                       ),
                       td: ({children}) => (
-                        <td className="px-3 py-2 border-b border-gray-200 dark:border-gray-700 text-sm">
+                        <td className="px-3 py-2 border-b border-gray-200 dark:border-gray-700 text-sm break-words">
                           {children}
                         </td>
+                      ),
+                      a: ({children, href}) => (
+                        <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:text-blue-600 underline break-all">
+                          {children}
+                        </a>
                       ),
                     }}
                   >
@@ -2172,12 +2360,12 @@ Please check your request and try again. Make sure the file exists and your inst
               
               {/* Show tool calls if present */}
               {message.tool_calls && message.tool_calls.length > 0 && (
-                <div className="mt-3 pt-3 border-t border-white/20 dark:border-gray-600/30">
+                <div className="mt-3 pt-3 border-t border-white/20 dark:border-gray-600/30 max-w-full overflow-hidden">
                   <div className="text-xs text-gray-600 dark:text-gray-400 mb-2 font-medium">
                     Tool calls:
                   </div>
                   {message.tool_calls.map((toolCall, index) => (
-                    <div key={index} className="text-xs font-mono glassmorphic-card border border-white/20 dark:border-gray-600/30 p-2 rounded-lg mb-2">
+                    <div key={index} className="text-xs font-mono glassmorphic-card border border-white/20 dark:border-gray-600/30 p-2 rounded-lg mb-2 overflow-x-auto max-w-full break-words">
                       {toolCall.function.name}({JSON.stringify(JSON.parse(toolCall.function.arguments), null, 2)})
                     </div>
                   ))}
@@ -2186,13 +2374,13 @@ Please check your request and try again. Make sure the file exists and your inst
               
               {/* Show created/edited files */}
               {message.files && message.files.length > 0 && (
-                <div className="mt-3 pt-3 border-t border-white/20 dark:border-gray-600/30">
+                <div className="mt-3 pt-3 border-t border-white/20 dark:border-gray-600/30 max-w-full overflow-hidden">
                   <div className="text-xs text-gray-600 dark:text-gray-400 mb-2 font-medium">
                     Files:
                   </div>
-                  <div className="flex flex-wrap gap-1">
+                  <div className="flex flex-wrap gap-1 max-w-full">
                     {message.files.map((file, index) => (
-                      <div key={index} className="text-xs bg-emerald-100 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-200 px-2 py-1 rounded-md font-medium">
+                      <div key={index} className="text-xs bg-emerald-100 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-200 px-2 py-1 rounded-md font-medium break-all">
                         {file}
                       </div>
                     ))}
@@ -2281,17 +2469,23 @@ Please check your request and try again. Make sure the file exists and your inst
             )}
           </div>
           <div className="flex flex-col gap-2">
-            <button
-              onClick={handleSendMessage}
-              disabled={!inputMessage.trim() || isLoading || !apiClient || !selectedModel}
-              className="p-4 rounded-xl bg-gradient-to-r from-sakura-500 to-pink-500 hover:from-sakura-600 hover:to-pink-600 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg hover:shadow-xl transform hover:scale-105 disabled:transform-none flex items-center justify-center"
-            >
-              {isLoading ? (
-                <Loader2 className="w-5 h-5 animate-spin" />
-              ) : (
+            {isLoading ? (
+              <button
+                onClick={handleStopGeneration}
+                className="p-4 rounded-xl bg-gradient-to-r from-red-500 to-orange-500 hover:from-red-600 hover:to-orange-600 text-white transition-all shadow-lg hover:shadow-xl transform hover:scale-105 flex items-center justify-center gap-2"
+                title="Stop generation"
+              >
+                <StopCircle className="w-5 h-5" />
+              </button>
+            ) : (
+              <button
+                onClick={handleSendMessage}
+                disabled={!inputMessage.trim() || !apiClient || !selectedModel}
+                className="p-4 rounded-xl bg-gradient-to-r from-sakura-500 to-pink-500 hover:from-sakura-600 hover:to-pink-600 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg hover:shadow-xl transform hover:scale-105 disabled:transform-none flex items-center justify-center"
+              >
                 <Send className="w-5 h-5" />
-              )}
-            </button>
+              </button>
+            )}
 
             {/* AI Precision Editor Button */}
             <button
