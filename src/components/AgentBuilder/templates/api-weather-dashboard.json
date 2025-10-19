@@ -8,8 +8,8 @@
   "author": "ClaraVerse",
   "downloads": 850,
   "rating": 4.6,
-    "flow": {
-    "id": "flow-1760369074665",
+  "flow": {
+    "id": "flow-1760869316155",
     "name": "Weather Dashboard API",
     "description": "Fetch and process weather data from API",
     "nodes": [
@@ -1426,18 +1426,18 @@
       "name": "Weather Dashboard API",
       "version": "1.0.0"
     },
-    "createdAt": "2025-10-13T15:25:23.705Z",
-    "updatedAt": "2025-10-13T16:27:25.981Z",
+    "createdAt": "2025-10-19T10:21:56.155Z",
+    "updatedAt": "2025-10-19T10:21:56.155Z",
     "version": "1.0.0"
   },
   "customNodes": [
     {
-      "id": "node-1760370465408-zc656cd66",
+      "id": "imported-ccdb838c-cc69-405b-8f89-fb20e9c9e90e",
       "type": "weather-astro-api-request",
       "name": "Weather Astro API Request",
       "description": "Fetches astronomical weather data (sunrise, sunset, moon phase, etc.) using longitude and latitude coordinates via the 7Timer API. Returns structured JSON response.",
-      "category": "custom",
-      "icon": "🌐",
+      "category": "imported",
+      "icon": "📦",
       "inputs": [
         {
           "id": "input_1760370444596_8azodxx4h",
@@ -1507,12 +1507,8 @@
       "executionCode": "async function execute(inputs, properties, context) {\n  const { longitude, latitude } = inputs;\n  const { unit, timezone_shift } = properties;\n\n  const url = `https://www.7timer.info/bin/astro.php?lon=${longitude}&lat=${latitude}&ac=0&unit=${unit}&output=json&tzshift=${timezone_shift}`;\n\n  try {\n    const response = await fetch(url);\n    if (!response.ok) {\n      throw new Error(`HTTP error! status: ${response.status}`);\n    }\n    const data = await response.json();\n\n    // Extract key fields\n    const sunrise = data.dataseries?.[0]?.sunrise || 'N/A';\n    const sunset = data.dataseries?.[0]?.sunset || 'N/A';\n    const moon_phase = data.dataseries?.[0]?.moonphase || 'N/A';\n\n    context.log('API Request Successful:', url);\n\n    return {\n      response: data,\n      sunrise: sunrise,\n      sunset: sunset,\n      moon_phase: moon_phase\n    };\n  } catch (error) {\n    context.log('Error fetching weather data:', error.message);\n    throw error;\n  }\n}",
       "metadata": {
         "tags": [
-          "weather",
-          "api",
-          "astronomy",
-          "geolocation",
-          "7timer",
-          "coordinates"
+          "imported",
+          "community"
         ],
         "documentation": "",
         "examples": []
@@ -1520,7 +1516,7 @@
     }
   ],
   "metadata": {
-    "exportedAt": "2025-10-13T16:40:28.405Z",
+    "exportedAt": "2025-10-19T10:22:06.657Z",
     "exportedBy": "Clara Agent Studio",
     "hasCustomNodes": true
   }

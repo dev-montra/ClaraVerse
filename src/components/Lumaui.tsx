@@ -46,6 +46,7 @@ const LumaUICore: React.FC = () => {
   const [scaffoldProgress, setScaffoldProgress] = useState<ScaffoldProgress | null>(null);
   const [wallpaperUrl, setWallpaperUrl] = useState<string | null>(null);
   const [projectViewMode, setProjectViewMode] = useState<'play' | 'edit'>('edit'); // Track if user wants play-only or full IDE
+  const [terminalOutput, setTerminalOutput] = useState<Array<{id: string; text: string; timestamp: Date}>>([]);
 
 
   // Refs
@@ -227,6 +228,22 @@ const LumaUICore: React.FC = () => {
         projectOutputBuffers.current.set(selectedProject.id, buffer);
       }
     }
+
+    // Also add to terminal output state for PreviewPane console
+    setTerminalOutput(prev => {
+      const newEntry = {
+        id: `terminal-${Date.now()}-${Math.random()}`,
+        text: data,
+        timestamp: new Date()
+      };
+
+      // Keep last 500 entries to prevent memory issues
+      const updated = [...prev, newEntry];
+      if (updated.length > 500) {
+        return updated.slice(-500);
+      }
+      return updated;
+    });
   };
 
   // Spawn and attach interactive shell to terminal
@@ -1606,6 +1623,8 @@ This is a browser security requirement for WebContainer.`;
               onClearChat={handleClearChat}
               onResetProject={handleResetProject}
               viewMode={projectViewMode}
+              terminalOutput={terminalOutput}
+              onClearTerminal={() => setTerminalOutput([])}
             />
           </section>
         </main>

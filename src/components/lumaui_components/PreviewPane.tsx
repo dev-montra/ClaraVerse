@@ -6,24 +6,20 @@ interface PreviewPaneProps {
   project: Project;
   isStarting: boolean;
   onStartProject: (project: Project) => void;
+  terminalOutput?: Array<{id: string; text: string; timestamp: Date}>;
+  onClearTerminal?: () => void;
 }
 
-interface ConsoleMessage {
-  id: string;
-  type: 'log' | 'error' | 'warn' | 'info' | 'debug' | 'table' | 'group' | 'groupEnd' | 'clear' | 'command' | 'result';
-  content: string;
-  timestamp: Date;
-  source?: string;
-}
-
-const PreviewPane: React.FC<PreviewPaneProps> = ({ project, isStarting, onStartProject }) => {
+const PreviewPane: React.FC<PreviewPaneProps> = ({
+  project,
+  isStarting,
+  onStartProject,
+  terminalOutput = [],
+  onClearTerminal
+}) => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showConsole, setShowConsole] = useState(false);
   const [consoleHeight, setConsoleHeight] = useState(300);
-  const [consoleMessages, setConsoleMessages] = useState<ConsoleMessage[]>([]);
-  const [commandInput, setCommandInput] = useState('');
-  const [commandHistory, setCommandHistory] = useState<string[]>([]);
-  const [historyIndex, setHistoryIndex] = useState(-1);
   const [hasAutoStarted, setHasAutoStarted] = useState(false);
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -45,67 +41,26 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ project, isStarting, onStartP
     }
   }, [project.status, isStarting, hasAutoStarted]);
 
-  // Auto-scroll console to bottom
+  // Auto-scroll console to bottom when new output arrives
   useEffect(() => {
-    consoleEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [consoleMessages]);
-
-  // Listen for console messages from iframe
-  useEffect(() => {
-    const handleMessage = (event: MessageEvent) => {
-      if (event.data.type === 'console-message') {
-        const { level, args, timestamp } = event.data;
-        
-        // Handle special console commands
-        if (level === 'clear') {
-          setConsoleMessages([]);
-          addConsoleMessage('clear', 'Console was cleared', 'preview');
-        } else {
-          addConsoleMessage(level, args.join(' '), 'preview');
-        }
-      } else if (event.data.type === 'preview-error') {
-        const { error } = event.data;
-        addConsoleMessage('error', `${error.message}${error.line ? ` (Line: ${error.line})` : ''}`, 'preview');
-      } else if (event.data.type === 'command-result') {
-        const { result, error } = event.data;
-        if (error) {
-          addConsoleMessage('error', `Error: ${error}`, 'system');
-        } else {
-          // Format the result better
-          let formattedResult = result;
-          if (typeof result === 'object' && result !== null) {
-            try {
-              formattedResult = JSON.stringify(result, null, 2);
-            } catch (e) {
-              formattedResult = String(result);
-            }
-          } else if (result === undefined) {
-            formattedResult = 'undefined';
-          } else if (result === null) {
-            formattedResult = 'null';
-          }
-          addConsoleMessage('result', String(formattedResult), 'system');
-        }
-      }
-    };
-
-    window.addEventListener('message', handleMessage);
-    return () => window.removeEventListener('message', handleMessage);
-  }, []);
+    if (showConsole) {
+      consoleEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [terminalOutput, showConsole]);
 
   // Console resize functionality
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isResizing.current) return;
-      
+
       const container = resizeRef.current?.parentElement;
       if (!container) return;
-      
+
       const containerRect = container.getBoundingClientRect();
       const newHeight = containerRect.bottom - e.clientY;
       const minHeight = 150;
       const maxHeight = containerRect.height * 0.7;
-      
+
       setConsoleHeight(Math.max(minHeight, Math.min(maxHeight, newHeight)));
     };
 
@@ -127,9 +82,7 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ project, isStarting, onStartP
   const handleRefresh = () => {
     if (iframeRef.current) {
       setIsRefreshing(true);
-      clearConsole();
-      addConsoleMessage('info', '🔄 Refreshing preview...', 'system');
-      
+
       // Add a small delay to show the refresh animation
       setTimeout(() => {
         if (iframeRef.current) {
@@ -140,74 +93,6 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ project, isStarting, onStartP
     }
   };
 
-  const addConsoleMessage = (type: ConsoleMessage['type'], content: string, source: string = 'user') => {
-    const message: ConsoleMessage = {
-      id: `msg-${Date.now()}-${Math.random()}`,
-      type,
-      content,
-      timestamp: new Date(),
-      source
-    };
-    setConsoleMessages(prev => [...prev, message]);
-  };
-
-  const clearConsole = () => {
-    setConsoleMessages([]);
-    addConsoleMessage('info', 'Console cleared', 'system');
-  };
-
-  const executeCommand = () => {
-    if (!commandInput.trim()) return;
-
-    // Add command to history
-    setCommandHistory(prev => [...prev, commandInput]);
-    setHistoryIndex(-1);
-
-    // Add command to console
-    addConsoleMessage('command', `> ${commandInput}`, 'user');
-
-    // Send command to iframe for execution
-    if (iframeRef.current?.contentWindow) {
-      try {
-        iframeRef.current.contentWindow.postMessage({
-          type: 'execute-command',
-          command: commandInput
-        }, '*');
-      } catch (error) {
-        addConsoleMessage('error', `Failed to send command: ${error}`, 'system');
-      }
-    } else {
-      addConsoleMessage('error', 'Preview not available for command execution', 'system');
-    }
-
-    setCommandInput('');
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      executeCommand();
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      if (commandHistory.length > 0) {
-        const newIndex = historyIndex === -1 ? commandHistory.length - 1 : Math.max(0, historyIndex - 1);
-        setHistoryIndex(newIndex);
-        setCommandInput(commandHistory[newIndex]);
-      }
-    } else if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      if (historyIndex !== -1) {
-        const newIndex = historyIndex + 1;
-        if (newIndex >= commandHistory.length) {
-          setHistoryIndex(-1);
-          setCommandInput('');
-        } else {
-          setHistoryIndex(newIndex);
-          setCommandInput(commandHistory[newIndex]);
-        }
-      }
-    }
-  };
-
   const handleResizeStart = (e: React.MouseEvent) => {
     e.preventDefault();
     isResizing.current = true;
@@ -215,34 +100,49 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ project, isStarting, onStartP
     document.body.style.userSelect = 'none';
   };
 
-  const getMessageIcon = (type: ConsoleMessage['type']) => {
-    switch (type) {
-      case 'error': return '❌';
-      case 'warn': return '⚠️';
-      case 'info': return 'ℹ️';
-      case 'debug': return '🐛';
-      case 'table': return '📊';
-      case 'group': return '📁';
-      case 'groupEnd': return '📂';
-      case 'clear': return '🧹';
-      case 'command': return '>';
-      case 'result': return '←';
-      default: return '📝';
-    }
+  // Parse ANSI color codes from terminal output
+  const parseAnsiColors = (text: string) => {
+    // Remove all ANSI escape sequences
+    return text
+      .replace(/\x1b\[[0-9;]*m/g, '') // Remove ANSI color codes
+      .replace(/\x1b\[K/g, '') // Remove clear line codes
+      .replace(/\x1b\[[0-9;]*[A-Za-z]/g, '') // Remove cursor movement codes
+      .replace(/\[1G/g, '') // Remove cursor positioning
+      .replace(/\[0J/g, '') // Remove clear screen
+      .replace(/\[0K/g, '') // Remove clear to end of line
+      .trim(); // Remove leading/trailing whitespace
   };
 
-  const getMessageColor = (type: ConsoleMessage['type']) => {
-    switch (type) {
+  // Check if a line should be displayed (skip empty/control-only lines)
+  const shouldDisplayLine = (text: string): boolean => {
+    const cleaned = parseAnsiColors(text);
+    // Skip if empty or only whitespace
+    if (!cleaned || cleaned.length === 0) return false;
+    // Skip if only contains spinner characters
+    if (/^[\|\/\-\\]+$/.test(cleaned)) return false;
+    return true;
+  };
+
+  // Determine log level from terminal output (heuristic)
+  const getLogLevel = (text: string): 'info' | 'error' | 'warn' | 'success' => {
+    const lowerText = text.toLowerCase();
+    if (lowerText.includes('error') || lowerText.includes('❌') || lowerText.includes('failed')) {
+      return 'error';
+    }
+    if (lowerText.includes('warn') || lowerText.includes('⚠️') || lowerText.includes('warning')) {
+      return 'warn';
+    }
+    if (lowerText.includes('✅') || lowerText.includes('success') || lowerText.includes('✓')) {
+      return 'success';
+    }
+    return 'info';
+  };
+
+  const getLogLevelColor = (level: string) => {
+    switch (level) {
       case 'error': return 'text-red-400';
       case 'warn': return 'text-yellow-400';
-      case 'info': return 'text-blue-400';
-      case 'debug': return 'text-gray-400';
-      case 'table': return 'text-cyan-400';
-      case 'group': return 'text-indigo-400';
-      case 'groupEnd': return 'text-indigo-400';
-      case 'clear': return 'text-gray-500';
-      case 'command': return 'text-green-400';
-      case 'result': return 'text-purple-400';
+      case 'success': return 'text-green-400';
       default: return 'text-gray-300';
     }
   };
@@ -280,32 +180,18 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ project, isStarting, onStartP
               </p>
             </div>
           </div>
-          
+
           <div className="flex items-center gap-2">
             {project.status === 'running' && project.previewUrl && (
               <>
                 <button
-                  onClick={() => {
-                    const wasHidden = !showConsole;
-                    setShowConsole(!showConsole);
-                    
-                    // Add welcome message when console is first opened
-                    if (wasHidden && consoleMessages.length === 0) {
-                      setTimeout(() => {
-                        addConsoleMessage('info', '🎉 Console ready! Try executing JavaScript commands like:', 'system');
-                        addConsoleMessage('info', '• console.log("Hello World!")', 'system');
-                        addConsoleMessage('info', '• document.title', 'system');
-                        addConsoleMessage('info', '• window.location.href', 'system');
-                        addConsoleMessage('info', '• Math.random()', 'system');
-                      }, 100);
-                    }
-                  }}
+                  onClick={() => setShowConsole(!showConsole)}
                   className={`p-2 glassmorphic-card border border-white/30 dark:border-gray-700/50 rounded-lg transition-all duration-200 hover:shadow-md transform hover:scale-105 ${
-                    showConsole 
-                      ? 'text-blue-500 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20' 
+                    showConsole
+                      ? 'text-blue-500 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20'
                       : 'text-gray-600 dark:text-gray-400 hover:text-sakura-500 dark:hover:text-sakura-400'
                   }`}
-                  title="Toggle console"
+                  title="Toggle terminal output"
                 >
                   <Terminal className="w-4 h-4" />
                 </button>
@@ -329,13 +215,13 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ project, isStarting, onStartP
           </div>
         </div>
       </div>
-      
+
       {/* Preview Content */}
       <div className="flex-1 relative overflow-hidden bg-white dark:bg-gray-900 flex flex-col">
         {project.status === 'running' && project.previewUrl ? (
           <>
             {/* Preview iframe */}
-            <div 
+            <div
               className="flex-1 relative overflow-hidden"
               style={{ height: showConsole ? `calc(100% - ${consoleHeight}px)` : '100%' }}
             >
@@ -346,7 +232,6 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ project, isStarting, onStartP
                 title="Project Preview"
                 onLoad={() => {
                   setIsRefreshing(false);
-                  addConsoleMessage('info', '✅ Preview loaded successfully', 'system');
                 }}
               />
               {isRefreshing && (
@@ -361,7 +246,7 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ project, isStarting, onStartP
               )}
             </div>
 
-            {/* Console Panel */}
+            {/* Terminal Output Panel */}
             {showConsole && (
               <>
                 {/* Resize Handle */}
@@ -373,72 +258,72 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ project, isStarting, onStartP
                   <div className="w-8 h-0.5 bg-gray-400 dark:bg-gray-500 group-hover:bg-blue-500 dark:group-hover:bg-blue-400 rounded transition-colors"></div>
                 </div>
 
-                {/* Console Content */}
-                <div 
+                {/* Terminal Content */}
+                <div
                   className="bg-gray-900 text-gray-100 flex flex-col"
                   style={{ height: `${consoleHeight}px` }}
                 >
-                  {/* Console Header */}
+                  {/* Terminal Header */}
                   <div className="flex items-center justify-between px-4 py-2 bg-gray-800 border-b border-gray-700">
                     <div className="flex items-center gap-2">
                       <Terminal className="w-4 h-4 text-blue-400" />
-                      <span className="text-sm font-medium">Console</span>
-                      <span className="text-xs text-gray-400">({consoleMessages.length} messages)</span>
+                      <span className="text-sm font-medium">Build & Server Output</span>
+                      <span className="text-xs text-gray-400">
+                        ({terminalOutput.filter(o => shouldDisplayLine(o.text)).length} lines)
+                      </span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <button
-                        onClick={clearConsole}
-                        className="p-1 text-gray-400 hover:text-white transition-colors"
-                        title="Clear console"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      {onClearTerminal && (
+                        <button
+                          onClick={onClearTerminal}
+                          className="p-1 text-gray-400 hover:text-white transition-colors"
+                          title="Clear output"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
                       <button
                         onClick={() => setShowConsole(false)}
                         className="p-1 text-gray-400 hover:text-white transition-colors"
-                        title="Hide console"
+                        title="Hide output"
                       >
                         <ChevronDown className="w-4 h-4" />
                       </button>
                     </div>
                   </div>
 
-                  {/* Console Messages */}
-                  <div className="flex-1 overflow-y-auto p-2 font-mono text-sm">
-                    {consoleMessages.map((message) => (
-                      <div key={message.id} className="flex items-start gap-2 py-1 hover:bg-gray-800/50 px-2 rounded">
-                        <span className="text-xs text-gray-500 mt-0.5 min-w-[60px]">
-                          {message.timestamp.toLocaleTimeString().slice(0, 8)}
-                        </span>
-                        <span className="mt-0.5">{getMessageIcon(message.type)}</span>
-                        <span className={`flex-1 ${getMessageColor(message.type)} break-all`}>
-                          {message.content}
-                        </span>
+                  {/* Terminal Output Messages */}
+                  <div className="flex-1 overflow-y-auto p-2 font-mono text-sm bg-black">
+                    {terminalOutput.length === 0 ? (
+                      <div className="text-gray-500 text-center py-4">
+                        <Terminal className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                        <p>No output yet. Start a project to see build and server logs.</p>
                       </div>
-                    ))}
+                    ) : (
+                      terminalOutput
+                        .filter((output) => shouldDisplayLine(output.text))
+                        .map((output) => {
+                          const cleanText = parseAnsiColors(output.text);
+                          const level = getLogLevel(cleanText);
+                          const color = getLogLevelColor(level);
+
+                          return (
+                            <div key={output.id} className="py-0.5 hover:bg-gray-800/30">
+                              <pre className={`${color} whitespace-pre-wrap break-all font-mono text-xs leading-relaxed`}>
+                                {cleanText}
+                              </pre>
+                            </div>
+                          );
+                        })
+                    )}
                     <div ref={consoleEndRef} />
                   </div>
 
-                  {/* Command Input */}
-                  <div className="border-t border-gray-700 p-2 bg-gray-800">
-                    <div className="flex items-center gap-2">
-                                             <span className="text-green-400 font-mono">{'>'}</span>
-                      <input
-                        type="text"
-                        value={commandInput}
-                        onChange={(e) => setCommandInput(e.target.value)}
-                        onKeyDown={handleKeyDown}
-                        placeholder="Try: console.log('Hello!'), document.title, window.location.href..."
-                        className="flex-1 bg-transparent text-gray-100 font-mono text-sm outline-none placeholder-gray-500"
-                      />
-                      <button
-                        onClick={executeCommand}
-                        disabled={!commandInput.trim()}
-                        className="p-1 text-gray-400 hover:text-green-400 disabled:opacity-50 transition-colors"
-                        title="Execute command"
-                      >
-                        <Play className="w-4 h-4" />
-                      </button>
+                  {/* Info Footer */}
+                  <div className="border-t border-gray-700 px-4 py-2 bg-gray-800 text-xs text-gray-400">
+                    <div className="flex items-center justify-between">
+                      <span>📡 Showing WebContainer build & server output</span>
+                      <span>{terminalOutput.filter(o => shouldDisplayLine(o.text)).length} lines displayed</span>
                     </div>
                   </div>
                 </div>
@@ -493,7 +378,7 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ project, isStarting, onStartP
                 {project.status === 'error' ? 'Preview Error' : 'Getting Ready...'}
               </h3>
               <p className="text-sm text-gray-600 dark:text-gray-300 leading-relaxed">
-                {project.status === 'error' 
+                {project.status === 'error'
                   ? 'There was an issue starting the preview. Please check the terminal for more details.'
                   : 'Your project is being prepared for preview. This may take a moment.'
                 }
@@ -506,4 +391,4 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({ project, isStarting, onStartP
   );
 };
 
-export default PreviewPane; 
+export default PreviewPane;

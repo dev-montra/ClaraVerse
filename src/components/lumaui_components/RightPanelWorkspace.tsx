@@ -49,6 +49,10 @@ interface RightPanelWorkspaceProps {
 
   // View mode (play = preview only, edit = full IDE)
   viewMode?: 'play' | 'edit';
+
+  // Terminal output for preview console
+  terminalOutput?: Array<{id: string; text: string; timestamp: Date}>;
+  onClearTerminal?: () => void;
 }
 
 const RightPanelWorkspace: React.FC<RightPanelWorkspaceProps> = ({
@@ -75,7 +79,9 @@ const RightPanelWorkspace: React.FC<RightPanelWorkspaceProps> = ({
   onStartProject,
   onClearChat,
   onResetProject,
-  viewMode = 'edit'
+  viewMode = 'edit',
+  terminalOutput = [],
+  onClearTerminal
 }) => {
   return (
     <div className="h-full w-full flex flex-col overflow-hidden">
@@ -183,6 +189,8 @@ const RightPanelWorkspace: React.FC<RightPanelWorkspaceProps> = ({
               project={project}
               isStarting={isStarting}
               onStartProject={onStartProject}
+              terminalOutput={terminalOutput}
+              onClearTerminal={onClearTerminal}
             />
           </div>
         )}
