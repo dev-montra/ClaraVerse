@@ -1121,6 +1121,48 @@ export interface ClaraAutonomousAgentConfig {
 }
 
 // ================================
+// PERSONA TYPES
+// ================================
+
+/**
+ * Represents a custom persona for Clara
+ * Personas allow users to customize Clara's system prompt and behavior
+ */
+export interface ClaraPersona {
+  /** Unique identifier for the persona */
+  id: string;
+
+  /** Display name for the persona */
+  name: string;
+
+  /** Optional emoji icon for the persona */
+  emoji?: string;
+
+  /** Custom system prompt for this persona */
+  systemPrompt: string;
+
+  /** Whether to enable memory enhancement for this persona */
+  enableMemory: boolean;
+
+  /** Timestamp when the persona was created */
+  createdAt: number;
+
+  /** Timestamp when the persona was last updated */
+  updatedAt: number;
+}
+
+/**
+ * Storage structure for personas in localStorage
+ */
+export interface PersonaStorage {
+  /** List of all saved personas */
+  personas: ClaraPersona[];
+
+  /** ID of the currently active persona */
+  activePersonaId: string;
+}
+
+// ================================
 // EXPORTS
 // ================================
 

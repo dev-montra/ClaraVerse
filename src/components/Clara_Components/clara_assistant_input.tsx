@@ -54,11 +54,12 @@ import {
   RefreshCw,
   MessageSquare,
   MoreHorizontal,
-  BookOpen
+  BookOpen,
+  UserCircle2
 } from 'lucide-react';
 
 // Import types
-import { 
+import {
   ClaraInputProps,
   ClaraFileAttachment,
   ClaraFileType,
@@ -66,7 +67,8 @@ import {
   ClaraModel,
   ClaraAIConfig,
   ClaraMCPServer,
-  ClaraMessage
+  ClaraMessage,
+  ClaraPersona
 } from '../../types/clara_assistant_types';
 
 // Import PDF.js for PDF processing
@@ -96,6 +98,8 @@ import { claraApiService } from '../../services/claraApiService';
 // Import notebook service
 import { claraNotebookService } from '../../services/claraNotebookService';
 
+// Import persona service
+import { personaStorageService } from '../../services/personaStorageService';
 
 // Import notification service
 import { addErrorNotification, addInfoNotification } from '../../services/notificationService';
@@ -105,6 +109,10 @@ import { claraMemoryIntegration } from '../../services/ClaraMemoryIntegration';
 
 // Import image generation widget
 import ChatImageGenWidget from './ChatImageGenWidget';
+
+// Import persona components
+import PersonaDropdown from './PersonaDropdown';
+import PersonaModal from './PersonaModal';
 
 // Import command line parser types and utilities
 import { 
@@ -3755,6 +3763,15 @@ const ClaraAssistantInput: React.FC<ClaraInputProps> = ({
   const [isLoadingNotebooks, setIsLoadingNotebooks] = useState(false);
   const [isQueryingNotebook, setIsQueryingNotebook] = useState(false);
 
+  // Persona state
+  const [personas, setPersonas] = useState<ClaraPersona[]>([]);
+  const [activePersonaId, setActivePersonaId] = useState<string>('default');
+  const [showPersonaDropdown, setShowPersonaDropdown] = useState(false);
+  const [showPersonaModal, setShowPersonaModal] = useState(false);
+  const [personaModalMode, setPersonaModalMode] = useState<'create' | 'edit'>('create');
+  const [editingPersona, setEditingPersona] = useState<ClaraPersona | undefined>(undefined);
+  const personaButtonRef = useRef<HTMLButtonElement>(null);
+
   // Progress tracking state for context loading feedback
   const [progressState, setProgressState] = useState<{
     isActive: boolean;
@@ -3971,6 +3988,53 @@ const ClaraAssistantInput: React.FC<ClaraInputProps> = ({
       setProviderHealthStatus('unknown');
     }
   }, [sessionConfig?.aiConfig?.provider]);
+
+  // Load personas on mount
+  useEffect(() => {
+    const storage = personaStorageService.loadPersonas();
+    setPersonas(storage.personas);
+    setActivePersonaId(storage.activePersonaId);
+  }, []);
+
+  // Persona handlers
+  const handlePersonaChange = useCallback((personaId: string) => {
+    personaStorageService.setActivePersona(personaId);
+    setActivePersonaId(personaId);
+    addInfoNotification('Persona Changed', `Switched to ${personaStorageService.getPersonaById(personaId)?.name || 'Unknown'} persona`);
+  }, []);
+
+  const handlePersonaEdit = useCallback((persona: ClaraPersona) => {
+    setEditingPersona(persona);
+    setPersonaModalMode('edit');
+    setShowPersonaModal(true);
+  }, []);
+
+  const handlePersonaDelete = useCallback((personaId: string) => {
+    try {
+      personaStorageService.deletePersona(personaId);
+      const storage = personaStorageService.loadPersonas();
+      setPersonas(storage.personas);
+      setActivePersonaId(storage.activePersonaId);
+      addInfoNotification('Persona Deleted', 'Persona has been deleted successfully');
+    } catch (error) {
+      addErrorNotification('Delete Failed', error instanceof Error ? error.message : 'Failed to delete persona');
+    }
+  }, []);
+
+  const handleCreatePersona = useCallback(() => {
+    setEditingPersona(undefined);
+    setPersonaModalMode('create');
+    setShowPersonaModal(true);
+  }, []);
+
+  const handlePersonaSave = useCallback((persona: ClaraPersona) => {
+    const storage = personaStorageService.loadPersonas();
+    setPersonas(storage.personas);
+    // Set the newly created/edited persona as active
+    setActivePersonaId(persona.id);
+    personaStorageService.setActivePersona(persona.id);
+    addInfoNotification('Persona Saved', `${personaModalMode === 'create' ? 'Created' : 'Updated'} persona: ${persona.name}`);
+  }, [personaModalMode]);
 
   // Sync streaming mode state with session config changes
   useEffect(() => {
@@ -7409,6 +7473,44 @@ You can right-click on the image to save it or use it in your projects.`;
                       )}
                     </div>
 
+                    {/* Persona Selector */}
+                    <div className="relative">
+                      <Tooltip content="Personas" position="top">
+                        <button
+                          ref={personaButtonRef}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setShowPersonaDropdown(!showPersonaDropdown);
+                          }}
+                          className={`relative p-2 rounded-lg transition-colors ${
+                            showPersonaDropdown
+                              ? 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
+                              : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-400'
+                          }`}
+                        >
+                          <UserCircle2 className="w-4 h-4" />
+                          {/* Emoji badge if persona has one */}
+                          {personas.find(p => p.id === activePersonaId)?.emoji && (
+                            <span className="absolute -top-1 -right-1 text-xs">
+                              {personas.find(p => p.id === activePersonaId)?.emoji}
+                            </span>
+                          )}
+                        </button>
+                      </Tooltip>
+
+                      <PersonaDropdown
+                        show={showPersonaDropdown}
+                        onClose={() => setShowPersonaDropdown(false)}
+                        personas={personas}
+                        activePersonaId={activePersonaId}
+                        onPersonaSelect={handlePersonaChange}
+                        onPersonaEdit={handlePersonaEdit}
+                        onPersonaDelete={handlePersonaDelete}
+                        onCreateNew={handleCreatePersona}
+                        triggerRef={personaButtonRef}
+                      />
+                    </div>
+
                     {/* More Options - Overflow Menu */}
                     <div className="relative">
                       <Tooltip content="More options" position="top">
@@ -7420,14 +7522,14 @@ You can right-click on the image to save it or use it in your projects.`;
                           }}
                           className={`p-2 rounded-lg transition-colors ${
                             showOverflowMenu
-                              ? 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300' 
+                              ? 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
                               : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-400'
                           }`}
                         >
                           <MoreHorizontal className="w-4 h-4" />
                         </button>
                       </Tooltip>
-                      
+
                       <OverflowMenu
                         show={showOverflowMenu}
                         onClose={() => setShowOverflowMenu(false)}
@@ -7589,6 +7691,15 @@ You can right-click on the image to save it or use it in your projects.`;
         onImageGenerated={handleImageGenerated}
         initialPrompt={input}
         availableModels={availableImageModels}
+      />
+
+      {/* Persona Modal */}
+      <PersonaModal
+        isOpen={showPersonaModal}
+        mode={personaModalMode}
+        persona={editingPersona}
+        onSave={handlePersonaSave}
+        onClose={() => setShowPersonaModal(false)}
       />
     </div>
   );

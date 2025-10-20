@@ -26,6 +26,7 @@ import { claraMCPService } from '../services/claraMCPService';
 import { claraMemoryService } from '../services/claraMemoryService';
 import { addCompletionNotification, addBackgroundCompletionNotification, addErrorNotification, addInfoNotification, notificationService, clearErrorNotifications } from '../services/notificationService';
 import { claraBackgroundService } from '../services/claraBackgroundService';
+import { personaStorageService } from '../services/personaStorageService';
 
 // Import clear data utility
 import '../utils/clearClaraData';
@@ -1826,14 +1827,29 @@ Now tell me what is the result "`;
 
       console.log(`📚 Prepared ${conversationHistory.length} properly formatted history messages for AI service`);
 
-      // Get system prompt (provider-specific or fallback to default) and enhance with memory data
+      // Get active persona and use its system prompt
+      const activePersona = personaStorageService.getActivePersona();
       const currentProvider = providers.find(p => p.id === enforcedConfig.provider);
-      let baseSystemPrompt = enforcedConfig.systemPrompt || 
+
+      // Priority order: 1) Active persona prompt, 2) Session config prompt, 3) Default prompt
+      let baseSystemPrompt: string;
+      let shouldEnhanceWithMemory = true;
+
+      if (activePersona && activePersona.id !== 'default') {
+        // Use custom persona prompt
+        baseSystemPrompt = activePersona.systemPrompt;
+        shouldEnhanceWithMemory = activePersona.enableMemory;
+        console.log(`🎭 Using persona "${activePersona.name}" with memory ${activePersona.enableMemory ? 'enabled' : 'disabled'}`);
+      } else {
+        // Use session config or default prompt
+        baseSystemPrompt = enforcedConfig.systemPrompt ||
                           (currentProvider ? getDefaultSystemPrompt(currentProvider, enforcedConfig.artifacts, userInfo || undefined) : 'You are Clara, a helpful AI assistant.');
-      
+        shouldEnhanceWithMemory = enforcedConfig.features?.enableMemory !== false;
+      }
+
       // Enhance system prompt with memory data using new integration service (only if memory is enabled)
       let systemPrompt = baseSystemPrompt;
-      if (enforcedConfig.features?.enableMemory !== false) { // Default to true if not specified
+      if (shouldEnhanceWithMemory) {
         try {
           systemPrompt = await claraMemoryIntegration.enhanceSystemPromptWithMemory(baseSystemPrompt, userInfo || undefined);
           console.log('🧠 System prompt enhanced with user memory data via integration service');
@@ -1842,7 +1858,7 @@ Now tell me what is the result "`;
           // Continue with base system prompt
         }
       } else {
-        console.log('🧠 Memory enhancement disabled by user setting - using base system prompt only');
+        console.log('🧠 Memory enhancement disabled by persona/user setting - using base system prompt only');
       }
       
       // Create enhanced streaming callback that updates both message content and status panel
