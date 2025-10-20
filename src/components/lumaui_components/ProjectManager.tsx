@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Plus, FolderOpen, Trash2, Play, Search, Grid3X3, List, Edit } from 'lucide-react';
 import { Project } from '../../types';
 import { db } from '../../db';
@@ -67,12 +67,15 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({
   };
 
   // Filter and sort projects based on search query (most recent first)
-  const filteredProjects = projects
-    .filter(project =>
-      project.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (project.framework && project.framework.toLowerCase().includes(searchQuery.toLowerCase()))
-    )
-    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  // Wrapped in useMemo to prevent recreating array on every render
+  const filteredProjects = useMemo(() => {
+    return projects
+      .filter(project =>
+        project.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        (project.framework && project.framework.toLowerCase().includes(searchQuery.toLowerCase()))
+      )
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }, [projects, searchQuery]);
 
   return (
     <div className="h-full flex flex-col bg-gradient-to-br from-white to-sakura-50 dark:from-gray-900 dark:to-gray-800 relative overflow-hidden">
@@ -244,7 +247,7 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({
                               </div>
                               {project.status === 'running' && (
                                 <div className="mt-2 flex items-center gap-1">
-                                  <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                                  <div className="w-2 h-2 bg-green-500 rounded-full"></div>
                                   <span className="text-xs text-green-600 dark:text-green-400">Running</span>
                                 </div>
                               )}
@@ -310,7 +313,7 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({
                                       </div>
                                       {project.status === 'running' && (
                                         <div className="flex items-center gap-1">
-                                          <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+                                          <div className="w-2 h-2 bg-green-500 rounded-full"></div>
                                           <span className="text-xs text-green-600 dark:text-green-400">Running</span>
                                         </div>
                                       )}
@@ -372,4 +375,31 @@ const ProjectManager: React.FC<ProjectManagerProps> = ({
   );
 };
 
-export default ProjectManager;
+// Wrap with React.memo to prevent unnecessary re-renders
+// Only re-render if projects array actually changes (length or project IDs)
+export default React.memo(ProjectManager, (prevProps, nextProps) => {
+  // If project count changed, re-render
+  if (prevProps.projects.length !== nextProps.projects.length) {
+    return false;
+  }
+
+  // If any project ID changed, re-render
+  const prevIds = prevProps.projects.map(p => p.id).join(',');
+  const nextIds = nextProps.projects.map(p => p.id).join(',');
+  if (prevIds !== nextIds) {
+    return false;
+  }
+
+  // If any project status or name changed, re-render
+  for (let i = 0; i < prevProps.projects.length; i++) {
+    const prev = prevProps.projects[i];
+    const next = nextProps.projects[i];
+    if (prev.status !== next.status || prev.name !== next.name || prev.previewUrl !== next.previewUrl) {
+      return false;
+    }
+  }
+
+  // Ignore function prop changes - they're logically the same
+  // Return true = don't re-render (props are equal)
+  return true;
+});

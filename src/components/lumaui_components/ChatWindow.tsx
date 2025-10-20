@@ -2628,4 +2628,5 @@ Please check your request and try again. Make sure the file exists and your inst
   );
 };
 
-export default ChatWindow; 
+// Optimize re-renders with React.memo for better battery efficiency
+export default React.memo(ChatWindow); 

@@ -561,7 +561,7 @@ This is a browser security requirement for WebContainer.`;
     }
   };
 
-  const handleProjectSelect = async (project: Project, viewMode: 'play' | 'edit' = 'edit') => {
+  const handleProjectSelect = useCallback(async (project: Project, viewMode: 'play' | 'edit' = 'edit') => {
     // Hide manager page and close modal
     setShowManagerPage(false);
     setIsProjectSelectionModalOpen(false);
@@ -659,9 +659,9 @@ This is a browser security requirement for WebContainer.`;
 
     // Now switch to preview mode for auto-start
     setRightPanelMode('preview');
-  };
+  }, [writeToTerminal, loadProjectFilesFromDB]); // refreshFileTree removed - defined later in file
 
-  const handleDeleteProject = async (project: Project) => {
+  const handleDeleteProject = useCallback(async (project: Project) => {
     try {
       writeToTerminal(`\x1b[33m🗑️ Deleting project: ${project.name}\x1b[0m\n`);
       
@@ -726,7 +726,15 @@ This is a browser security requirement for WebContainer.`;
       writeToTerminal(`\x1b[31m❌ Failed to delete project: ${error}\x1b[0m\n`);
       throw error; // Re-throw so the modal can handle the error
     }
-  };
+  }, [selectedProject, webContainer, writeToTerminal, deleteProjectFromDB]);
+
+  const handleCreateNewProject = useCallback(() => {
+    setIsCreateModalOpen(true);
+  }, []);
+
+  const handleCloseCreateModal = useCallback(() => {
+    setIsCreateModalOpen(false);
+  }, []);
 
   const startProject = async (project: Project, projectFiles?: FileNode[]) => {
     return startProjectWithFiles(project, projectFiles || files);
@@ -1143,15 +1151,15 @@ This is a browser security requirement for WebContainer.`;
     }, 1000); // 1 second debounce
   }, [selectedProject, saveProjectToDB, writeToTerminal]);
 
-  // File handlers
-  const handleFileSelect = (path: string, content: string) => {
+  // File handlers - wrapped with useCallback for performance
+  const handleFileSelect = useCallback((path: string, content: string) => {
     setSelectedFile(path);
     setSelectedFileContent(content);
-  };
+  }, []);
 
-  const handleFileContentChange = async (content: string) => {
+  const handleFileContentChange = useCallback(async (content: string) => {
     setSelectedFileContent(content);
-    
+
     // Update WebContainer immediately
     if (webContainer && selectedFile) {
       try {
@@ -1160,7 +1168,7 @@ This is a browser security requirement for WebContainer.`;
         console.warn('Failed to write to WebContainer:', error);
       }
     }
-    
+
     // Update local state
     const updateFileContent = (nodes: FileNode[]): FileNode[] => {
       return nodes.map(node => {
@@ -1181,7 +1189,7 @@ This is a browser security requirement for WebContainer.`;
     if (selectedFile) {
       debouncedSave(content, selectedFile, updatedFiles);
     }
-  };
+  }, [webContainer, selectedFile, files, debouncedSave]);
 
   const handleToggleFolder = (path: string) => {
     setExpandedFolders(prev => {
@@ -1503,18 +1511,18 @@ This is a browser security requirement for WebContainer.`;
     }
   };
 
-  // Clear chat handler
-  const handleClearChat = () => {
+  // Clear chat handler - wrapped with useCallback for performance
+  const handleClearChat = useCallback(() => {
     if (selectedProject) {
       ChatPersistence.deleteChatData(selectedProject.id);
       writeToTerminal('\x1b[32m✅ Chat history cleared\x1b[0m\n');
       // Reload the page to reset chat UI
       window.location.reload();
     }
-  };
+  }, [selectedProject, writeToTerminal]);
 
   // Reset project handler
-  const handleResetProject = async () => {
+  const handleResetProject = useCallback(async () => {
     if (selectedProject) {
       try {
         writeToTerminal('\n\x1b[33m🔄 Resetting project...\x1b[0m\n');
@@ -1531,7 +1539,7 @@ This is a browser security requirement for WebContainer.`;
         writeToTerminal('\x1b[31m❌ Failed to reset project. Please try refreshing the page.\x1b[0m\n');
       }
     }
-  };
+  }, [selectedProject, webContainer, writeToTerminal]);
 
   // Create LumaTools instance for AI operations (after all handlers are defined)
   const lumaTools = useMemo(() => {
@@ -1556,13 +1564,13 @@ This is a browser security requirement for WebContainer.`;
           projects={projects}
           onSelectProject={handleProjectSelect}
           onDeleteProject={handleDeleteProject}
-          onCreateNew={() => setIsCreateModalOpen(true)}
+          onCreateNew={handleCreateNewProject}
         />
 
         {/* Create Project Modal */}
         <CreateProjectModal
           isOpen={isCreateModalOpen}
-          onClose={() => setIsCreateModalOpen(false)}
+          onClose={handleCloseCreateModal}
           onCreateProject={handleCreateProject}
           scaffoldProgress={scaffoldProgress}
         />
