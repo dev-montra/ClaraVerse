@@ -771,14 +771,14 @@ export default Counter;`,
   const checkProviderHealthCached = useCallback(async (provider: ClaraProvider): Promise<boolean> => {
     const now = Date.now();
     const cached = providerHealthCache.get(provider.id);
-    
+
     // Return cached result if still valid
     if (cached && (now - cached.timestamp < HEALTH_CHECK_CACHE_TIME)) {
       console.log(`✅ Using cached health status for ${provider.name}: ${cached.isHealthy}`);
       return cached.isHealthy;
     }
-    
-    // Perform actual health check
+
+    // Perform actual health check (with 5s timeout from APIClient)
     console.log(`🏥 Performing health check for ${provider.name}...`);
     try {
       const isHealthy = await claraApiService.testProvider(provider);
@@ -1171,17 +1171,22 @@ export default Counter;`,
         const validProviderIds = loadedProviders.map(p => p.id);
         cleanInvalidProviderConfigs(validProviderIds);
 
-        // Load models from ALL providers to check availability
-        let allModels: ClaraModel[] = [];
-        for (const provider of loadedProviders) {
+        // Load models from ALL providers in parallel to check availability
+        console.log(`🚀 Loading models from ${loadedProviders.length} providers in parallel...`);
+        const modelLoadPromises = loadedProviders.map(async (provider) => {
           try {
             const providerModels = await claraApiService.getModels(provider.id);
-            allModels = [...allModels, ...providerModels];
-            console.log(`Loaded ${providerModels.length} models from provider: ${provider.name}`);
+            console.log(`✅ Loaded ${providerModels.length} models from provider: ${provider.name}`);
+            return providerModels;
           } catch (error) {
-            console.warn(`Failed to load models from provider ${provider.name}:`, error);
+            console.warn(`❌ Failed to load models from provider ${provider.name}:`, error);
+            return [] as ClaraModel[];
           }
-        }
+        });
+
+        // Wait for all provider model loads to complete (with timeout protection)
+        const modelResults = await Promise.all(modelLoadPromises);
+        const allModels: ClaraModel[] = modelResults.flat();
         
         // Set all models for the modal check
         setModels(allModels);
