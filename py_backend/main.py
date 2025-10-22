@@ -2306,8 +2306,9 @@ if LIGHTRAG_AVAILABLE:
     def normalize_url_for_local_dev(url: str) -> str:
         """
         Normalize URLs for local development
-        - When IN Docker: Converts localhost/127.0.0.1 to host.docker.internal
-        - When NOT in Docker: Converts host.docker.internal to localhost
+        - When in Docker with host network mode (Linux): Keep localhost as-is
+        - When in Docker with bridge mode (Windows/Mac): Convert localhost to host.docker.internal
+        - When NOT in Docker: Convert host.docker.internal to localhost
         """
         if not url:
             return url
@@ -2316,11 +2317,49 @@ if LIGHTRAG_AVAILABLE:
         in_docker = os.path.exists('/.dockerenv')
 
         if in_docker:
-            # Running in Docker - convert localhost to host.docker.internal
-            if 'localhost' in url or '127.0.0.1' in url:
-                url = url.replace('localhost', 'host.docker.internal')
-                url = url.replace('127.0.0.1', 'host.docker.internal')
-                logger.info(f"Normalized localhost URL for Docker: {url}")
+            # Check if running in host network mode (Linux)
+            # In host network mode, the container shares the host's network namespace
+            # We detect this by checking network configuration
+            try:
+                # Method 1: Check if we can read /proc/1/ns/net and compare with /proc/self/ns/net
+                # If they're the same, we're in host network mode
+                try:
+                    with open('/proc/self/cgroup', 'r') as f:
+                        cgroup_content = f.read()
+                        # In host network mode on Linux, network namespace is shared with host
+                        # We can detect this by checking if docker network is in bridge mode
+                        is_host_network = False
+
+                    # Better method: Check hostname - in host mode it's the host's hostname,
+                    # in bridge mode it's the container ID (12 hex chars)
+                    import socket
+                    hostname = socket.gethostname()
+                    # Container IDs are exactly 12 alphanumeric characters
+                    is_container_id = len(hostname) == 12 and hostname.isalnum()
+                    is_host_network = not is_container_id
+
+                except:
+                    # Fallback: Check PORT environment variable
+                    # On Linux with host network mode, PORT is typically 5000
+                    # On Windows/Mac with bridge mode, PORT is 5000 but actually mapped from 5001
+                    is_host_network = False
+
+                if is_host_network:
+                    # Host network mode - keep localhost as-is
+                    logger.info(f"🐧 Host network mode detected (hostname: {socket.gethostname()}) - keeping localhost URL: {url}")
+                    return url
+                else:
+                    # Bridge network mode - convert localhost to host.docker.internal
+                    if 'localhost' in url or '127.0.0.1' in url:
+                        url = url.replace('localhost', 'host.docker.internal')
+                        url = url.replace('127.0.0.1', 'host.docker.internal')
+                        logger.info(f"🌉 Bridge mode detected (hostname: {socket.gethostname()}) - normalized localhost URL for Docker: {url}")
+            except Exception as e:
+                # Fallback: If detection fails, assume bridge mode (safer default)
+                logger.warning(f"Failed to detect network mode, assuming bridge mode: {e}")
+                if 'localhost' in url or '127.0.0.1' in url:
+                    url = url.replace('localhost', 'host.docker.internal')
+                    url = url.replace('127.0.0.1', 'host.docker.internal')
         else:
             # Not in Docker - convert host.docker.internal to localhost
             if 'host.docker.internal' in url:

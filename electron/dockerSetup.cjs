@@ -56,7 +56,9 @@ class DockerSetup extends EventEmitter {
       python: {
         name: 'clara_python',
         image: this.getArchSpecificImage('clara17verse/clara-backend', 'latest'),
-        port: 5001,
+        // On Linux, use host network mode so Python backend runs on port 5000
+        // On Windows/Mac, use bridge mode with port mapping 5001->5000
+        port: process.platform === 'linux' ? 5000 : 5001,
         internalPort: 5000,
         healthCheck: this.isPythonRunning.bind(this),
         volumes: [
@@ -146,8 +148,10 @@ class DockerSetup extends EventEmitter {
     this.appRoot = path.resolve(__dirname, '..');
 
     // Default ports with fallbacks
+    // On Linux, Python backend uses host network mode and runs on port 5000
+    // On Windows/Mac, it uses bridge mode with port mapping 5001->5000
     this.ports = {
-      python: 5001,
+      python: process.platform === 'linux' ? 5000 : 5001,
       n8n: 5678,
       ollama: 11434,
       comfyui: 8188
@@ -2159,7 +2163,15 @@ class DockerSetup extends EventEmitter {
       const isLinux = process.platform === 'linux';
       const extraHosts = [];
 
-      if (isLinux) {
+      // Special handling for Python backend on Linux: use host network mode
+      // This allows it to access host services (like ClaraCore on port 8091) without firewall issues
+      const isPythonOnLinux = isLinux && config.name === 'clara_python';
+
+      if (isPythonOnLinux) {
+        console.log('🐧 Linux detected: Using host network mode for Python backend (can access localhost:8091 directly)');
+        networkMode = 'host';
+      } else if (isLinux) {
+        // For other containers on Linux, add host.docker.internal mapping
         // On Linux, we need to get the gateway IP of clara_network
         // host-gateway resolves to default bridge (172.17.0.1), but we use custom network
         try {
@@ -2191,17 +2203,23 @@ class DockerSetup extends EventEmitter {
       const containerConfig = {
         Image: config.image,
         name: config.name,
-        ExposedPorts: {
-          [`${config.internalPort}/tcp`]: {}
-        },
+        // Host network mode doesn't use port mappings
+        ...(isPythonOnLinux ? {} : {
+          ExposedPorts: {
+            [`${config.internalPort}/tcp`]: {}
+          }
+        }),
         HostConfig: {
-          PortBindings: {
-            [`${config.internalPort}/tcp`]: [{ HostPort: config.port.toString() }]
-          },
+          // Host network mode doesn't use port bindings
+          ...(isPythonOnLinux ? {} : {
+            PortBindings: {
+              [`${config.internalPort}/tcp`]: [{ HostPort: config.port.toString() }]
+            }
+          }),
           Binds: config.volumes,
           NetworkMode: networkMode,
-          // Add extra hosts for host.docker.internal on Linux
-          ...(extraHosts.length > 0 && { ExtraHosts: extraHosts }),
+          // Add extra hosts for host.docker.internal on Linux (not needed for host mode)
+          ...(!isPythonOnLinux && extraHosts.length > 0 && { ExtraHosts: extraHosts }),
           // Add restart policy if specified
           ...(config.restartPolicy && { RestartPolicy: { Name: config.restartPolicy } }),
           // Add GPU device access using modern DeviceRequests API (works on both Linux and Windows)

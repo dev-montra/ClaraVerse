@@ -138,7 +138,8 @@ const getPythonConfig = () => {
     pythonConfig = {
       name: 'clara_python',
       image: dockerSetup.getArchSpecificImage('clara17verse/clara-backend', 'latest'),
-      port: 5001,
+      // On Linux (host network mode), use port 5000. On Windows/Mac (bridge mode), use port 5001
+      port: process.platform === 'linux' ? 5000 : 5001,
       internalPort: 5000,
       healthCheck: dockerSetup.isPythonRunning.bind(dockerSetup),
       volumes: [

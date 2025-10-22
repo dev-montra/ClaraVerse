@@ -72,7 +72,8 @@ const SERVICE_DEFINITIONS = {
     // NEW: Manual service configuration
     manual: {
       urlRequired: true,
-      defaultUrl: 'http://localhost:5001',
+      // On Linux (host network mode), use port 5000. On Windows/Mac (bridge mode), use port 5001
+      defaultUrl: `http://localhost:${isLinux ? 5000 : 5001}`,
       healthEndpoint: '/health',
       configKey: 'python_backend_url',
       description: 'Bring Your Own Python Backend - Connect to external Python Backend instance'
@@ -81,7 +82,8 @@ const SERVICE_DEFINITIONS = {
     dockerContainer: {
       name: 'clara_python',
       image: 'clara17verse/clara-backend:latest',
-      ports: { '5001': '5000' },
+      // On Linux (host network mode), container runs on 5000 directly. On Windows/Mac, map 5001->5000
+      ports: isLinux ? { '5000': '5000' } : { '5001': '5000' },
       volumes: [
         `${pythonBackendDataPath}:/home/clara`,
         'clara_python_models:/app/models'
@@ -94,8 +96,10 @@ const SERVICE_DEFINITIONS = {
 
     healthCheck: async (serviceUrl = null) => {
       const http = require('http');
-      const url = serviceUrl || 'http://localhost:5001';
-      const endpoint = serviceUrl ? `${url}/health` : 'http://localhost:5001/health';
+      // On Linux (host network mode), use port 5000. On Windows/Mac (bridge mode), use port 5001
+      const defaultPort = isLinux ? 5000 : 5001;
+      const url = serviceUrl || `http://localhost:${defaultPort}`;
+      const endpoint = serviceUrl ? `${url}/health` : `http://localhost:${defaultPort}/health`;
       return new Promise((resolve) => {
         const req = http.get(endpoint, (res) => {
           resolve(res.statusCode === 200);

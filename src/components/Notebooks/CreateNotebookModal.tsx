@@ -210,20 +210,29 @@ const CreateNotebookModal: React.FC<CreateNotebookModalProps> = ({ onClose, onCr
   // Helper function to transform URLs for Docker container access
   const transformUrlForDocker = (url: string): string => {
     if (!url) return url;
-    
+
     try {
       const urlObj = new URL(url);
-      
-      // Replace localhost with host.docker.internal for Docker container access
+
+      // Get platform information
+      const platform = window.electronAPI?.getPlatform() || window.electron?.getPlatform() || 'unknown';
+      const isLinux = platform === 'linux';
+
+      // On Linux, Python backend uses host network mode and can access localhost directly
+      // On Windows/Mac, Python backend uses bridge mode and needs host.docker.internal
       if (urlObj.hostname === 'localhost' || urlObj.hostname === '127.0.0.1') {
-        urlObj.hostname = 'host.docker.internal';
+        if (!isLinux) {
+          // Windows/Mac: Replace localhost with host.docker.internal
+          urlObj.hostname = 'host.docker.internal';
+        }
+        // Linux: Keep localhost as-is since container uses host network mode
       }
-      
+
       // Remove /v1 suffix if port is 11434 (Ollama default port)
       if (urlObj.port === '11434' && urlObj.pathname.endsWith('/v1')) {
         urlObj.pathname = urlObj.pathname.replace(/\/v1$/, '');
       }
-      
+
       return urlObj.toString();
     } catch (error) {
       // If URL parsing fails, return original URL

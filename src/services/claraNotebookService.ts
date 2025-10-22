@@ -500,25 +500,30 @@ public async validateModels(config: NotebookCreate): Promise<{
     const configForValidation = { ...config };
 
     // Check platform and if Python backend is in Docker
-    // Parse userAgent to detect platform
-    const userAgent = navigator.userAgent.toLowerCase();
-    const isWindows = userAgent.includes('win');
-    const isMac = userAgent.includes('mac');
-    const isLinux = userAgent.includes('linux') || userAgent.includes('x11');
+    // Get platform from Electron API (more reliable than user agent)
+    const platform = (window as any).electronAPI?.getPlatform() || (window as any).electron?.getPlatform() || 'unknown';
+    const isLinux = platform === 'linux';
+    const isWindows = platform === 'win32';
+    const isMac = platform === 'darwin';
 
+    // On Linux, Python backend uses host network mode (port 5000)
+    // On Windows/Mac, Python backend uses bridge mode (port 5001)
     const isPythonInDocker = this.baseUrl.includes('localhost:5001') ||
-                             this.baseUrl.includes('127.0.0.1:5001');
+                             this.baseUrl.includes('127.0.0.1:5001') ||
+                             this.baseUrl.includes('localhost:5000') ||
+                             this.baseUrl.includes('127.0.0.1:5000');
 
     // Determine the host address based on platform
     let hostAddress = '';
-    if (isPythonInDocker) {
-      // Use host.docker.internal for all platforms
-      // On Windows/Mac: Docker Desktop provides this automatically
-      // On Linux: We add this via --add-host flag pointing to the correct gateway
+    if (isPythonInDocker && !isLinux) {
+      // On Windows/Mac: Use host.docker.internal (bridge network mode)
       hostAddress = 'host.docker.internal';
 
-      const platformName = isWindows ? 'Windows' : isMac ? 'macOS' : isLinux ? 'Linux' : 'Unknown';
+      const platformName = isWindows ? 'Windows' : isMac ? 'macOS' : 'Unknown';
       console.log(`🐧 ${platformName} detected: Using host.docker.internal for host access`);
+    } else if (isPythonInDocker && isLinux) {
+      // On Linux: Python backend uses host network mode, can access localhost directly
+      console.log('🐧 Linux detected: Python backend uses host network mode, keeping localhost URLs');
     }
 
     if (hostAddress && isPythonInDocker) {
@@ -601,21 +606,27 @@ public async validateModels(config: NotebookCreate): Promise<{
       const notebookForCreation = { ...notebook };
 
       // Check platform and if Python backend is in Docker
-      const userAgent = navigator.userAgent.toLowerCase();
-      const isWindows = userAgent.includes('win');
-      const isMac = userAgent.includes('mac');
-      const isLinux = userAgent.includes('linux') || userAgent.includes('x11');
+      // Get platform from Electron API (more reliable than user agent)
+      const platform = (window as any).electronAPI?.getPlatform() || (window as any).electron?.getPlatform() || 'unknown';
+      const isLinux = platform === 'linux';
+      const isWindows = platform === 'win32';
+      const isMac = platform === 'darwin';
 
+      // On Linux, Python backend uses host network mode (port 5000)
+      // On Windows/Mac, Python backend uses bridge mode (port 5001)
       const isPythonInDocker = this.baseUrl.includes('localhost:5001') ||
-                               this.baseUrl.includes('127.0.0.1:5001');
+                               this.baseUrl.includes('127.0.0.1:5001') ||
+                               this.baseUrl.includes('localhost:5000') ||
+                               this.baseUrl.includes('127.0.0.1:5000');
 
       // Determine the host address based on platform
       let hostAddress = '';
-      if (isPythonInDocker) {
-        // Use host.docker.internal for all platforms
-        // On Windows/Mac: Docker Desktop provides this automatically
-        // On Linux: We add this via --add-host flag pointing to the correct gateway
+      if (isPythonInDocker && !isLinux) {
+        // On Windows/Mac: Use host.docker.internal (bridge network mode)
         hostAddress = 'host.docker.internal';
+      } else if (isPythonInDocker && isLinux) {
+        // On Linux: Python backend uses host network mode, can access localhost directly
+        console.log('🐧 Linux detected: Python backend uses host network mode, keeping localhost URLs');
       }
 
       if (hostAddress && isPythonInDocker) {
