@@ -93,7 +93,7 @@ const PersonaDropdown: React.FC<PersonaDropdownProps> = ({
   return (
     <div
       ref={dropdownRef}
-      className="absolute bottom-full right-0 mb-2 w-72 bg-white dark:bg-gray-900 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-50 overflow-hidden"
+      className="absolute bottom-full right-0 mb-2 w-72 bg-white dark:bg-gray-900 rounded-lg shadow-xl z-50 overflow-hidden"
       onClick={(e) => e.stopPropagation()}
     >
       {/* Header */}

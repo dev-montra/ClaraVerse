@@ -23,9 +23,16 @@ import {
     Edit3,
     X,
     ExternalLink,
+    Image,
+    Mic,
+    FileText,
+    Workflow,
+    BookOpen,
+    Blocks,
+    Wrench,
+    Network,
 } from 'lucide-react';
 import {db, Provider} from '../db';
-import { useProviders } from '../contexts/ProvidersContext';
 import logoImage from '../assets/logo.png';
 
 interface OnboardingProps {
@@ -62,16 +69,6 @@ const Onboarding = ({onComplete}: OnboardingProps) => {
     const [providers, setProviders] = useState<Provider[]>([]);
     const [showAddProviderModal, setShowAddProviderModal] = useState(false);
     const [setupMethod, setSetupMethod] = useState<'clara-core' | 'external-provider'>('clara-core');
-    const [dockerMode, setDockerMode] = useState<'local' | 'remote'>('local');
-    const [remoteDockerConfig, setRemoteDockerConfig] = useState({
-        host: '',
-        username: '',
-        sshKeyPath: '',
-        port: 22,
-        protocol: 'ssh' as 'ssh' | 'tcp'
-    });
-    const [testingConnection, setTestingConnection] = useState(false);
-    const [connectionTestResult, setConnectionTestResult] = useState<{success: boolean; message?: string; version?: string} | null>(null);
     const [newProviderForm, setNewProviderForm] = useState({
         name: '',
         type: 'openai' as Provider['type'],
@@ -105,10 +102,18 @@ const Onboarding = ({onComplete}: OnboardingProps) => {
         claraCore: true
     });
     
-    // Custom model path management - reuse from CustomModelPathManager logic
-    const { setCustomModelPath } = useProviders();
+    // Custom model path management
     const [isSettingCustomPath, setIsSettingCustomPath] = useState(false);
     const [folderPickerMessage, setFolderPickerMessage] = useState<string | null>(null);
+    const [scannedModelsCount, setScannedModelsCount] = useState(0);
+    const [generatingConfig, setGeneratingConfig] = useState(false);
+    const [configProgress, setConfigProgress] = useState<{
+        status: string;
+        progress: number;
+        currentStep: string;
+        processedModels: number;
+        totalModels: number;
+    } | null>(null);
 
     // Real-time progress tracking for initialization
     const [initializationStatus, setInitializationStatus] = useState<string>('');
@@ -257,77 +262,7 @@ const Onboarding = ({onComplete}: OnboardingProps) => {
         };
     }, []);
 
-    // Handler for folder picker (similar to CustomModelPathManager)
-    const handlePickCustomModelPath = async () => {
-        if (window.electron && window.electron.dialog) {
-            try {
-                const result = await window.electron.dialog.showOpenDialog({
-                    properties: ['openDirectory']
-                });
-                
-                if (result && result.filePaths && result.filePaths[0]) {
-                    const selectedPath = result.filePaths[0];
-                    
-                    // Show loading state
-                    setIsSettingCustomPath(true);
-                    setFolderPickerMessage(null); // Clear previous message
-                    
-                    // First, scan for models in the selected path
-                    if (window.llamaSwap?.scanCustomPathModels) {
-                        const scanResult = await window.llamaSwap.scanCustomPathModels(selectedPath);
-                        
-                        if (scanResult.success && scanResult.models && scanResult.models.length > 0) {
-                            // Models found, set the path and update form data
-                            await setCustomModelPath(selectedPath);
-                            setFormData(prev => ({...prev, model_folder_path: selectedPath}));
-                            
-                            // Update available models list
-                            const modelNames = scanResult.models.map((m: any) => m.file);
-                            setAvailableModels(modelNames);
-                            
-                            // Create detailed success message with folder information
-                            const folderGroups = scanResult.models.reduce((acc: any, model: any) => {
-                                const folder = model.folderHint || 'root';
-                                acc[folder] = (acc[folder] || 0) + 1;
-                                return acc;
-                            }, {});
-                            
-                            const folderInfo = Object.entries(folderGroups)
-                                .map(([folder, count]) => folder === 'root' ? `${count} in root` : `${count} in ${folder}`)
-                                .join(', ');
-                            
-                            const message = scanResult.models.length === 1 
-                                ? `✅ Found 1 GGUF model` 
-                                : `✅ Found ${scanResult.models.length} GGUF models${folderGroups && Object.keys(folderGroups).length > 1 ? ` (${folderInfo})` : ''}`;
-                            
-                            setFolderPickerMessage(message);
-                        } else if (scanResult.success && (!scanResult.models || scanResult.models.length === 0)) {
-                            // No models found, but still set the path
-                            await setCustomModelPath(selectedPath);
-                            setFormData(prev => ({...prev, model_folder_path: selectedPath}));
-                            setFolderPickerMessage('⚠️ No GGUF models found in this folder');
-                        } else {
-                            // Scan failed, show error
-                            console.error('Error scanning folder for models:', scanResult.error || 'Unknown error');
-                            setFolderPickerMessage('❌ Error scanning folder for models');
-                        }
-                    } else {
-                        // Fallback: just set the path without scanning
-                        await setCustomModelPath(selectedPath);
-                        setFormData(prev => ({...prev, model_folder_path: selectedPath}));
-                        setFolderPickerMessage('📁 Folder selected (scanning not available)');
-                    }
-                }
-            } catch (error) {
-                console.error('Error setting custom model path:', error);
-            } finally {
-                setIsSettingCustomPath(false);
-            }
-        } else {
-            // Web browser - show message that desktop app is required
-            alert('Folder picker is only available in the desktop app. You can manually enter the path.');
-        }
-    };
+
 
     const checkClaraCore = async () => {
         setClaraStatus('success'); // Clara Core is always available
@@ -358,6 +293,88 @@ const Onboarding = ({onComplete}: OnboardingProps) => {
             setAvailableModels([]);
         } finally {
             setCheckingModels(false);
+        }
+    };
+
+    const handleGenerateConfig = async () => {
+        setGeneratingConfig(true);
+        setConfigProgress({
+            status: 'starting',
+            progress: 0,
+            currentStep: 'Initializing configuration generation & Downloading backend...',
+            processedModels: 0,
+            totalModels: scannedModelsCount
+        });
+        
+        try {
+            // Start config regeneration
+            const regenerateResponse = await fetch(`${formData.clara_core_url}/api/config/regenerate-from-db`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    options: {
+                        enableJinja: true,
+                        throughputFirst: true,
+                        preferredContext: 65536
+                    }
+                })
+            });
+            
+            if (!regenerateResponse.ok) {
+                throw new Error('Failed to start config generation');
+            }
+            
+            // Poll for progress using the /api/setup/progress endpoint
+            const pollProgress = setInterval(async () => {
+                try {
+                    const progressResponse = await fetch(`${formData.clara_core_url}/api/setup/progress`);
+                    
+                    if (progressResponse.ok) {
+                        const progressData = await progressResponse.json();
+                        
+                        setConfigProgress({
+                            status: progressData.status,
+                            progress: progressData.progress || 0,
+                            currentStep: progressData.current_step || 'Processing...',
+                            processedModels: progressData.processed_models || 0,
+                            totalModels: progressData.total_models || scannedModelsCount
+                        });
+                        
+                        // Check if completed
+                        if (progressData.completed || progressData.status === 'completed') {
+                            clearInterval(pollProgress);
+                            
+                            // Refresh available models
+                            await checkClaraCore();
+                            
+                            setGeneratingConfig(false);
+                            setFolderPickerMessage(`✅ Configuration generated successfully! ${progressData.total_models || scannedModelsCount} models are ready to use.`);
+                        } else if (progressData.status === 'error') {
+                            clearInterval(pollProgress);
+                            setGeneratingConfig(false);
+                            setFolderPickerMessage(`❌ Config generation failed: ${progressData.error || 'Unknown error'}`);
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error polling config progress:', error);
+                }
+            }, 1000); // Poll every second
+            
+            // Timeout after 5 minutes
+            setTimeout(() => {
+                clearInterval(pollProgress);
+                if (generatingConfig) {
+                    setGeneratingConfig(false);
+                    setFolderPickerMessage('⚠️ Config generation timed out. Please check Clara Core logs.');
+                }
+            }, 5 * 60 * 1000);
+            
+        } catch (error: any) {
+            console.error('Error generating config:', error);
+            setGeneratingConfig(false);
+            setFolderPickerMessage(`❌ Failed to generate config: ${error.message}`);
         }
     };
 
@@ -449,8 +466,11 @@ const Onboarding = ({onComplete}: OnboardingProps) => {
                         setDownloadProgress(100);
                         setDownloadingModel(false);
                         
-                        // Refresh available models
-                        await checkModelsAfterDownload();
+                        // Store model count
+                        setScannedModelsCount(1); // Downloaded 1 model
+                        
+                        // Automatically generate config after download
+                        await handleGenerateConfig();
                     } else if (progressData.status === 'error' || progressData.status === 'failed') {
                         clearInterval(pollInterval);
                         setDownloadError(progressData.error || 'Download failed');
@@ -761,31 +781,6 @@ const Onboarding = ({onComplete}: OnboardingProps) => {
             }
         }
 
-        // Save Docker connection configuration if using remote mode
-        if (dockerMode === 'remote' && (window as any).electronAPI?.invoke) {
-            try {
-                console.log('Saving remote Docker configuration...');
-                const dockerConnectionConfig = {
-                    mode: 'remote',
-                    protocol: remoteDockerConfig.protocol,
-                    host: remoteDockerConfig.host,
-                    username: remoteDockerConfig.username,
-                    port: remoteDockerConfig.port,
-                    sshKeyPath: remoteDockerConfig.sshKeyPath
-                };
-
-                const switchResult = await (window as any).electronAPI.invoke('docker-switch-connection', dockerConnectionConfig);
-
-                if (switchResult.success) {
-                    console.log('Remote Docker connection configured successfully');
-                } else {
-                    console.error('Failed to configure remote Docker connection:', switchResult.error);
-                }
-            } catch (error) {
-                console.error('Error saving remote Docker configuration:', error);
-            }
-        }
-
         // Save service configuration URLs for selected services
         if ((window as any).electronAPI?.invoke) {
             try {
@@ -1091,34 +1086,75 @@ const Onboarding = ({onComplete}: OnboardingProps) => {
     // Check if user has configured something to proceed
     const hasValidSetup = () => {
         if (setupMethod === 'clara-core') {
-            return availableModels.length > 0 || formData.model_folder_path;
+            // User must have models available and NOT be in the middle of config generation
+            return availableModels.length > 0 && !generatingConfig;
         } else {
             const enabledProviders = providers.filter(p => p.isEnabled);
             return enabledProviders.length > 0;
         }
     };
 
-    // Features of Clara
+    // Features of Clara - Enhanced showcase
     const features = [
         {
             title: "Privacy First",
             description: "Your data never leaves your device unless you explicitly allow it. All processing happens locally.",
-            icon: <Shield className="w-8 h-8 text-sakura-500"/>
+            icon: <Shield className="w-8 h-8 text-sakura-500"/>,
+            highlight: "100% Local"
         },
         {
             title: "Powerful AI",
             description: "Access state-of-the-art AI models through Clara Core with built-in model management and optimization.",
-            icon: <Brain className="w-8 h-8 text-sakura-500"/>
+            icon: <Brain className="w-8 h-8 text-sakura-500"/>,
+            highlight: "8+ AI Models"
         },
         {
             title: "Visual App Builder",
             description: "Create custom AI applications with our intuitive node-based flow builder and N8N integration.",
-            icon: <Terminal className="w-8 h-8 text-sakura-500"/>
+            icon: <Terminal className="w-8 h-8 text-sakura-500"/>,
+            highlight: "No-Code"
         },
         {
             title: "Rich Ecosystem",
             description: "Integrated ComfyUI, Jupyter notebooks, TTS services, and document processing capabilities.",
-            icon: <Database className="w-8 h-8 text-sakura-500"/>
+            icon: <Database className="w-8 h-8 text-sakura-500"/>,
+            highlight: "All-in-One"
+        }
+    ];
+
+    // Key capabilities to showcase with icons
+    const capabilities = [
+        {
+            name: "Image Generation (ComfyUI)",
+            icon: <Image className="w-4 h-4" />
+        },
+        {
+            name: "Text-to-Speech & Voice",
+            icon: <Mic className="w-4 h-4" />
+        },
+        {
+            name: "Document Processing (Graph RAG)",
+            icon: <FileText className="w-4 h-4" />
+        },
+        {
+            name: "Inbuilt Agent and Workflow Automation",
+            icon: <Workflow className="w-4 h-4" />
+        },
+        {
+            name: "Notebooks (Rag)",
+            icon: <BookOpen className="w-4 h-4" />
+        },
+        {
+            name: "LumaUI Studio (Web App Builder)",
+            icon: <Blocks className="w-4 h-4" />
+        },
+        {
+            name: "MCP Support",
+            icon: <Wrench className="w-4 h-4" />
+        },
+        {
+            name: "Multi-Provider Support",
+            icon: <Network className="w-4 h-4" />
         }
     ];
 
@@ -1153,70 +1189,94 @@ const Onboarding = ({onComplete}: OnboardingProps) => {
                 <div className="min-h-screen w-full flex flex-col">
                     <div className="flex-grow flex items-center justify-center px-4 sm:px-6 lg:px-8 py-12 sm:py-16">
                         <div className="w-full max-w-7xl mx-auto">
-                            <div className="flex flex-col lg:flex-row items-center justify-between gap-8 lg:gap-12">
-                                <div className="w-full lg:w-1/2 text-center lg:text-left space-y-4 sm:space-y-6">
-                                    <div className="flex justify-center lg:justify-start">
+                            <div className="flex flex-col items-center gap-8 lg:gap-12">
+                                {/* Hero Section */}
+                                <div className="text-center space-y-4 sm:space-y-6 max-w-4xl">
+                                    <div className="flex justify-center">
                                         <div className="relative">
                                             <div
-                                                className="absolute inset-0 bg-sakura-500 rounded-full blur-xl opacity-20 animate-pulse"></div>
-                                            <div
-                                                className="relative bg-white dark:bg-gray-800 rounded-full p-3 sm:p-4 shadow-xl">
-                                                {!logoError ? (
-                                                    <img
-                                                        src={logoImage}
-                                                        alt="Clara Logo"
-                                                        className="w-12 h-12 sm:w-16 sm:h-16 object-contain"
-                                                        onError={() => setLogoError(true)}
-                                                    />
-                                                ) : (
-                                                    <Bot className="w-12 h-12 sm:w-16 sm:h-16 text-sakura-500" />
-                                                )}
-                                            </div>
+                                                className="absolute inset-0 bg-sakura-500 rounded-full blur-2xl opacity-20 animate-pulse"></div>
+                                            {!logoError ? (
+                                                <img
+                                                    src={logoImage}
+                                                    alt="Clara Logo"
+                                                    className="relative w-20 h-20 sm:w-24 sm:h-24 rounded-full object-cover shadow-2xl"
+                                                    onError={() => setLogoError(true)}
+                                                />
+                                            ) : (
+                                                <div className="relative bg-white dark:bg-gray-800 rounded-full p-4 sm:p-5 shadow-2xl">
+                                                    <Bot className="w-12 h-12 sm:w-14 sm:h-14 text-sakura-500" />
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
 
-                                    <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold text-gray-900 dark:text-white animate-fadeIn leading-tight">
-                                        Welcome to <span className="text-sakura-500">Clara</span>
-                                    </h1>
-
-                                    <p className="text-base sm:text-lg md:text-xl text-gray-600 dark:text-gray-300 max-w-2xl mx-auto lg:mx-0 animate-fadeInUp delay-200 leading-relaxed">
-                                        Your privacy-first AI assistant that keeps your data local and
-                                        your conversations private.
-                                    </p>
+                                    <div>
+                                        <h1 className="text-4xl sm:text-5xl md:text-6xl font-bold text-gray-900 dark:text-white animate-fadeIn leading-tight mb-4">
+                                            <span className="text-white-500">Clara<span className="bg-gradient-to-r from-pink-400 via-purple-500 to-pink-400 bg-clip-text text-transparent">Verse</span></span>
+                                        </h1>
+                                        <p className="text-lg sm:text-xl md:text-2xl text-gray-600 dark:text-gray-300 animate-fadeInUp delay-200 leading-relaxed">
+                                            Your privacy-first AI Workspace that keeps your data local and private. <br />While combining all the tools you need in one place.
+                                        </p>
+                                    </div>
                                 </div>
 
-                                <div className="w-full lg:w-1/2 max-w-2xl">
-                                    <div
-                                        className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6 animate-fadeInUp delay-300">
+                                {/* Feature Cards - Enhanced */}
+                                <div className="w-full max-w-6xl">
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 animate-fadeInUp delay-400">
                                         {features.map((feature, idx) => (
                                             <div
                                                 key={idx}
-                                                className="bg-gradient-to-br from-white to-gray-50 dark:from-gray-800 dark:to-gray-850 backdrop-blur-md rounded-xl p-4 sm:p-6 shadow-lg hover:shadow-xl transition-all duration-300 border border-gray-100 dark:border-gray-700 hover:border-sakura-200 dark:hover:border-sakura-900 group"
+                                                className="bg-gradient-to-br from-white to-gray-50 dark:from-gray-800 dark:to-gray-850 backdrop-blur-md rounded-xl p-5 sm:p-6 shadow-lg hover:shadow-2xl transition-all duration-300 border border-gray-200 dark:border-gray-700 hover:border-sakura-300 dark:hover:border-sakura-700 group hover:-translate-y-1"
                                             >
-                                                <div
-                                                    className="p-3 bg-sakura-100 dark:bg-sakura-900/20 rounded-lg w-fit mb-4 group-hover:scale-110 transition-transform">
-                                                    {feature.icon}
+                                                <div className="flex items-start justify-between mb-4">
+                                                    <div className="p-3 bg-gradient-to-br from-sakura-100 to-sakura-200 dark:from-sakura-900/30 dark:to-sakura-800/30 rounded-lg group-hover:scale-110 transition-transform">
+                                                        {feature.icon}
+                                                    </div>
+                                                    <span className="px-2 py-1 bg-sakura-100 dark:bg-sakura-900/30 text-sakura-600 dark:text-sakura-400 text-xs font-semibold rounded-full">
+                                                        {feature.highlight}
+                                                    </span>
                                                 </div>
-                                                <h3 className="text-lg font-semibold mb-2 text-gray-900 dark:text-white">
+                                                <h3 className="text-lg font-bold mb-2 text-gray-900 dark:text-white">
                                                     {feature.title}
                                                 </h3>
-                                                <p className="text-gray-600 dark:text-gray-400">
+                                                <p className="text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
                                                     {feature.description}
                                                 </p>
                                             </div>
                                         ))}
+                                    </div>
+
+                                    {/* Capabilities Showcase - Clean design */}
+                                    <div className="mt-8 p-6 bg-gradient-to-br from-white to-gray-50 dark:from-gray-800 dark:to-gray-850 backdrop-blur-md rounded-2xl border border-gray-200 dark:border-gray-700 shadow-lg animate-fadeInUp delay-500">
+                                        <h3 className="text-center text-lg font-bold text-gray-900 dark:text-white mb-6">
+                                            Every Cloud Capability, Right on Your Device
+                                        </h3>
+                                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                                            {capabilities.map((capability, idx) => (
+                                                <div
+                                                    key={idx}
+                                                    className="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 p-2 hover:text-sakura-600 dark:hover:text-sakura-400 transition-colors duration-200 group"
+                                                >
+                                                    <div className="text-sakura-500 group-hover:scale-110 transition-transform">
+                                                        {capability.icon}
+                                                    </div>
+                                                    <span className="font-medium">{capability.name}</span>
+                                                </div>
+                                            ))}
+                                        </div>
                                     </div>
                                 </div>
                             </div>
                         </div>
                     </div>
 
-                    <div className="w-full px-4 pb-6 sm:pb-8 flex justify-center animate-fadeInUp delay-500 shrink-0">
+                    <div className="w-full px-4 pb-6 sm:pb-8 flex justify-center animate-fadeInUp delay-600 shrink-0">
                         <button
                             onClick={() => handleNextSection("setup")}
-                            className="px-6 sm:px-8 py-2.5 sm:py-3 bg-gradient-to-r from-sakura-400 to-sakura-500 hover:from-sakura-500 hover:to-sakura-600 text-white rounded-full font-medium shadow-lg hover:shadow-xl transition-all duration-300 flex items-center gap-2 hover:gap-3"
+                            className="px-8 sm:px-12 py-3 sm:py-4 bg-gradient-to-r from-sakura-400 to-sakura-500 hover:from-sakura-500 hover:to-sakura-600 text-white rounded-full font-semibold text-lg shadow-xl hover:shadow-2xl transition-all duration-300 flex items-center gap-3 hover:gap-4 hover:scale-105"
                         >
-                            Get Started <Zap className="w-5 h-5"/>
+                            Get Started <Zap className="w-6 h-6"/>
                         </button>
                     </div>
                 </div>
@@ -1488,196 +1548,7 @@ const Onboarding = ({onComplete}: OnboardingProps) => {
                                 </button>
                             </div>
 
-                            {/* Docker Mode Selection (Only for Clara Core) */}
-                            {setupMethod === 'clara-core' && (
-                                <div className="mt-4 space-y-3">
-                                    <div className="flex items-center gap-2 mb-2">
-                                        <Server className="w-4 h-4 text-gray-500"/>
-                                        <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                                            Where should Docker run?
-                                        </p>
-                                    </div>
-                                    
-                                    <p className="text-xs text-gray-600 dark:text-gray-400 mb-3">
-                                        Clara uses Docker to run AI services. Choose where to run these containers:
-                                    </p>
 
-                                    <div className="grid grid-cols-2 gap-3">
-                                        <button
-                                            onClick={() => setDockerMode('local')}
-                                            className={`flex flex-col items-start gap-2 p-4 rounded-lg border transition-all ${
-                                                dockerMode === 'local'
-                                                    ? 'border-sakura-500 bg-sakura-50 dark:bg-sakura-900/20'
-                                                    : 'border-gray-200 dark:border-gray-700 hover:border-sakura-300'
-                                            }`}
-                                        >
-                                            <div className="flex items-center justify-between w-full">
-                                                <HardDrive className={`w-5 h-5 ${dockerMode === 'local' ? 'text-sakura-500' : 'text-gray-500'}`}/>
-                                                {dockerMode === 'local' && <Check className="w-4 h-4 text-sakura-500"/>}
-                                            </div>
-                                            <div className="text-left">
-                                                <p className="text-sm font-medium text-gray-900 dark:text-white mb-1">Local</p>
-                                                <p className="text-xs text-gray-600 dark:text-gray-400">Run on this computer</p>
-                                                <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">
-                                                    ✓ Easiest setup<br/>
-                                                    ✓ No network needed<br/>
-                                                    ✓ Best for most users
-                                                </p>
-                                            </div>
-                                        </button>
-
-                                        <button
-                                            onClick={() => setDockerMode('remote')}
-                                            className={`flex flex-col items-start gap-2 p-4 rounded-lg border transition-all ${
-                                                dockerMode === 'remote'
-                                                    ? 'border-sakura-500 bg-sakura-50 dark:bg-sakura-900/20'
-                                                    : 'border-gray-200 dark:border-gray-700 hover:border-sakura-300'
-                                            }`}
-                                        >
-                                            <div className="flex items-center justify-between w-full">
-                                                <Router className={`w-5 h-5 ${dockerMode === 'remote' ? 'text-sakura-500' : 'text-gray-500'}`}/>
-                                                {dockerMode === 'remote' && <Check className="w-4 h-4 text-sakura-500"/>}
-                                            </div>
-                                            <div className="text-left">
-                                                <p className="text-sm font-medium text-gray-900 dark:text-white mb-1">Remote</p>
-                                                <p className="text-xs text-gray-600 dark:text-gray-400">Connect to SSH server</p>
-                                                <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">
-                                                    ✓ Use powerful server<br/>
-                                                    ✓ Work from anywhere<br/>
-                                                    ✓ Requires SSH access
-                                                </p>
-                                            </div>
-                                        </button>
-                                    </div>
-
-                                    {/* Remote Docker Configuration */}
-                                    {dockerMode === 'remote' && (
-                                        <div className="mt-3 p-4 bg-gray-50 dark:bg-gray-800/50 rounded-lg space-y-3">
-                                            <div className="flex items-start gap-2 text-xs text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/20 p-3 rounded">
-                                                <span>ℹ️</span>
-                                                <div>
-                                                    <p className="font-medium mb-1">Remote Docker Setup</p>
-                                                    <p>Connect to Docker running on a remote server via SSH. Perfect for using a powerful server while working from your laptop.</p>
-                                                </div>
-                                            </div>
-
-                                            <div className="space-y-2">
-                                                <div>
-                                                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                                        SSH Host
-                                                    </label>
-                                                    <input
-                                                        type="text"
-                                                        value={remoteDockerConfig.host}
-                                                        onChange={(e) => setRemoteDockerConfig({...remoteDockerConfig, host: e.target.value})}
-                                                        placeholder="192.168.1.100 or server.example.com"
-                                                        className="w-full px-3 py-2 rounded border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
-                                                    />
-                                                </div>
-
-                                                <div className="grid grid-cols-2 gap-2">
-                                                    <div>
-                                                        <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                                            Username
-                                                        </label>
-                                                        <input
-                                                            type="text"
-                                                            value={remoteDockerConfig.username}
-                                                            onChange={(e) => setRemoteDockerConfig({...remoteDockerConfig, username: e.target.value})}
-                                                            placeholder="user"
-                                                            className="w-full px-3 py-2 rounded border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
-                                                        />
-                                                    </div>
-
-                                                    <div>
-                                                        <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                                            SSH Port
-                                                        </label>
-                                                        <input
-                                                            type="number"
-                                                            value={remoteDockerConfig.port}
-                                                            onChange={(e) => setRemoteDockerConfig({...remoteDockerConfig, port: parseInt(e.target.value) || 22})}
-                                                            placeholder="22"
-                                                            className="w-full px-3 py-2 rounded border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
-                                                        />
-                                                    </div>
-                                                </div>
-
-                                                <div>
-                                                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                                        SSH Key Path (optional)
-                                                    </label>
-                                                    <input
-                                                        type="text"
-                                                        value={remoteDockerConfig.sshKeyPath}
-                                                        onChange={(e) => setRemoteDockerConfig({...remoteDockerConfig, sshKeyPath: e.target.value})}
-                                                        placeholder="~/.ssh/id_rsa"
-                                                        className="w-full px-3 py-2 rounded border border-gray-200 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
-                                                    />
-                                                </div>
-                                            </div>
-
-                                            <button
-                                                onClick={async () => {
-                                                    setTestingConnection(true);
-                                                    setConnectionTestResult(null);
-                                                    try {
-                                                        const result = await (window as any).electronAPI.invoke('docker-test-remote-connection', {
-                                                            mode: 'remote',
-                                                            protocol: remoteDockerConfig.protocol,
-                                                            host: remoteDockerConfig.host,
-                                                            username: remoteDockerConfig.username,
-                                                            port: remoteDockerConfig.port,
-                                                            sshKeyPath: remoteDockerConfig.sshKeyPath
-                                                        });
-                                                        setConnectionTestResult(result);
-                                                    } catch (error: any) {
-                                                        setConnectionTestResult({success: false, message: error.message});
-                                                    } finally {
-                                                        setTestingConnection(false);
-                                                    }
-                                                }}
-                                                disabled={testingConnection || !remoteDockerConfig.host || !remoteDockerConfig.username}
-                                                className="w-full px-4 py-2 bg-sakura-500 text-white rounded hover:bg-sakura-600 disabled:bg-gray-400 disabled:cursor-not-allowed text-sm flex items-center justify-center gap-2"
-                                            >
-                                                {testingConnection ? (
-                                                    <>
-                                                        <Loader className="w-4 h-4 animate-spin"/>
-                                                        Testing Connection...
-                                                    </>
-                                                ) : (
-                                                    <>
-                                                        <Check className="w-4 h-4"/>
-                                                        Test Connection
-                                                    </>
-                                                )}
-                                            </button>
-
-                                            {connectionTestResult && (
-                                                <div className={`p-3 rounded text-sm ${
-                                                    connectionTestResult.success
-                                                        ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300'
-                                                        : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300'
-                                                }`}>
-                                                    {connectionTestResult.success ? (
-                                                        <>
-                                                            <p className="font-medium">Connection Successful!</p>
-                                                            {connectionTestResult.version && (
-                                                                <p className="text-xs mt-1">Docker version: {connectionTestResult.version}</p>
-                                                            )}
-                                                        </>
-                                                    ) : (
-                                                        <>
-                                                            <p className="font-medium">Connection Failed</p>
-                                                            <p className="text-xs mt-1">{connectionTestResult.message}</p>
-                                                        </>
-                                                    )}
-                                                </div>
-                                            )}
-                                        </div>
-                                    )}
-                                </div>
-                            )}
 
                             {/* Clara Core Setup - Condensed */}
                             {setupMethod === 'clara-core' && (
@@ -1717,18 +1588,23 @@ const Onboarding = ({onComplete}: OnboardingProps) => {
                                                 </p>
                                                 <button 
                                                     onClick={handleModelDownload}
-                                                    disabled={downloadingModel}
+                                                    disabled={downloadingModel || generatingConfig}
                                                     className="w-full px-3 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:bg-blue-400 disabled:cursor-not-allowed"
                                                 >
                                                     {downloadingModel ? (
                                                         <span className="flex items-center justify-center gap-2">
                                                             <Loader className="w-3 h-3 animate-spin"/>
-                                                            {downloadProgress}%
+                                                            Downloading {downloadProgress}%
+                                                        </span>
+                                                    ) : generatingConfig ? (
+                                                        <span className="flex items-center justify-center gap-2">
+                                                            <Loader className="w-3 h-3 animate-spin"/>
+                                                            Configuring...
                                                         </span>
                                                     ) : 'Download Model'}
                                                 </button>
                                                 
-                                                {downloadingModel && (
+                                                {downloadingModel && !generatingConfig && (
                                                     <div className="mt-2">
                                                         <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1">
                                                             <div 
@@ -1736,6 +1612,30 @@ const Onboarding = ({onComplete}: OnboardingProps) => {
                                                                 style={{ width: `${downloadProgress}%` }}
                                                             />
                                                         </div>
+                                                        <p className="text-xs text-blue-600 dark:text-blue-400 mt-1">
+                                                            Downloading model... After download, configuration will be generated automatically.
+                                                        </p>
+                                                    </div>
+                                                )}
+                                                
+                                                {/* Show config generation progress after download */}
+                                                {generatingConfig && configProgress && (
+                                                    <div className="mt-2 p-2 bg-blue-50 dark:bg-blue-900/20 rounded">
+                                                        <div className="flex items-center gap-2 mb-1">
+                                                            <div className="w-3 h-3 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                                                            <span className="text-xs font-medium text-blue-700 dark:text-blue-300">
+                                                                Configuring Model...
+                                                            </span>
+                                                        </div>
+                                                        <div className="w-full bg-blue-100 dark:bg-blue-800 rounded-full h-1 mb-1">
+                                                            <div 
+                                                                className="h-1 bg-blue-600 rounded-full transition-all duration-300"
+                                                                style={{ width: `${configProgress.progress}%` }}
+                                                            />
+                                                        </div>
+                                                        <p className="text-xs text-blue-600 dark:text-blue-400">
+                                                            {configProgress.currentStep}
+                                                        </p>
                                                     </div>
                                                 )}
                                             </div>
@@ -1753,11 +1653,14 @@ const Onboarding = ({onComplete}: OnboardingProps) => {
                                                             <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
                                                             <div>
                                                                 <p className="text-sm font-medium text-blue-700 dark:text-blue-300">Scanning folder for models</p>
-                                                                <p className="text-xs text-blue-600 dark:text-blue-400">Looking for .gguf files... Adding them, gimme a minute</p>
+                                                                <p className="text-xs text-blue-600 dark:text-blue-400">Looking for .gguf files and adding them to Clara Core...</p>
                                                             </div>
                                                         </div>
                                                     ) : (
                                                         <div className="p-3 bg-gray-50 dark:bg-gray-800/50 rounded">
+                                                            <p className="text-xs text-gray-600 dark:text-gray-400 mb-2">
+                                                                Select a folder containing your GGUF model files. Clara Core will scan it and configure your models automatically.
+                                                            </p>
                                                             <div className="flex gap-2">
                                                                 <input
                                                                     type="text"
@@ -1770,7 +1673,73 @@ const Onboarding = ({onComplete}: OnboardingProps) => {
                                                                     className="flex-1 px-2 py-1 rounded bg-white/70 border border-gray-200 text-gray-900 placeholder-gray-500 dark:bg-gray-800/80 dark:border-gray-600 dark:text-gray-100 dark:placeholder-gray-400 text-xs"
                                                                 />
                                                                 <button
-                                                                    onClick={handlePickCustomModelPath}
+                                                                    onClick={async () => {
+                                                                        // Use folder picker
+                                                                        if (window.electron && window.electron.dialog) {
+                                                                            try {
+                                                                                const result = await window.electron.dialog.showOpenDialog({
+                                                                                    properties: ['openDirectory']
+                                                                                });
+                                                                                
+                                                                                if (result && result.filePaths && result.filePaths[0]) {
+                                                                                    const selectedPath = result.filePaths[0];
+                                                                                    setFormData(prev => ({...prev, model_folder_path: selectedPath}));
+                                                                                    setFolderPickerMessage(null);
+                                                                                    setIsSettingCustomPath(true);
+                                                                                    
+                                                                                    try {
+                                                                                        // Call Clara Core API to scan folder
+                                                                                        const scanResponse = await fetch(`${formData.clara_core_url}/api/config/scan-folder`, {
+                                                                                            method: 'POST',
+                                                                                            headers: {
+                                                                                                'Content-Type': 'application/json'
+                                                                                            },
+                                                                                            body: JSON.stringify({
+                                                                                                folderPaths: [selectedPath],
+                                                                                                recursive: true,
+                                                                                                addToDatabase: true
+                                                                                            })
+                                                                                        });
+                                                                                        
+                                                                                        if (scanResponse.ok) {
+                                                                                            const scanData = await scanResponse.json();
+                                                                                            console.log('Clara Core scan result:', scanData);
+                                                                                            
+                                                                                            if (scanData.models && scanData.models.length > 0) {
+                                                                                                // Store model count for config generation
+                                                                                                setScannedModelsCount(scanData.models.length);
+                                                                                                
+                                                                                                const message = scanData.models.length === 1 
+                                                                                                    ? `✅ Found 1 GGUF model and added it to database` 
+                                                                                                    : `✅ Found ${scanData.models.length} GGUF models and added them to database`;
+                                                                                                
+                                                                                                setFolderPickerMessage(message);
+                                                                                                
+                                                                                                // Automatically generate config (no prompt)
+                                                                                                await handleGenerateConfig();
+                                                                                            } else {
+                                                                                                setFolderPickerMessage('⚠️ No GGUF models found in this folder');
+                                                                                            }
+                                                                                        } else {
+                                                                                            const errorText = await scanResponse.text();
+                                                                                            console.error('Clara Core scan failed:', errorText);
+                                                                                            setFolderPickerMessage('❌ Failed to scan folder. Make sure Clara Core is running.');
+                                                                                        }
+                                                                                    } catch (error: any) {
+                                                                                        console.error('Error scanning folder with Clara Core:', error);
+                                                                                        setFolderPickerMessage('❌ Error scanning folder: ' + error.message);
+                                                                                    } finally {
+                                                                                        setIsSettingCustomPath(false);
+                                                                                    }
+                                                                                }
+                                                                            } catch (error) {
+                                                                                console.error('Error selecting folder:', error);
+                                                                                setIsSettingCustomPath(false);
+                                                                            }
+                                                                        } else {
+                                                                            alert('Folder picker is only available in the desktop app.');
+                                                                        }
+                                                                    }}
                                                                     disabled={isSettingCustomPath}
                                                                     className="px-3 py-1 bg-sakura-500 text-white rounded hover:bg-sakura-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-xs flex items-center gap-2"
                                                                 >
@@ -1778,8 +1747,44 @@ const Onboarding = ({onComplete}: OnboardingProps) => {
                                                                     {isSettingCustomPath ? 'Scanning...' : 'Browse'}
                                                                 </button>
                                                             </div>
-                                                            {folderPickerMessage && (
-                                                                <p className="text-xs text-gray-600 dark:text-gray-400 mt-2">{folderPickerMessage}</p>
+                                                            {/* Config Generation Progress (shows during scanning or after download) */}
+                                                            {generatingConfig && configProgress && (
+                                                                <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-700">
+                                                                    <div className="flex items-center gap-2 mb-2">
+                                                                        <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                                                                        <span className="text-sm font-medium text-blue-700 dark:text-blue-300">
+                                                                            Configuring Models...
+                                                                        </span>
+                                                                    </div>
+                                                                    
+                                                                    <p className="text-xs text-blue-600 dark:text-blue-400 mb-2">
+                                                                        {configProgress.currentStep}
+                                                                    </p>
+                                                                    
+                                                                    <div className="w-full bg-blue-100 dark:bg-blue-800 rounded-full h-2 mb-2">
+                                                                        <div 
+                                                                            className="h-2 bg-blue-600 rounded-full transition-all duration-300"
+                                                                            style={{ width: `${configProgress.progress}%` }}
+                                                                        />
+                                                                    </div>
+                                                                    
+                                                                    <div className="flex justify-between text-xs text-blue-600 dark:text-blue-400">
+                                                                        <span>{configProgress.processedModels} of {configProgress.totalModels} models</span>
+                                                                        <span>{Math.round(configProgress.progress)}%</span>
+                                                                    </div>
+                                                                </div>
+                                                            )}
+                                                            
+                                                            {folderPickerMessage && !generatingConfig && (
+                                                                <div className={`text-xs mt-2 p-2 rounded ${
+                                                                    folderPickerMessage.startsWith('✅') 
+                                                                        ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300' 
+                                                                        : folderPickerMessage.startsWith('⚠️')
+                                                                        ? 'bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-300'
+                                                                        : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300'
+                                                                }`}>
+                                                                    {folderPickerMessage}
+                                                                </div>
                                                             )}
                                                         </div>
                                                     )}
