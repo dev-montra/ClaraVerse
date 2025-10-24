@@ -37,13 +37,13 @@ export function withTimeout<T>(
  * Fetch with timeout
  * @param url URL to fetch
  * @param options Fetch options
- * @param timeoutMs Timeout in milliseconds (default: 5000ms / 5s)
+ * @param timeoutMs Timeout in milliseconds (default: 60000ms / 60s)
  * @returns Promise with fetch response
  */
 export async function fetchWithTimeout(
   url: string,
   options?: RequestInit,
-  timeoutMs: number = 5000
+  timeoutMs: number = 60000
 ): Promise<Response> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);

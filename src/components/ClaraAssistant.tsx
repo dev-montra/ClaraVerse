@@ -752,7 +752,7 @@ export default Counter;`,
         maxToolCalls: 5
       },
       autonomousAgent: {
-        enabled: false,                 // **CHANGED**: Default to false for streaming mode
+        enabled: true,                  // **DEFAULT**: Align with agent mode toggle
         maxRetries: 3,
         retryDelay: 1000,
         enableSelfCorrection: true,
@@ -1287,7 +1287,7 @@ export default Counter;`,
                 maxToolCalls: 5
               },
               autonomousAgent: {
-                enabled: false,               // **CHANGED**: Default to false for streaming mode
+                enabled: true,                // **DEFAULT**: Align with agent mode toggle
                 maxRetries: 3,
                 retryDelay: 1000,
                 enableSelfCorrection: true,
@@ -1445,7 +1445,7 @@ export default Counter;`,
     originalUserQuestion: string,
     streamingMessageId: string,
     enforcedConfig: ClaraAIConfig,
-    conversationHistory: ClaraMessage[],
+  _conversationHistory: ClaraMessage[],
     providersArray: ClaraProvider[]
   ): Promise<string | null> => {
     try {
@@ -1664,8 +1664,7 @@ Now tell me what is the result "`;
     const isVoiceMessage = content.startsWith(voiceModePrefix);
     
     // **NEW**: Check if content is a JSON API request with duplicate user messages
-    let processedContent = content;
-    let isJsonApiRequest = false;
+  let processedContent = content;
     
     try {
       // Try to parse as JSON to detect API request format
@@ -1673,7 +1672,6 @@ Now tell me what is the result "`;
       
       // Check if this looks like an API request with messages array
       if (parsed && typeof parsed === 'object' && Array.isArray(parsed.messages)) {
-        isJsonApiRequest = true;
         console.log('🔍 Detected JSON API request format');
         
         // Extract unique user messages to prevent duplication
@@ -1696,13 +1694,11 @@ Now tell me what is the result "`;
         } else {
           // No user messages found, treat as regular content
           processedContent = content;
-          isJsonApiRequest = false;
         }
       }
     } catch (parseError) {
       // Not valid JSON, treat as regular message
       processedContent = content;
-      isJsonApiRequest = false;
     }
     
     // For display purposes, use the processed content without voice prefix
@@ -2832,7 +2828,7 @@ You can:
             maxToolCalls: 5
           },
           autonomousAgent: {
-            enabled: false,               // **CHANGED**: Default to false for streaming mode
+            enabled: true,                // **DEFAULT**: Align with agent mode toggle
             maxRetries: 3,
             retryDelay: 1000,
             enableSelfCorrection: true,

@@ -178,11 +178,10 @@ export class APIClient {
       fetchOptions.signal = this.abortController.signal;
     }
 
-    // Add 5 second timeout for provider health checks and model listing
+    // Apply standard API timeout (60s) to prevent premature aborts on slower providers
     const response = await fetchWithTimeout(
       `${this.config.baseUrl}${endpoint}`,
-      fetchOptions,
-      5000 // 5 second timeout
+      fetchOptions
     );
 
     if (!response.ok) {
