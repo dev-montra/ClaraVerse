@@ -40,8 +40,8 @@ function createBuildConfig(variant = 'full') {
   if (variant === 'full') {
     // Include all llamaCpp binaries
     baseExtraResources.push({
-      "from": "electron/llamacpp-binaries",
-      "to": "electron/llamacpp-binaries",
+      "from": "electron/claracore",
+      "to": "electron/claracore",
       "filter": [
         "**/*",
         "!*.log",
@@ -51,8 +51,8 @@ function createBuildConfig(variant = 'full') {
   } else if (variant === 'barebone') {
     // Include llamaCpp binaries but exclude specific Windows variants
     baseExtraResources.push({
-      "from": "electron/llamacpp-binaries",
-      "to": "electron/llamacpp-binaries",
+      "from": "electron/claracore",
+      "to": "electron/claracore",
       "filter": [
         "**/*",
         "!*.log",
