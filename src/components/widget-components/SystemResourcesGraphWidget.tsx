@@ -58,21 +58,50 @@ const SystemResourcesGraphWidget: React.FC<SystemResourcesGraphWidgetProps> = ({
 
   useEffect(() => {
     let ws: WebSocket | null = null;
-    let reconnectTimeout: NodeJS.Timeout;
-    let isServiceAvailable = false;
+  let connectTimeout: NodeJS.Timeout | null = null;
+  let reconnectTimeout: NodeJS.Timeout | null = null;
+  let isServiceAvailable = false;
+  let isDisposed = false;
 
     const initializeWidget = async () => {
       try {
         // Check if widget service is available first
         const statusCheck = await widgetServiceClient.getStatus();
-        if (!statusCheck.success || !statusCheck.status?.running) {
-          console.log('Widget service not available, cannot initialize system resources widget');
+        if (!statusCheck.success) {
+          console.log('Widget service status check failed, cannot initialize system resources widget');
+          setError(statusCheck.error || 'Widget service unavailable');
+          setIsLoading(false);
+          return;
+        }
+
+        let serviceRunning = statusCheck.status?.running ?? false;
+
+        if (!serviceRunning) {
+          console.log('Widget service not running, attempting to start for system resources widget');
+          const startResult = await widgetServiceClient.start();
+          if (!startResult.success) {
+            console.error('Failed to auto-start widget service:', startResult.error);
+            setError(startResult.error || 'Failed to start widget service');
+            setIsLoading(false);
+            return;
+          }
+
+          // Allow a moment for the service to finish booting before registering the widget
+          await new Promise(resolve => setTimeout(resolve, 750));
+
+          const confirmStatus = await widgetServiceClient.getStatus();
+          serviceRunning = !!(confirmStatus.success && confirmStatus.status?.running);
+        }
+
+        if (!serviceRunning) {
+          console.log('Widget service failed to start, aborting system resources widget initialization');
           setError('Widget service is not running');
           setIsLoading(false);
           return;
         }
 
         isServiceAvailable = true;
+        setError(null);
 
         const result = await widgetServiceClient.registerWidget('system-resources');
         if (!result.success) {
@@ -83,7 +112,12 @@ const SystemResourcesGraphWidget: React.FC<SystemResourcesGraphWidgetProps> = ({
         }
         
         console.log('System resources widget registered successfully');
-        setTimeout(connectWebSocket, 1000);
+        connectTimeout = setTimeout(() => {
+          if (isDisposed) {
+            return;
+          }
+          connectWebSocket();
+        }, 1000);
       } catch (err) {
         console.error('Error initializing widget:', err);
         setError('Widget service unavailable');
@@ -145,8 +179,11 @@ const SystemResourcesGraphWidget: React.FC<SystemResourcesGraphWidgetProps> = ({
           setError('Connection lost to monitoring service');
           
           // Only attempt to reconnect if service is still available
-          if (isServiceAvailable) {
+          if (isServiceAvailable && !isDisposed) {
             reconnectTimeout = setTimeout(async () => {
+              if (isDisposed) {
+                return;
+              }
               // Re-check if service is still running before reconnecting
               try {
                 const statusCheck = await widgetServiceClient.getStatus();
@@ -181,6 +218,12 @@ const SystemResourcesGraphWidget: React.FC<SystemResourcesGraphWidgetProps> = ({
     initializeWidget();
 
     return () => {
+      isDisposed = true;
+
+      if (connectTimeout) {
+        clearTimeout(connectTimeout);
+      }
+
       if (ws) {
         ws.close();
       }

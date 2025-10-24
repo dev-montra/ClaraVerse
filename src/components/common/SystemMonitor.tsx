@@ -44,8 +44,10 @@ const SystemMonitor: React.FC = () => {
     }
 
     let ws: WebSocket | null = null;
-    let reconnectTimeout: NodeJS.Timeout;
-    let isServiceAvailable = false;
+  let connectTimeout: NodeJS.Timeout | null = null;
+  let reconnectTimeout: NodeJS.Timeout | null = null;
+  let isServiceAvailable = false;
+  let isDisposed = false;
 
     const initializeMonitor = async () => {
       try {
@@ -72,7 +74,12 @@ const SystemMonitor: React.FC = () => {
         console.log('System monitor registered successfully');
         
         // Start WebSocket connection after a brief delay to allow service startup
-        setTimeout(connectWebSocket, 1000);
+        connectTimeout = setTimeout(() => {
+          if (isDisposed) {
+            return;
+          }
+          connectWebSocket();
+        }, 1000);
       } catch (err) {
         console.error('Error initializing system monitor:', err);
         setError(null); // Don't show error for disabled service
@@ -112,8 +119,11 @@ const SystemMonitor: React.FC = () => {
           setError(null); // Don't show error, just hide the monitor
           
           // Only attempt to reconnect if service is still available
-          if (isServiceAvailable) {
+          if (isServiceAvailable && !isDisposed) {
             reconnectTimeout = setTimeout(async () => {
+              if (isDisposed) {
+                return;
+              }
               // Re-check if service is still running before reconnecting
               try {
                 const statusCheck = await widgetServiceClient.getStatus();
@@ -147,11 +157,16 @@ const SystemMonitor: React.FC = () => {
     initializeMonitor();
 
     return () => {
-      if (reconnectTimeout) {
-        clearTimeout(reconnectTimeout);
+      isDisposed = true;
+
+      if (connectTimeout) {
+        clearTimeout(connectTimeout);
       }
       if (ws) {
         ws.close();
+      }
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
       }
       // Unregister widget when component unmounts
       widgetServiceClient.unregisterWidget('system-monitor').catch(err => {

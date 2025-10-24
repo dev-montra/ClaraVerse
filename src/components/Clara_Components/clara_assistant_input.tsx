@@ -2050,10 +2050,9 @@ graph TD: A-->B
 **CREATE ONLY WHEN:** Visual adds value, user requests charts/demos, data needs visualization` : '';
 
 const toolsGuidance =  `
-Always use tools when needed. 
-When using tools, be thorough and explain your actions clearly.
+Always use tools when needed, and narrate what you are doing.
 
-when you are asked for something always resort to writing a python script and running it.
+If the user request needs live data or calculations and no dedicated tool is available, fall back to the python-mcp server to run a script. Use it for things like fetching user data or performing computations, instead of returning sample code that cannot execute on the user's behalf.
 `;
 
 

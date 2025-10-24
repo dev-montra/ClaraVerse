@@ -355,7 +355,7 @@ const toolsGuidance =  `
 Always use tools when needed. 
 When using tools, be thorough and explain your actions clearly.
 
-when you are asked for something always resort to writing a python script and running it.
+when you are asked for something and you don't have any direct tools to use,  always resort to running a python_mcp and run script if its calculation or something thats dynamic and requires real-time data (e.g. fetching user data, performing calculations but not giveing code to users its useless).
 `;
 
   switch (provider?.type) {
