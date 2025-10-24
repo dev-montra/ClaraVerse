@@ -5,6 +5,7 @@ const fsSync = require('fs');
 const log = require('electron-log');
 const https = require('https');
 const http = require('http');
+const { URL } = require('url');
 // const { pipeline } = require('stream/promises');
 // const crypto = require('crypto');
 // const { spawn } = require('child_process');
@@ -326,6 +327,12 @@ const activeDownloads = new Map();
 let tray = null;
 let isQuitting = false;
 
+// Local static server for packaged builds
+let staticServer = null;
+let staticServerPort = null;
+const STATIC_SERVER_HOST = '127.0.0.1';
+const DEFAULT_STATIC_SERVER_PORT = 37117;
+
 // Helper function to format bytes
 function formatBytes(bytes, decimals = 2) {
   if (bytes === 0) return '0 Bytes';
@@ -399,6 +406,144 @@ async function stopAllLocalServices(serviceName = null) {
     stopped: stoppedServices,
     errors: errors
   };
+}
+
+/**
+ * Ensure a loopback static server is running when the packaged app loads renderer assets.
+ * Using a fixed loopback port keeps the renderer origin stable so persisted storage survives restarts.
+ */
+async function ensureStaticServer() {
+  if (staticServer && staticServer.listening && staticServerPort) {
+    return staticServerPort;
+  }
+
+  const distPath = path.join(__dirname, '../dist');
+  if (!fs.existsSync(distPath)) {
+    throw new Error(`Renderer dist directory not found at ${distPath}`);
+  }
+
+  const getMimeType = (filePath) => {
+    const ext = path.extname(filePath).toLowerCase();
+    switch (ext) {
+      case '.html':
+        return 'text/html; charset=utf-8';
+      case '.js':
+        return 'application/javascript; charset=utf-8';
+      case '.css':
+        return 'text/css; charset=utf-8';
+      case '.json':
+        return 'application/json; charset=utf-8';
+      case '.png':
+        return 'image/png';
+      case '.jpg':
+      case '.jpeg':
+        return 'image/jpeg';
+      case '.svg':
+        return 'image/svg+xml';
+      case '.webp':
+        return 'image/webp';
+      case '.woff':
+        return 'font/woff';
+      case '.woff2':
+        return 'font/woff2';
+      case '.ttf':
+        return 'font/ttf';
+      case '.ico':
+        return 'image/x-icon';
+      default:
+        return 'application/octet-stream';
+    }
+  };
+
+  const sendFile = (res, filePath, statusCode = 200) => {
+    res.statusCode = statusCode;
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Cross-Origin-Embedder-Policy', 'credentialless');
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.setHeader('Content-Type', getMimeType(filePath));
+
+    const stream = fs.createReadStream(filePath);
+    stream.on('error', (error) => {
+      log.error('Static server stream error:', error);
+      if (!res.headersSent) {
+        res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+      }
+      res.end('Internal Server Error');
+    });
+    stream.pipe(res);
+  };
+
+  const server = http.createServer((req, res) => {
+    try {
+  const requestUrl = new URL(req.url, `http://${STATIC_SERVER_HOST}`);
+      let pathname = decodeURIComponent(requestUrl.pathname);
+
+      if (pathname.endsWith('/')) {
+        pathname += 'index.html';
+      }
+
+      const resolvedPath = path.normalize(path.join(distPath, pathname));
+
+      if (!resolvedPath.startsWith(distPath)) {
+        res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('Forbidden');
+        return;
+      }
+
+      if (fs.existsSync(resolvedPath) && fs.statSync(resolvedPath).isFile()) {
+        sendFile(res, resolvedPath);
+      } else {
+        const fallback = path.join(distPath, 'index.html');
+        if (fs.existsSync(fallback)) {
+          sendFile(res, fallback);
+        } else {
+          res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+          res.end('Not Found');
+        }
+      }
+    } catch (error) {
+      log.error('Static server request error:', error);
+      res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('Internal Server Error');
+    }
+  });
+
+  const listenOnPort = (port) => new Promise((resolve, reject) => {
+    const handleError = (error) => {
+      server.off('listening', handleListening);
+      reject(error);
+    };
+
+    const handleListening = () => {
+      server.off('error', handleError);
+      resolve(server.address().port);
+    };
+
+    server.once('error', handleError);
+    server.once('listening', handleListening);
+    server.listen(port, STATIC_SERVER_HOST);
+  });
+
+  const desiredPort = Number(process.env.CLARA_STATIC_PORT) || DEFAULT_STATIC_SERVER_PORT;
+  let boundPort = desiredPort;
+
+  try {
+    boundPort = await listenOnPort(desiredPort);
+  } catch (error) {
+    if (error && error.code === 'EADDRINUSE') {
+      log.warn(`Static server port ${desiredPort} already in use, selecting random port`);
+      boundPort = await listenOnPort(0);
+    } else {
+      throw error;
+    }
+  }
+
+  staticServer = server;
+  staticServerPort = boundPort;
+  log.info(`Loopback static server ready on http://${STATIC_SERVER_HOST}:${staticServerPort}`);
+
+  return staticServerPort;
 }
 
 // Register Docker container management IPC handlers
@@ -5211,8 +5356,16 @@ async function createMainWindow() {
     // Open DevTools in both development modes
     mainWindow.webContents.openDevTools();
   } else {
-    // Production mode - load built files
-    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+    // Production mode - serve via loopback server so COOP/COEP headers are present
+    try {
+      const port = await ensureStaticServer();
+  const prodUrl = `http://${STATIC_SERVER_HOST}:${port}/index.html`;
+      log.info(`Loading production build from ${prodUrl}`);
+      await mainWindow.loadURL(prodUrl);
+    } catch (error) {
+      log.error('Falling back to file:// load after static server failure:', error);
+      await mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+    }
   }
 
   // Wait for DOM content to be fully loaded before showing
@@ -5286,6 +5439,18 @@ app.on('window-all-closed', async () => {
     // Unregister global shortcuts when app is quitting
     globalShortcut.unregisterAll();
     
+    if (staticServer) {
+      try {
+        staticServer.close();
+        log.info('Loopback static server stopped');
+      } catch (error) {
+        log.warn('Error shutting down loopback static server:', error);
+      } finally {
+        staticServer = null;
+        staticServerPort = null;
+      }
+    }
+
     // Stop watchdog service first
     if (watchdogService) {
       try {
