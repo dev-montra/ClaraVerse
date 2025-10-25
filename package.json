@@ -1,10 +1,10 @@
 {
   "name": "clara-verse",
-  "version": "0.2.1-alpha.1",
+  "version": "0.3.0-alpha.1",
   "private": true,
-  "description": "Clara – A privacy-first, client-side AI assistant WebUI for LLMs. No backend, no data leaks. Keep your conversations completely yours, If you like it, Don't Forget to Give a Star 🌟",
+  "description": "ClaraVerse - The AI-Powered Creative Suite for Everyone",
   "author": {
-    "name": "Claraverse Labs",
+    "name": "ClaraVerse Labs",
     "email": "claraverse.space@gmail.com"
   },
   "type": "module",
