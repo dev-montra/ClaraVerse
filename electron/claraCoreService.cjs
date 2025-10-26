@@ -21,6 +21,10 @@ class ClaraCoreService {
     this.isStarting = false; // Prevent concurrent start attempts
     this.isIntentionallyStopped = false; // Track intentional stops
     this.restartTimer = null; // Track auto-restart timer
+
+    // Set up writable config directory in user data path
+    this.configDir = path.join(app.getPath('userData'), 'claracore');
+    this.configPath = path.join(this.configDir, 'config.yaml');
   }
 
   /**
@@ -306,9 +310,24 @@ class ClaraCoreService {
 
     try {
       const binaryPath = this.getBinaryPath();
-      const args = ['-listen', ':8091'];
+
+      // Ensure config directory exists
+      if (!fs.existsSync(this.configDir)) {
+        fs.mkdirSync(this.configDir, { recursive: true });
+        log.info(`Created ClaraCore config directory: ${this.configDir}`);
+      }
+
+      // Create downloads directory in the writable location
+      const downloadsDir = path.join(this.configDir, 'downloads');
+      if (!fs.existsSync(downloadsDir)) {
+        fs.mkdirSync(downloadsDir, { recursive: true });
+        log.info(`Created ClaraCore downloads directory: ${downloadsDir}`);
+      }
+
+      const args = ['-listen', ':8091', '-config', this.configPath];
 
       log.info(`Starting ClaraCore service: ${binaryPath} ${args.join(' ')}`);
+      log.info(`ClaraCore working directory: ${this.configDir}`);
 
       // Ensure binary has execute permissions on Unix-like systems
       if (os.platform() !== 'win32') {
@@ -320,11 +339,13 @@ class ClaraCoreService {
         }
       }
 
-      // Spawn the ClaraCore process
+      // Spawn the ClaraCore process with the writable config path
+      // Set cwd to our writable directory so downloads go there
       this.process = spawn(binaryPath, args, {
         stdio: ['ignore', 'pipe', 'pipe'],
         detached: false,
-        windowsHide: true
+        windowsHide: true,
+        cwd: this.configDir  // Set working directory to writable location
       });
 
       this.isRunning = true;
