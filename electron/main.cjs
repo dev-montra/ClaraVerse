@@ -5533,6 +5533,34 @@ app.on('window-all-closed', async () => {
   }
 });
 
+// Handle app quit - ensure services are stopped
+app.on('before-quit', async (event) => {
+  if (!isQuitting) {
+    log.info('App is quitting, setting isQuitting flag...');
+    isQuitting = true;
+  }
+});
+
+// Additional cleanup on will-quit
+app.on('will-quit', async (event) => {
+  log.info('App will quit, ensuring all services are stopped...');
+
+  // Stop ClaraCore service explicitly
+  if (centralServiceManager && centralServiceManager.services.has('claracore')) {
+    try {
+      event.preventDefault(); // Prevent quit until cleanup is done
+      log.info('Stopping ClaraCore service on quit...');
+      await centralServiceManager.stopService('claracore');
+      log.info('✅ ClaraCore service stopped successfully');
+
+      // Now actually quit
+      setTimeout(() => app.quit(), 500);
+    } catch (error) {
+      log.error('❌ Error stopping ClaraCore service on quit:', error);
+    }
+  }
+});
+
 app.on('activate', async () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     await createMainWindow();
