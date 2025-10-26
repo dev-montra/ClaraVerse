@@ -151,6 +151,6 @@ config.yaml
 model_folders.json
 settings.json
 /binaries/*
-electron/claracore/progress_state.json
-electron/claracore/progress_state.json
 downloads/*
+config.yaml.backup.*
+electron/claracore/progress_state.*
