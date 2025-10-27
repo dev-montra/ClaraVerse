@@ -532,8 +532,38 @@ async function ensureStaticServer() {
     boundPort = await listenOnPort(desiredPort);
   } catch (error) {
     if (error && error.code === 'EADDRINUSE') {
-      log.warn(`Static server port ${desiredPort} already in use, selecting random port`);
-      boundPort = await listenOnPort(0);
+      // CRITICAL: Using a different port will break data persistence (localStorage/IndexedDB)
+      // because the origin (http://127.0.0.1:<port>) will be different
+      log.error(`Static server port ${desiredPort} already in use. This will cause data loss!`);
+      log.error(`Another instance of the app may be running, or another service is using port ${desiredPort}.`);
+      log.error(`All user data (settings, chats, etc.) is tied to the origin http://127.0.0.1:${desiredPort}`);
+
+      // Show error dialog to user
+      const { dialog } = require('electron');
+      const choice = await dialog.showMessageBox({
+        type: 'error',
+        title: 'Port Conflict - Data Loss Risk',
+        message: `Cannot start on port ${desiredPort}`,
+        detail: `Port ${desiredPort} is already in use. This could mean:\n\n` +
+                `1. Another instance of ClaraVerse is running\n` +
+                `2. Another application is using this port\n\n` +
+                `Using a different port will cause you to lose access to your saved data ` +
+                `(settings, chat history, etc.) because browser storage is tied to the port number.\n\n` +
+                `What would you like to do?`,
+        buttons: ['Quit and Fix Port Conflict', 'Continue Anyway (Data Will Be Lost)'],
+        defaultId: 0,
+        cancelId: 0
+      });
+
+      if (choice.response === 0) {
+        // User chose to quit
+        app.quit();
+        throw new Error('Port conflict - user chose to quit');
+      } else {
+        // User chose to continue with random port (data loss)
+        log.warn(`User chose to continue despite port conflict. Using random port - DATA WILL BE LOST!`);
+        boundPort = await listenOnPort(0);
+      }
     } else {
       throw error;
     }
@@ -5408,6 +5438,24 @@ async function createMainWindow() {
 
 // Initialize app when ready
 app.whenReady().then(async () => {
+  // Request single instance lock to prevent multiple instances
+  // This prevents port conflicts and data corruption
+  const gotTheLock = app.requestSingleInstanceLock();
+
+  if (!gotTheLock) {
+    log.warn('Another instance is already running. Quitting this instance.');
+    app.quit();
+    return;
+  }
+
+  // If someone tries to run a second instance, focus our window
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    }
+  });
+
   // Initialize isolated startup settings manager first
   startupSettingsManager = new StartupSettingsManager();
   log.info('🔒 Isolated startup settings manager initialized on app ready');
@@ -5416,13 +5464,13 @@ app.whenReady().then(async () => {
   await cleanupStoredPasswords();
 
   await initialize();
-  
+
   // Create system tray
   createTray();
-  
+
   // Register global shortcuts after app is ready
   registerGlobalShortcuts();
-  
+
   log.info('Application initialization complete with isolated startup settings and global shortcuts registered');
 });
 
