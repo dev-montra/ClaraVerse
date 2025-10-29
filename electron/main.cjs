@@ -3681,10 +3681,29 @@ function registerHandlers() {
   });
 
   // Handle app close request
-  ipcMain.on('app-close', async () => {
+  ipcMain.on('app-close', async (event) => {
     log.info('App close requested from renderer');
-    isQuitting = true;
-    app.quit();
+
+    try {
+      // Set quitting flag first
+      isQuitting = true;
+
+      // Close the main window gracefully if it exists
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.removeAllListeners('close'); // Remove close handler to allow closing
+        mainWindow.close();
+      }
+
+      // Give a small delay for the IPC response to be sent back
+      // before actually quitting the app
+      setTimeout(() => {
+        app.quit();
+      }, 100);
+    } catch (error) {
+      log.error('Error during app close:', error);
+      // Force quit if there's an error
+      app.quit();
+    }
   });
 
   // Add IPC handler for tray control
@@ -5478,15 +5497,19 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', async () => {
   // If the app is quitting intentionally, proceed with cleanup
   if (isQuitting) {
-    // Clean up tray
-    if (tray) {
-      tray.destroy();
-      tray = null;
+    try {
+      // Clean up tray
+      if (tray && !tray.isDestroyed()) {
+        tray.destroy();
+        tray = null;
+      }
+
+      // Unregister global shortcuts when app is quitting
+      globalShortcut.unregisterAll();
+    } catch (error) {
+      log.error('Error during window-all-closed cleanup:', error);
     }
-    
-    // Unregister global shortcuts when app is quitting
-    globalShortcut.unregisterAll();
-    
+
     if (staticServer) {
       try {
         staticServer.close();
@@ -5565,7 +5588,12 @@ app.on('window-all-closed', async () => {
     if (dockerSetup) {
       await dockerSetup.stop();
     }
-    
+
+    // Note: On macOS, we don't call app.quit() here because:
+    // 1. If quit was initiated from the exit button, app.quit() was already called in app-close handler
+    // 2. If quit was initiated from menu (Cmd+Q), app.quit() was already called
+    // 3. This prevents double-quit issues
+    // On Windows/Linux, we need to explicitly quit because the behavior is different
     if (process.platform !== 'darwin') {
       app.quit();
     }
@@ -5590,11 +5618,14 @@ app.on('before-quit', async (event) => {
 });
 
 // Additional cleanup on will-quit
+let willQuitHandled = false; // Flag to prevent infinite loop
 app.on('will-quit', async (event) => {
   log.info('App will quit, ensuring all services are stopped...');
 
-  // Stop ClaraCore service explicitly
-  if (centralServiceManager && centralServiceManager.services.has('claracore')) {
+  // Stop ClaraCore service explicitly (only once)
+  if (!willQuitHandled && centralServiceManager && centralServiceManager.services.has('claracore')) {
+    willQuitHandled = true; // Set flag to prevent re-entry
+
     try {
       event.preventDefault(); // Prevent quit until cleanup is done
       log.info('Stopping ClaraCore service on quit...');
@@ -5605,6 +5636,8 @@ app.on('will-quit', async (event) => {
       setTimeout(() => app.quit(), 500);
     } catch (error) {
       log.error('❌ Error stopping ClaraCore service on quit:', error);
+      // Still quit even if cleanup fails
+      setTimeout(() => app.quit(), 500);
     }
   }
 });
@@ -7472,22 +7505,30 @@ function createTray() {
       {
         label: 'Show ClaraVerse',
         click: () => {
-          if (mainWindow) {
-            if (mainWindow.isMinimized()) {
-              mainWindow.restore();
+          try {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              if (mainWindow.isMinimized()) {
+                mainWindow.restore();
+              }
+              mainWindow.show();
+              mainWindow.focus();
+            } else if (!isQuitting) {
+              createMainWindow();
             }
-            mainWindow.show();
-            mainWindow.focus();
-          } else {
-            createMainWindow();
+          } catch (error) {
+            log.error('Error showing window from tray:', error);
           }
         }
       },
       {
         label: 'Hide ClaraVerse',
         click: () => {
-          if (mainWindow) {
-            mainWindow.hide();
+          try {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.hide();
+            }
+          } catch (error) {
+            log.error('Error hiding window from tray:', error);
           }
         }
       },
@@ -7495,8 +7536,13 @@ function createTray() {
       {
         label: 'Quit',
         click: () => {
-          isQuitting = true;
-          app.quit();
+          try {
+            isQuitting = true;
+            app.quit();
+          } catch (error) {
+            log.error('Error quitting from tray:', error);
+            process.exit(0); // Force exit as last resort
+          }
         }
       }
     ]);
@@ -7505,31 +7551,39 @@ function createTray() {
     
     // Handle tray click
     tray.on('click', () => {
-      if (mainWindow) {
-        if (mainWindow.isVisible()) {
-          mainWindow.hide();
-        } else {
+      try {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          if (mainWindow.isVisible()) {
+            mainWindow.hide();
+          } else {
+            if (mainWindow.isMinimized()) {
+              mainWindow.restore();
+            }
+            mainWindow.show();
+            mainWindow.focus();
+          }
+        } else if (!isQuitting) {
+          createMainWindow();
+        }
+      } catch (error) {
+        log.error('Error handling tray click:', error);
+      }
+    });
+
+    // Handle double-click on tray (Windows/Linux)
+    tray.on('double-click', () => {
+      try {
+        if (mainWindow && !mainWindow.isDestroyed()) {
           if (mainWindow.isMinimized()) {
             mainWindow.restore();
           }
           mainWindow.show();
           mainWindow.focus();
+        } else if (!isQuitting) {
+          createMainWindow();
         }
-      } else {
-        createMainWindow();
-      }
-    });
-    
-    // Handle double-click on tray (Windows/Linux)
-    tray.on('double-click', () => {
-      if (mainWindow) {
-        if (mainWindow.isMinimized()) {
-          mainWindow.restore();
-        }
-        mainWindow.show();
-        mainWindow.focus();
-      } else {
-        createMainWindow();
+      } catch (error) {
+        log.error('Error handling tray double-click:', error);
       }
     });
     

@@ -97,6 +97,7 @@ class ClaraCoreRemoteService {
       docker: false,
       nvidia: false,
       rocm: false,
+      vulkan: false,
       strix: false,
       architecture: 'unknown'
     };
@@ -138,6 +139,40 @@ class ClaraCoreRemoteService {
         if (rocmVersion && rocmVersion.trim()) {
           details.rocmVersion = rocmVersion.trim();
         }
+
+        // Check if ROCm devices are accessible (critical for container usage)
+        const kfdCheck = await this.execCommand(conn, 'test -e /dev/kfd && echo "exists" || echo "missing"');
+        details.rocmDeviceAccessible = (kfdCheck.trim() === 'exists');
+
+        log.info(`[Remote] ROCm detected: v${details.rocmVersion || 'unknown'}, /dev/kfd: ${details.rocmDeviceAccessible ? 'available' : 'MISSING'}`);
+      }
+
+      // Check for Vulkan support (fallback for AMD GPUs when ROCm devices unavailable)
+      // First check if /dev/dri exists (this is what matters for container GPU access)
+      const driCheck = await this.execCommand(conn, 'test -e /dev/dri && echo "exists" || echo "missing"');
+      details.vulkanDeviceAccessible = (driCheck.trim() === 'exists');
+
+      // Then check if vulkaninfo is installed
+      const vulkanCheck = await this.execCommand(conn, 'vulkaninfo --summary 2>/dev/null | grep -i "Vulkan Instance Version"');
+      if (vulkanCheck && !vulkanCheck.includes('command not found') && vulkanCheck.trim()) {
+        details.vulkan = true;
+        details.vulkanInstalled = true;
+
+        // Try to get Vulkan device name
+        const vulkanDevice = await this.execCommand(conn, 'vulkaninfo 2>/dev/null | grep "deviceName" | head -1');
+        if (vulkanDevice && vulkanDevice.trim()) {
+          details.vulkanDevice = vulkanDevice.replace(/.*deviceName\s*=\s*/, '').trim();
+        }
+      } else if (details.vulkanDeviceAccessible) {
+        // /dev/dri exists but vulkaninfo not installed - we can still use Vulkan!
+        // setupVulkan will install the necessary packages
+        details.vulkan = true;
+        details.vulkanInstalled = false;
+        log.info('[Remote] Vulkan: /dev/dri available, vulkaninfo not installed (will be installed during setup)');
+      }
+
+      if (details.vulkanDeviceAccessible) {
+        log.info(`[Remote] Vulkan compatible: YES (/dev/dri available, installed: ${details.vulkanInstalled ? 'YES' : 'NO'})`);
       }
 
       // Check for Strix Halo (Ryzen AI Max)
@@ -165,9 +200,10 @@ class ClaraCoreRemoteService {
         };
       }
 
-      // Determine recommendation
+      // Determine recommendation with smart fallback logic
       let detected = 'cpu';
       let confidence = 'high';
+      let fallbackReason = null;
 
       if (details.nvidia) {
         detected = 'cuda';
@@ -175,15 +211,32 @@ class ClaraCoreRemoteService {
       } else if (details.strix) {
         detected = 'strix';
         confidence = 'high';
-      } else if (details.rocm) {
+      } else if (details.rocm && details.rocmDeviceAccessible) {
+        // ROCm is available AND devices are accessible
         detected = 'rocm';
         confidence = 'high';
+      } else if (details.rocm && !details.rocmDeviceAccessible && details.vulkan && details.vulkanDeviceAccessible) {
+        // ROCm installed but /dev/kfd missing, fall back to Vulkan
+        detected = 'vulkan';
+        confidence = 'high'; // Changed to high since we know /dev/dri works
+        fallbackReason = 'ROCm detected but /dev/kfd not accessible. Using Vulkan as fallback for GPU acceleration.';
+        log.warn(`[Remote] ⚠️  ${fallbackReason}`);
+        log.info(`[Remote] ℹ️  ROCm version: ${details.rocmVersion || 'unknown'}`);
+        log.info(`[Remote] ℹ️  /dev/kfd: missing`);
+        log.info(`[Remote] ℹ️  /dev/dri: available`);
+        log.info(`[Remote] ✅ Vulkan will provide GPU acceleration without requiring /dev/kfd`);
+      } else if (details.vulkan && details.vulkanDeviceAccessible) {
+        // Vulkan available (no ROCm or ROCm not accessible)
+        detected = 'vulkan';
+        confidence = 'high';
+        log.info(`[Remote] ℹ️  Vulkan GPU acceleration available via /dev/dri`);
       }
 
       return {
         detected,
         confidence,
-        details
+        details,
+        fallbackReason
       };
 
     } catch (error) {
@@ -249,7 +302,30 @@ class ClaraCoreRemoteService {
                 await this.setupCuda(conn);
                 gpuAvailable = true;
               } else if (hardwareType === 'rocm') {
-                await this.setupRocm(conn);
+                // Try ROCm, with automatic Vulkan fallback
+                log.info('[Remote] ROCm deployment requested...');
+                try {
+                  await this.setupRocm(conn);
+                  gpuAvailable = true;
+                  log.info('[Remote] ✅ ROCm validation passed');
+                } catch (rocmError) {
+                  // ROCm failed, try Vulkan fallback
+                  log.warn(`[Remote] ⚠️  ROCm setup failed: ${rocmError.message}`);
+                  log.info('[Remote] 🔄 Attempting automatic Vulkan fallback for GPU acceleration...');
+
+                  try {
+                    await this.setupVulkan(conn);
+                    actualHardwareType = 'vulkan';
+                    gpuAvailable = true;
+                    log.info('[Remote] ✅ Vulkan fallback successful! Switching to Vulkan container.');
+                    log.info('[Remote] ℹ️  Container will use clara17verse/claracore:vulkan instead');
+                  } catch (vulkanError) {
+                    log.warn(`[Remote] Vulkan fallback also failed: ${vulkanError.message}`);
+                    throw rocmError; // Throw original error if both fail
+                  }
+                }
+              } else if (hardwareType === 'vulkan') {
+                await this.setupVulkan(conn);
                 gpuAvailable = true;
               } else if (hardwareType === 'strix') {
                 await this.setupStrix(conn);
@@ -268,8 +344,8 @@ class ClaraCoreRemoteService {
           }
 
           // Update container name and image based on actual hardware type
-          const finalImageName = `clara17verse/claracore:${actualHardwareType}`;
-          const finalContainerName = `claracore-${actualHardwareType}`;
+          let finalImageName = `clara17verse/claracore:${actualHardwareType}`;
+          let finalContainerName = `claracore-${actualHardwareType}`;
 
           if (!gpuAvailable && hardwareType !== 'cpu') {
             log.info(`[Remote] 🔄 Switching from ${hardwareType} to CPU mode due to GPU unavailability`);
@@ -284,16 +360,59 @@ class ClaraCoreRemoteService {
           log.info(`Pulling image ${finalImageName}...`);
           await this.execCommandWithOutput(conn, `docker pull ${finalImageName}`);
 
-          // 5. Run the container with appropriate flags
+          // 5. Detect available DRI devices for GPU modes
+          let availableDevices = [];
+          if (actualHardwareType !== 'cpu' && actualHardwareType !== 'cuda') {
+            log.info('[Remote] Detecting available DRI devices...');
+            availableDevices = await this.detectDRIDevices(conn);
+            log.info(`[Remote] Found DRI devices: ${availableDevices.join(', ')}`);
+          }
+
+          // 6. Run the container with appropriate flags
           log.info(`Starting container ${finalContainerName}...`);
-          const runCommand = this.buildDockerRunCommand(actualHardwareType, finalContainerName, finalImageName);
+          const runCommand = this.buildDockerRunCommand(actualHardwareType, finalContainerName, finalImageName, availableDevices);
 
           try {
             const runResult = await this.execCommand(conn, runCommand);
           } catch (runError) {
-            // If docker run fails, throw detailed error immediately
             log.error(`Docker run command failed: ${runError.message}`);
-            throw new Error(`Failed to start container: ${runError.message}`);
+
+            // Special case: If ROCm fails with /dev/kfd error, try Vulkan fallback
+            if (actualHardwareType === 'rocm' && runError.message.includes('/dev/kfd')) {
+              log.warn('[Remote] ⚠️  Docker cannot access /dev/kfd (Docker daemon namespace issue)');
+              log.info('[Remote] 🔄 Attempting Vulkan fallback (doesn\'t require /dev/kfd)...');
+
+              try {
+                // Switch to Vulkan (use strix image which is Vulkan-based)
+                actualHardwareType = 'vulkan';
+                const vulkanImageName = `clara17verse/claracore:strix`;
+                const vulkanContainerName = `claracore-vulkan`;
+
+                // Pull Strix/Vulkan image
+                log.info(`[Remote] Pulling ${vulkanImageName} (Vulkan-based)...`);
+                await this.execCommandWithOutput(conn, `docker pull ${vulkanImageName}`);
+
+                // Remove failed ROCm container
+                await this.execCommand(conn, `docker rm ${finalContainerName} 2>/dev/null || true`);
+
+                // Build Vulkan command (without /dev/kfd)
+                const vulkanCommand = this.buildDockerRunCommand('vulkan', vulkanContainerName, vulkanImageName, availableDevices);
+                log.info('[Remote] Starting Vulkan container...');
+                await this.execCommand(conn, vulkanCommand);
+
+                log.info('[Remote] ✅ Vulkan fallback successful!');
+
+                // Update variables for health check
+                finalImageName = vulkanImageName;
+                finalContainerName = vulkanContainerName;
+                gpuAvailable = true;
+              } catch (vulkanError) {
+                log.error('[Remote] Vulkan fallback also failed:', vulkanError.message);
+                throw new Error(`ROCm failed due to /dev/kfd access issue, and Vulkan fallback also failed: ${vulkanError.message}`);
+              }
+            } else {
+              throw new Error(`Failed to start container: ${runError.message}`);
+            }
           }
 
           // 6. Wait for container to be healthy
@@ -301,13 +420,71 @@ class ClaraCoreRemoteService {
           await this.sleep(5000);
 
           // 7. Verify container is running
-          const isRunning = await this.execCommand(conn, `docker ps -q -f name=${containerName}`);
+          const isRunning = await this.execCommand(conn, `docker ps -q -f name=${finalContainerName}`);
           if (!isRunning || !isRunning.trim()) {
             // Get container logs for debugging
-            const logs = await this.execCommand(conn, `docker logs ${containerName} 2>&1 || echo "No logs available"`);
-            const inspectResult = await this.execCommand(conn, `docker inspect ${containerName} --format='{{.State.Status}}: {{.State.Error}}' 2>&1 || echo "Container not found"`);
-            
-            throw new Error(`Container failed to start.\n\nStatus: ${inspectResult}\n\nLogs:\n${logs.substring(0, 500)}`);
+            const logs = await this.execCommand(conn, `docker logs ${finalContainerName} 2>&1 || echo "No logs available"`);
+            const inspectResult = await this.execCommand(conn, `docker inspect ${finalContainerName} --format='{{.State.Status}}: {{.State.Error}}' 2>&1 || echo "Container not found"`);
+
+            // Special case: If ROCm container fails with /dev/kfd error, try Vulkan fallback
+            if (actualHardwareType === 'rocm' && inspectResult.includes('/dev/kfd')) {
+              log.warn('[Remote] ⚠️  ROCm container failed: Docker cannot access /dev/kfd');
+              log.info('[Remote] 🔄 Attempting Vulkan fallback (doesn\'t require /dev/kfd)...');
+
+              try {
+                // Remove failed ROCm container
+                await this.execCommand(conn, `docker rm -f ${finalContainerName} 2>/dev/null || true`);
+
+                // Switch to Vulkan (use strix image which is Vulkan-based for AMD GPUs)
+                actualHardwareType = 'vulkan';
+                finalImageName = `clara17verse/claracore:strix`;
+                finalContainerName = `claracore-vulkan`;
+
+                // Pull Strix/Vulkan image
+                log.info(`[Remote] Pulling ${finalImageName} (Vulkan-based)...`);
+                await this.execCommandWithOutput(conn, `docker pull ${finalImageName}`);
+
+                // Build Vulkan command (without /dev/kfd)
+                const vulkanCommand = this.buildDockerRunCommand('vulkan', finalContainerName, finalImageName, availableDevices);
+                log.info('[Remote] Starting Vulkan container...');
+                await this.execCommand(conn, vulkanCommand);
+
+                // Wait and verify
+                await this.sleep(5000);
+                const vulkanRunning = await this.execCommand(conn, `docker ps -q -f name=${finalContainerName}`);
+
+                if (!vulkanRunning || !vulkanRunning.trim()) {
+                  // Vulkan failed - try one more time with --privileged mode
+                  log.warn('[Remote] Vulkan with device mounting failed, trying --privileged mode...');
+
+                  await this.execCommand(conn, `docker rm -f ${finalContainerName} 2>/dev/null || true`);
+
+                  // Build command with --privileged (no device specification needed)
+                  const privilegedCommand = this.buildDockerRunCommand('vulkan', finalContainerName, finalImageName, []); // Empty array triggers privileged mode
+                  await this.execCommand(conn, privilegedCommand);
+
+                  // Wait and verify
+                  await this.sleep(5000);
+                  const privilegedRunning = await this.execCommand(conn, `docker ps -q -f name=${finalContainerName}`);
+
+                  if (!privilegedRunning || !privilegedRunning.trim()) {
+                    const privilegedLogs = await this.execCommand(conn, `docker logs ${finalContainerName} 2>&1`);
+                    throw new Error(`Vulkan container failed even with --privileged mode:\n${privilegedLogs.substring(0, 500)}`);
+                  }
+
+                  log.info('[Remote] ✅ Vulkan with --privileged mode successful!');
+                }
+
+                log.info('[Remote] ✅ Vulkan fallback successful! Container is running.');
+                gpuAvailable = true;
+                // Continue to health check below
+              } catch (vulkanError) {
+                log.error('[Remote] Vulkan fallback failed:', vulkanError.message);
+                throw new Error(`ROCm failed due to /dev/kfd issue, and Vulkan fallback also failed: ${vulkanError.message}`);
+              }
+            } else {
+              throw new Error(`Container failed to start.\n\nStatus: ${inspectResult}\n\nLogs:\n${logs.substring(0, 500)}`);
+            }
           }
           
           log.info('[Remote] Container started successfully!');
@@ -407,10 +584,35 @@ class ClaraCoreRemoteService {
   }
 
   /**
+   * Detect available DRI devices on the remote server
+   */
+  async detectDRIDevices(conn) {
+    try {
+      // List all devices in /dev/dri/
+      const devices = await this.execCommand(conn, 'ls -1 /dev/dri/ 2>/dev/null | grep -E "^(card|renderD)" || echo ""');
+
+      if (!devices || !devices.trim()) {
+        log.warn('[Remote] No DRI devices found in /dev/dri/');
+        return [];
+      }
+
+      // Parse device list and create full paths
+      const deviceList = devices.trim().split('\n')
+        .filter(d => d.trim())
+        .map(d => `/dev/dri/${d.trim()}`);
+
+      return deviceList;
+    } catch (error) {
+      log.error('[Remote] Error detecting DRI devices:', error.message);
+      return [];
+    }
+  }
+
+  /**
    * Build Docker run command based on hardware type
    * Handles different contexts (Docker Desktop vs Docker Engine)
    */
-  buildDockerRunCommand(hardwareType, containerName, imageName) {
+  buildDockerRunCommand(hardwareType, containerName, imageName, availableDevices = []) {
     // Use clara_network and expose on both ports (8091 standard, 5890 legacy)
     // Use 172.17.0.1 (default bridge gateway) to access host services from custom network
     const baseCmd = `docker run -d --name ${containerName} --network clara_network --restart unless-stopped -p 8091:5890 -p 5890:5890 --add-host=host.docker.internal:172.17.0.1`;
@@ -423,12 +625,30 @@ class ClaraCoreRemoteService {
         return `${baseCmd} --gpus all ${volume} ${imageName}`;
 
       case 'rocm':
-        // AMD ROCm requires specific device access
-        return `${baseCmd} --device=/dev/kfd --device=/dev/dri --group-add video --ipc=host --cap-add=SYS_PTRACE --security-opt seccomp=unconfined ${volume} ${imageName}`;
+        // AMD ROCm requires specific device access (/dev/kfd + DRI render devices)
+        // Use dynamically detected devices
+        const rocmDevices = availableDevices.map(d => `--device=${d}`).join(' ');
+        return `${baseCmd} --device=/dev/kfd ${rocmDevices} --group-add video --group-add render --ipc=host --cap-add=SYS_PTRACE --security-opt seccomp=unconfined ${volume} ${imageName}`;
+
+      case 'vulkan':
+        // Vulkan only requires DRI render devices (no /dev/kfd needed)
+        // Use privileged mode if Docker can't see individual devices (namespace issue)
+        if (availableDevices.length === 0) {
+          log.warn('[Remote] No DRI devices detected, using --privileged mode for full device access');
+          return `${baseCmd} --privileged --group-add video --group-add render -e VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json ${volume} ${imageName}`;
+        }
+        const vulkanDevices = availableDevices.map(d => `--device=${d}`).join(' ');
+        return `${baseCmd} ${vulkanDevices} --group-add video --group-add render --security-opt seccomp=unconfined -e VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.x86_64.json ${volume} ${imageName}`;
 
       case 'strix':
-        // Strix Halo (Ryzen AI Max) uses iGPU
-        return `${baseCmd} --device=/dev/dri --group-add video --security-opt seccomp=unconfined ${volume} ${imageName}`;
+        // Strix Halo (Ryzen AI Max) uses iGPU with Vulkan
+        // Use privileged mode if Docker can't see individual devices
+        if (availableDevices.length === 0) {
+          log.warn('[Remote] No DRI devices detected, using --privileged mode for full device access');
+          return `${baseCmd} --privileged --group-add video --group-add render ${volume} ${imageName}`;
+        }
+        const strixDevices = availableDevices.map(d => `--device=${d}`).join(' ');
+        return `${baseCmd} ${strixDevices} --group-add video --group-add render --security-opt seccomp=unconfined ${volume} ${imageName}`;
 
       case 'cpu':
       default:
@@ -634,19 +854,28 @@ class ClaraCoreRemoteService {
     try {
       log.info('[Remote] Validating ROCm device access...');
 
-      // Check if /dev/kfd exists (required for ROCm)
-      const kfdCheck = await this.execCommand(conn, 'test -e /dev/kfd && echo "exists" || echo "missing"');
-      if (kfdCheck.trim() === 'missing') {
-        throw new Error('ROCm device /dev/kfd not found. Please install ROCm drivers first.\n\nInstallation guide: https://rocmdocs.amd.com/en/latest/Installation_Guide/Installation-Guide.html');
+      // More thorough check: verify /dev/kfd is actually a character device
+      const kfdCheck = await this.execCommand(conn, 'ls -la /dev/kfd 2>&1');
+      log.info(`[Remote] DEBUG: ls -la /dev/kfd output:\n${kfdCheck}`);
+
+      // Check if it's a character device (starts with 'c')
+      if (!kfdCheck || kfdCheck.includes('No such file') || kfdCheck.includes('cannot access')) {
+        throw new Error('ROCm device /dev/kfd not found. ROCm kernel drivers may not be loaded.\n\nTry loading the module: sudo modprobe amdgpu\nOr install ROCm drivers: https://rocmdocs.amd.com/en/latest/Installation_Guide/Installation-Guide.html');
       }
 
-      // Check if /dev/dri exists
-      const driCheck = await this.execCommand(conn, 'test -e /dev/dri && echo "exists" || echo "missing"');
-      if (driCheck.trim() === 'missing') {
+      if (!kfdCheck.startsWith('c')) {
+        throw new Error('/dev/kfd exists but is not a character device. ROCm kernel module (amdkfd) may not be loaded.\n\nTry: sudo modprobe amdgpu');
+      }
+
+      // Check if /dev/dri exists and is accessible
+      const driCheck = await this.execCommand(conn, 'ls -la /dev/dri 2>&1');
+      log.info(`[Remote] DEBUG: ls -la /dev/dri output:\n${driCheck}`);
+
+      if (!driCheck || driCheck.includes('No such file') || driCheck.includes('cannot access')) {
         throw new Error('Device /dev/dri not found. AMD GPU drivers may not be installed correctly.');
       }
 
-      log.info('[Remote] ROCm devices found: /dev/kfd and /dev/dri');
+      log.info('[Remote] ✅ ROCm devices validated: /dev/kfd and /dev/dri are accessible');
 
       // Ensure user is in video and render groups
       const username = await this.execCommand(conn, 'whoami');
@@ -657,6 +886,83 @@ class ClaraCoreRemoteService {
       log.info('[Remote] ROCm setup complete. Note: User may need to log out and back in for group changes to take effect.');
     } catch (error) {
       log.error('[Remote] ROCm setup failed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Setup Vulkan GPU acceleration (Fallback for AMD GPUs when ROCm unavailable)
+   * Only requires /dev/dri, no ROCm kernel drivers needed
+   */
+  async setupVulkan(conn) {
+    try {
+      log.info('[Remote] Setting up Vulkan GPU acceleration...');
+
+      // 1. Validate DRI device (required for GPU access)
+      log.info('[Remote] Checking GPU device access...');
+      const driCheck = await this.execCommand(conn, 'test -e /dev/dri && echo "exists" || echo "missing"');
+      if (driCheck.trim() === 'missing') {
+        throw new Error('Device /dev/dri not found. AMD GPU drivers (amdgpu) may not be installed.\n\nPlease ensure the Linux kernel has amdgpu drivers loaded.');
+      }
+      log.info('[Remote] ✓ GPU device found: /dev/dri');
+
+      // 2. Check for Vulkan support (critical for GPU acceleration)
+      log.info('[Remote] Checking Vulkan support...');
+      const vulkanCheck = await this.execCommand(conn, 'which vulkaninfo 2>/dev/null');
+
+      if (!vulkanCheck || !vulkanCheck.trim()) {
+        // Vulkan not found - need to install
+        log.info('[Remote] Vulkan not found. Installing Vulkan drivers...');
+
+        // Detect distro
+        const osRelease = await this.execCommand(conn, 'cat /etc/os-release');
+        const distro = this.detectDistro(osRelease);
+        log.info(`[Remote] Detected distribution: ${distro}`);
+
+        // Install based on distro
+        if (osRelease.includes('Ubuntu') || osRelease.includes('Debian')) {
+          log.info('[Remote] Installing Vulkan packages for Ubuntu/Debian...');
+          await this.execCommandWithOutput(conn, 'sudo apt-get update');
+          await this.execCommandWithOutput(conn, 'sudo apt-get install -y mesa-vulkan-drivers vulkan-tools libvulkan1');
+        } else if (osRelease.includes('Fedora') || osRelease.includes('Red Hat') || osRelease.includes('CentOS')) {
+          log.info('[Remote] Installing Vulkan packages for Fedora/RHEL...');
+          await this.execCommandWithOutput(conn, 'sudo dnf install -y mesa-vulkan-drivers vulkan-tools vulkan-loader');
+        } else if (osRelease.includes('Arch')) {
+          log.info('[Remote] Installing Vulkan packages for Arch Linux...');
+          await this.execCommandWithOutput(conn, 'sudo pacman -S --noconfirm vulkan-radeon vulkan-tools');
+        } else {
+          throw new Error(`Unsupported distribution: ${distro}. Please install mesa-vulkan-drivers and vulkan-tools manually.`);
+        }
+
+        // Verify Vulkan installation
+        log.info('[Remote] Verifying Vulkan installation...');
+        const vulkanVerify = await this.execCommand(conn, 'vulkaninfo --summary 2>&1 | grep -i "Vulkan Instance Version" || echo "failed"');
+        if (vulkanVerify.includes('failed')) {
+          throw new Error('Vulkan installation verification failed. Please check the installation logs.');
+        }
+        log.info('[Remote] ✓ Vulkan installed successfully');
+      } else {
+        log.info('[Remote] ✓ Vulkan is already installed');
+      }
+
+      // 3. Verify Vulkan can detect GPU
+      log.info('[Remote] Verifying Vulkan GPU detection...');
+      const vulkanDevices = await this.execCommand(conn, 'vulkaninfo 2>/dev/null | grep "deviceName" | head -1 || echo "No GPU detected"');
+      if (vulkanDevices.includes('No GPU detected')) {
+        throw new Error('Vulkan is installed but cannot detect any GPU. Please check AMD GPU drivers.');
+      }
+      log.info(`[Remote] ✓ Vulkan GPU detected: ${vulkanDevices.trim()}`);
+
+      // 4. Ensure user is in video and render groups (required for GPU access)
+      const username = await this.execCommand(conn, 'whoami');
+      const user = username.trim();
+      log.info(`[Remote] Adding user ${user} to video and render groups...`);
+      await this.execCommand(conn, `sudo usermod -a -G video,render ${user}`);
+
+      log.info('[Remote] ✅ Vulkan GPU acceleration setup complete!');
+      log.info('[Remote] Note: This provides good GPU performance without requiring ROCm kernel drivers.');
+    } catch (error) {
+      log.error('[Remote] Vulkan setup failed:', error);
       throw error;
     }
   }

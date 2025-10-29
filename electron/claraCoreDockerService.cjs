@@ -64,11 +64,11 @@ class ClaraCoreDockerService {
 
         // Linux: Check for AMD ROCm
         try {
-          const rocmCheck = execSync('rocm-smi --showproductname', { 
+          const rocmCheck = execSync('rocm-smi --showproductname', {
             encoding: 'utf8',
-            timeout: 5000 
+            timeout: 5000
           });
-          
+
           if (rocmCheck && rocmCheck.includes('GPU')) {
             log.info(`✅ AMD ROCm GPU detected`);
             this.gpuType = 'rocm';
@@ -78,14 +78,48 @@ class ClaraCoreDockerService {
         } catch (error) {
           log.info('AMD ROCm GPU not detected');
         }
-
-        // Linux: Check for Vulkan support (fallback for AMD/Intel)
+      } else if (platform === 'win32') {
+        // Windows: Check for AMD GPU via WSL2
+        // ROCm on Windows requires Docker Desktop in WSL2 mode + AMD Radeon Software 25.8.1+
         try {
-          const vulkanCheck = execSync('vulkaninfo --summary', { 
+          const wslCheck = execSync('wsl -l -v', {
             encoding: 'utf8',
-            timeout: 5000 
+            timeout: 5000
           });
-          
+
+          // Check if WSL2 is available
+          if (wslCheck && wslCheck.includes('Version 2')) {
+            // Try to detect AMD GPU through WSL
+            try {
+              const amdCheck = execSync('wsl lspci | findstr "AMD"', {
+                encoding: 'utf8',
+                timeout: 5000
+              });
+
+              if (amdCheck && (amdCheck.includes('Radeon') || amdCheck.includes('AMD'))) {
+                log.info(`✅ AMD GPU detected in WSL2 - ROCm may be available`);
+                log.warn('⚠️ ROCm on Windows requires: Windows 11 + AMD Radeon Software 25.8.1+ + WSL2');
+                log.warn('⚠️ Docker Desktop must be in WSL2 mode (not Hyper-V)');
+                // Note: We don't auto-select ROCm on Windows due to complexity
+                // User should manually select it if they have it properly configured
+              }
+            } catch (amdError) {
+              log.info('AMD GPU not detected in WSL2');
+            }
+          }
+        } catch (error) {
+          log.info('WSL2 not available or not configured');
+        }
+      }
+
+      // Check for Vulkan support (fallback for AMD/Intel on Linux)
+      if (platform === 'linux') {
+        try {
+          const vulkanCheck = execSync('vulkaninfo --summary', {
+            encoding: 'utf8',
+            timeout: 5000
+          });
+
           if (vulkanCheck && vulkanCheck.includes('Vulkan')) {
             log.info(`✅ Vulkan GPU support detected`);
             this.gpuType = 'vulkan';
@@ -121,6 +155,20 @@ class ClaraCoreDockerService {
       return true;
     } catch (error) {
       log.error('❌ Docker daemon is not running:', error.message);
+
+      // On Windows, provide specific instructions
+      if (os.platform() === 'win32') {
+        throw new Error(
+          'Docker Desktop is not running or not responding.\n\n' +
+          'Please try:\n' +
+          '1. Open Docker Desktop from Start Menu\n' +
+          '2. Wait for Docker to fully start (whale icon in system tray should be steady)\n' +
+          '3. If Docker is already running, restart it: Right-click whale icon → Restart\n' +
+          '4. If that fails, completely quit Docker Desktop and start it again\n\n' +
+          'Error: ' + error.message
+        );
+      }
+
       throw new Error('Docker is not running. Please start Docker Desktop and try again.');
     }
   }
@@ -253,6 +301,50 @@ class ClaraCoreDockerService {
   }
 
   /**
+   * Cleanup stuck or corrupted containers (Windows-specific)
+   */
+  async cleanupStuckContainers() {
+    try {
+      log.info('🔍 Checking for stuck containers...');
+
+      const containers = await this.docker.listContainers({ all: true });
+      const claraCoreContainers = containers.filter(c =>
+        c.Names.some(name => name.includes('clara_core'))
+      );
+
+      for (const containerInfo of claraCoreContainers) {
+        try {
+          const container = this.docker.getContainer(containerInfo.Id);
+          const info = await container.inspect();
+
+          // Check if container is in a problematic state
+          if (info.State.Status === 'dead' ||
+              info.State.Status === 'exited' && info.State.ExitCode !== 0 ||
+              info.State.Error) {
+            log.warn(`⚠️ Found stuck container ${containerInfo.Names[0]} in state: ${info.State.Status}`);
+
+            // Try to remove it
+            try {
+              if (info.State.Running) {
+                await container.stop({ t: 5 });
+              }
+              await container.remove({ force: true });
+              log.info(`✅ Cleaned up stuck container ${containerInfo.Names[0]}`);
+            } catch (removeError) {
+              log.error(`Failed to remove stuck container: ${removeError.message}`);
+            }
+          }
+        } catch (inspectError) {
+          log.error(`Error inspecting container: ${inspectError.message}`);
+        }
+      }
+    } catch (error) {
+      log.warn('Error during cleanup check:', error.message);
+      // Don't throw - this is a best-effort cleanup
+    }
+  }
+
+  /**
    * Create and start Clara Core container
    */
   async start(options = {}) {
@@ -261,6 +353,11 @@ class ClaraCoreDockerService {
 
       // Kill any process using port 8091 (including local ClaraCore binary)
       await this.killProcessOnPort8091();
+
+      // On Windows, check if there are any stuck/corrupted containers and clean them
+      if (os.platform() === 'win32') {
+        await this.cleanupStuckContainers();
+      }
 
       // Auto-detect GPU if not specified
       let gpuInfo;
@@ -336,13 +433,28 @@ class ClaraCoreDockerService {
       if (this.gpuType === 'cuda') {
         containerConfig.Env.push('NVIDIA_VISIBLE_DEVICES=all');
         containerConfig.Env.push('NVIDIA_DRIVER_CAPABILITIES=compute,utility');
-        // Use modern DeviceRequests API instead of legacy Runtime for better Linux compatibility
-        containerConfig.HostConfig.DeviceRequests = [{
-          Driver: 'nvidia',
-          Count: -1, // All GPUs
-          Capabilities: [['gpu', 'compute', 'utility']]
-        }];
+
+        // Platform-specific GPU configuration
+        // Windows: Use Runtime property (DeviceRequests causes Docker daemon crashes on Windows)
+        // Linux: Use DeviceRequests for better compatibility
+        if (os.platform() === 'win32') {
+          containerConfig.HostConfig.Runtime = 'nvidia';
+        } else {
+          // Linux: Use modern DeviceRequests API
+          containerConfig.HostConfig.DeviceRequests = [{
+            Driver: 'nvidia',
+            Count: -1, // All GPUs
+            Capabilities: [['gpu', 'compute', 'utility']]
+          }];
+        }
       } else if (this.gpuType === 'rocm') {
+        // ROCm works on Windows ONLY through WSL2
+        // Docker Desktop must be running in WSL2 mode (not Hyper-V)
+        if (os.platform() === 'win32') {
+          log.warn('⚠️ ROCm on Windows requires Docker Desktop in WSL2 mode');
+          log.warn('Ensure: Windows 11 + AMD Radeon Software 25.8.1+ + WSL2 with Ubuntu');
+        }
+
         containerConfig.HostConfig.Devices = [
           { PathOnHost: '/dev/kfd', PathInContainer: '/dev/kfd', CgroupPermissions: 'rwm' },
           { PathOnHost: '/dev/dri', PathInContainer: '/dev/dri', CgroupPermissions: 'rwm' }
@@ -358,7 +470,35 @@ class ClaraCoreDockerService {
       log.info('Creating ClaraCore container with config:', JSON.stringify(containerConfig, null, 2));
 
       // Create and start container
-      const container = await this.docker.createContainer(containerConfig);
+      let container;
+      try {
+        container = await this.docker.createContainer(containerConfig);
+      } catch (createError) {
+        // If CUDA/GPU creation fails on Windows, fall back to CPU mode
+        if (this.gpuType === 'cuda' && os.platform() === 'win32' &&
+            (createError.message.includes('runtime') || createError.message.includes('nvidia') || createError.message.includes('gpu'))) {
+          log.warn('⚠️ Failed to create container with GPU support, falling back to CPU mode');
+          log.warn('GPU Error:', createError.message);
+
+          // Retry with CPU image
+          this.gpuType = 'cpu';
+          this.detectedImage = 'clara17verse/claracore:cpu';
+          containerConfig.Image = this.detectedImage;
+
+          // Remove GPU configurations
+          delete containerConfig.HostConfig.Runtime;
+          delete containerConfig.HostConfig.DeviceRequests;
+          containerConfig.Env = containerConfig.Env.filter(env =>
+            !env.startsWith('NVIDIA_')
+          );
+
+          log.info('Retrying with CPU configuration...');
+          container = await this.docker.createContainer(containerConfig);
+        } else {
+          throw createError;
+        }
+      }
+
       await container.start();
 
       log.info('✅ ClaraCore container created and started successfully');
