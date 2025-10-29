@@ -21,11 +21,11 @@ interface ClaraCoreRemoteConfig {
   port: number;
   username: string;
   password: string;
-  hardwareType: 'auto' | 'cuda' | 'rocm' | 'strix' | 'cpu';
+  hardwareType: 'auto' | 'cuda' | 'rocm' | 'vulkan' | 'strix' | 'cpu';
 }
 
 interface HardwareDetectionResult {
-  detected: 'cuda' | 'rocm' | 'strix' | 'cpu' | 'unsupported';
+  detected: 'cuda' | 'rocm' | 'vulkan' | 'strix' | 'cpu' | 'unsupported';
   confidence: 'high' | 'medium' | 'low';
   details: {
     docker: boolean;
@@ -186,6 +186,7 @@ const RemoteClaraCoreSetup: React.FC = () => {
         const hwTypes: Record<string, string> = {
           cuda: 'NVIDIA CUDA (Best for NVIDIA GPUs)',
           rocm: 'AMD ROCm (Best for AMD GPUs)',
+          vulkan: 'Vulkan (Good for AMD GPUs when ROCm unavailable)',
           strix: 'AMD Strix Halo (Optimized for Ryzen AI Max)',
           cpu: 'CPU Only (Slower, but works everywhere)'
         };
@@ -352,7 +353,7 @@ const RemoteClaraCoreSetup: React.FC = () => {
             <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">
               Hardware Type
             </label>
-            <div className="grid grid-cols-5 gap-3">
+            <div className="grid grid-cols-6 gap-3">
               {/* Auto-detect */}
               <button
                 onClick={() => setConfig({ ...config, hardwareType: 'auto' })}
@@ -468,6 +469,46 @@ const RemoteClaraCoreSetup: React.FC = () => {
                 </div>
                 {config.hardwareType === 'rocm' && (
                   <div className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center">
+                    <CheckCircle className="w-3 h-3 text-white" />
+                  </div>
+                )}
+              </button>
+
+              {/* Vulkan */}
+              <button
+                onClick={() => setConfig({ ...config, hardwareType: 'vulkan' })}
+                disabled={state === 'deploying'}
+                className={`group relative flex flex-col items-center gap-3 p-5 rounded-xl border-2 transition-all ${
+                  config.hardwareType === 'vulkan'
+                    ? 'border-purple-500 bg-gradient-to-br from-purple-50 to-pink-50 dark:from-purple-900/30 dark:to-pink-900/20 shadow-lg shadow-purple-500/20'
+                    : 'border-gray-200 dark:border-gray-700 hover:border-purple-300 dark:hover:border-purple-600 hover:bg-purple-50/50 dark:hover:bg-purple-900/10'
+                } ${state === 'deploying' ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+              >
+                <div className={`p-3 rounded-lg ${
+                  config.hardwareType === 'vulkan'
+                    ? 'bg-purple-100 dark:bg-purple-800/30'
+                    : 'bg-gray-100 dark:bg-gray-800'
+                }`}>
+                  <Boxes className={`w-6 h-6 ${
+                    config.hardwareType === 'vulkan'
+                      ? 'text-purple-600 dark:text-purple-400'
+                      : 'text-gray-500 dark:text-gray-400'
+                  }`} />
+                </div>
+                <div className="text-center">
+                  <div className={`text-sm font-semibold ${
+                    config.hardwareType === 'vulkan'
+                      ? 'text-purple-700 dark:text-purple-300'
+                      : 'text-gray-700 dark:text-gray-300'
+                  }`}>
+                    Vulkan
+                  </div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    AMD Fallback
+                  </div>
+                </div>
+                {config.hardwareType === 'vulkan' && (
+                  <div className="absolute -top-1 -right-1 w-5 h-5 bg-purple-500 rounded-full flex items-center justify-center">
                     <CheckCircle className="w-3 h-3 text-white" />
                   </div>
                 )}
@@ -627,6 +668,7 @@ const RemoteClaraCoreSetup: React.FC = () => {
                 <span className="font-medium text-gray-900 dark:text-white capitalize">
                   {testResult.hardware.detected === 'cuda' ? 'NVIDIA CUDA' :
                    testResult.hardware.detected === 'rocm' ? 'AMD ROCm' :
+                   testResult.hardware.detected === 'vulkan' ? 'Vulkan' :
                    testResult.hardware.detected === 'strix' ? 'AMD Strix Halo' :
                    'CPU Only'}
                 </span>

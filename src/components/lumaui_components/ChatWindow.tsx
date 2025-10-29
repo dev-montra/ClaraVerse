@@ -1097,7 +1097,7 @@ ${reflection.nextSteps.map((step, i) => `${i + 1}. ${step}`).join('\n')}
   // Execute tool calls from OpenAI function calling with live animations and retry logic
   const executeTools = async (toolCalls: any[], retryCount: number = 0): Promise<Array<{id: string, result: string, success: boolean}>> => {
     const results: Array<{id: string, result: string, success: boolean}> = [];
-    const maxRetries = 2;
+    const maxRetries = 1; // One retry only (2 total attempts) - most errors won't fix themselves
     const toolTimeout = 60000; // 60 seconds timeout for each tool
 
     for (const toolCall of toolCalls) {
