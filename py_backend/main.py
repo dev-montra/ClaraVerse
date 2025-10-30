@@ -2165,8 +2165,31 @@ if LIGHTRAG_AVAILABLE:
             # Save changes to disk
             save_documents_db()
             save_notebooks_db()
-            
+
             logger.info(f"Successfully completed processing document {document_id} in notebook {notebook_id}")
+
+            # CRITICAL: Check if ALL documents for this notebook are now completed
+            # Only reload RAG instance when there are no more pending/processing documents
+            try:
+                notebook_documents = [
+                    doc for doc in lightrag_documents_db.values()
+                    if doc["notebook_id"] == notebook_id
+                ]
+
+                active_processing = any(
+                    doc["status"] in ["queued", "pending", "processing"]
+                    for doc in notebook_documents
+                )
+
+                if not active_processing and notebook_id in lightrag_instances:
+                    logger.info(f"🔄 All documents processed for notebook {notebook_id}. Reloading RAG instance to ensure chat functionality")
+                    del lightrag_instances[notebook_id]
+                    # The instance will be recreated on next query with fresh state
+                    logger.info(f"✅ RAG instance cleared - chat will work properly now")
+                elif active_processing:
+                    logger.info(f"⏳ Still processing other documents for notebook {notebook_id}, keeping RAG instance")
+            except Exception as reload_error:
+                logger.warning(f"Failed to reload RAG instance for notebook {notebook_id}: {reload_error}")
             
         except Exception as e:
             error_msg = str(e)

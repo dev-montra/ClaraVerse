@@ -49,7 +49,7 @@ export interface NotebookDocumentResponse {
   filename: string;
   notebook_id: string;
   uploaded_at: string;
-  status: 'processing' | 'completed' | 'failed';
+  status: 'queued' | 'pending' | 'processing' | 'completed' | 'failed';
   error?: string;
   file_path?: string; // Add file path for citation tracking
 }
@@ -108,6 +108,15 @@ export interface ChatHistoryResponse {
   notebook_id: string;
   messages: ChatMessage[];
   total_messages: number;
+}
+
+/**
+ * Notebook lock status
+ */
+export interface NotebookLockStatus {
+  notebook_id: string;
+  is_locked: boolean;
+  status: string;
 }
 
 /**
@@ -1152,6 +1161,33 @@ public async validateModels(config: NotebookCreate): Promise<{
   }
 
   /**
+   * Check notebook lock status
+   */
+  public async checkLockStatus(notebookId: string): Promise<NotebookLockStatus> {
+    if (!this.isHealthy) {
+      throw new Error('Notebook backend is not available');
+    }
+
+    try {
+      const response = await fetch(`${this.baseUrl}/notebooks/${notebookId}/lock/status`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to check lock status: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Check lock status error:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Send a chat message (with history context)
    */
   public async sendChatMessage(notebookId: string, query: EnhancedNotebookQueryRequest): Promise<NotebookQueryResponse> {
@@ -1185,6 +1221,12 @@ public async validateModels(config: NotebookCreate): Promise<{
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+
+        // Special handling for HTTP 503 (notebook locked)
+        if (response.status === 503) {
+          throw new Error(`NOTEBOOK_LOCKED: ${errorData.detail || 'Notebook is currently processing documents'}`);
+        }
+
         throw new Error(errorData.detail || `Failed to send chat message: ${response.statusText}`);
       }
 

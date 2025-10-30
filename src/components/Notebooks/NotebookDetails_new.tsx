@@ -121,11 +121,12 @@ const NotebookDetails_new: React.FC<NotebookDetailsNewProps> = ({
     llm_error: string | null;
     embedding_accessible: boolean;
     embedding_error: string | null;
-    overall_status: 'success' | 'partial' | 'failed' | 'error';
+    overall_status: 'checking' | 'success' | 'partial' | 'failed' | 'error';
     lastChecked: Date | null;
-  }>({ llm_accessible: false, llm_error: null, embedding_accessible: false, embedding_error: null, overall_status: 'error', lastChecked: null });
+  }>({ llm_accessible: false, llm_error: null, embedding_accessible: false, embedding_error: null, overall_status: 'checking', lastChecked: null });
   const [showModelStatus, setShowModelStatus] = useState(true);
   const [modelStatusDismissed, setModelStatusDismissed] = useState(false);
+  const [isCheckingModelStatus, setIsCheckingModelStatus] = useState(true);
   
   // Entity types and configuration management
   const [entityTypesData, setEntityTypesData] = useState<EntityTypesResponse | null>(null);
@@ -183,12 +184,38 @@ const NotebookDetails_new: React.FC<NotebookDetailsNewProps> = ({
   // Once connected successfully, stop checking to reduce pressure on models
   useEffect(() => {
     let interval: NodeJS.Timeout | null = null;
-    
+
     const checkNotebookModelStatus = async () => {
       try {
-        if (!claraNotebookService.isBackendHealthy()) return false;
-        if (!notebook.llm_provider || !notebook.embedding_provider) return false;
-        
+        setIsCheckingModelStatus(true);
+        const startTime = Date.now();
+
+        if (!claraNotebookService.isBackendHealthy()) {
+          setModelStatus({
+            llm_accessible: false,
+            llm_error: 'Backend is not available',
+            embedding_accessible: false,
+            embedding_error: 'Backend is not available',
+            overall_status: 'error',
+            lastChecked: new Date()
+          });
+          setShowModelStatus(true);
+          return false;
+        }
+
+        if (!notebook.llm_provider || !notebook.embedding_provider) {
+          setModelStatus({
+            llm_accessible: false,
+            llm_error: notebook.llm_provider ? null : 'LLM provider not configured',
+            embedding_accessible: false,
+            embedding_error: notebook.embedding_provider ? null : 'Embedding provider not configured',
+            overall_status: 'error',
+            lastChecked: new Date()
+          });
+          setShowModelStatus(true);
+          return false;
+        }
+
         const validation = await claraNotebookService.validateModels({
           name: notebook.name,
           description: notebook.description,
@@ -197,7 +224,7 @@ const NotebookDetails_new: React.FC<NotebookDetailsNewProps> = ({
           entity_types: notebook.entity_types,
           language: notebook.language
         });
-        
+
         setModelStatus({
           llm_accessible: validation.llm_accessible,
           llm_error: validation.llm_error,
@@ -206,7 +233,7 @@ const NotebookDetails_new: React.FC<NotebookDetailsNewProps> = ({
           overall_status: validation.overall_status,
           lastChecked: new Date()
         });
-        
+
         // Auto-hide when fully connected, unless user dismissed earlier
         if (validation.overall_status === 'success') {
           if (!modelStatusDismissed) {
@@ -235,6 +262,14 @@ const NotebookDetails_new: React.FC<NotebookDetailsNewProps> = ({
         }));
         setShowModelStatus(true);
         return false; // Keep checking
+      } finally {
+        // Ensure minimum display time of 500ms for checking state (better UX)
+        const elapsed = Date.now() - startTime;
+        const minDisplayTime = 500;
+        if (elapsed < minDisplayTime) {
+          await new Promise(resolve => setTimeout(resolve, minDisplayTime - elapsed));
+        }
+        setIsCheckingModelStatus(false);
       }
     };
 
@@ -293,11 +328,15 @@ const NotebookDetails_new: React.FC<NotebookDetailsNewProps> = ({
     }
   }, [notebook.entity_types, notebook.language]);
 
-  // Auto-refresh documents every 5 seconds if there are processing documents
+  // Auto-refresh documents every 5 seconds if there are queued, pending, or processing documents
   useEffect(() => {
-    const hasProcessingDocs = documents.some(doc => doc.status === 'processing');
-    
-    if (!hasProcessingDocs) return;
+    const hasActiveProcessing = documents.some(doc =>
+      doc.status === 'queued' ||
+      doc.status === 'pending' ||
+      doc.status === 'processing'
+    );
+
+    if (!hasActiveProcessing) return;
 
     const interval = setInterval(() => {
       loadDocuments();
@@ -468,10 +507,24 @@ const NotebookDetails_new: React.FC<NotebookDetailsNewProps> = ({
             Completed
           </div>
         );
+      case 'queued':
+        return (
+          <div className="inline-flex items-center gap-1 px-2 py-1 bg-yellow-100 dark:bg-yellow-900/20 text-yellow-800 dark:text-yellow-400 rounded-full text-xs font-medium" title="Document is queued and waiting to be processed">
+            <Clock className="w-3 h-3" />
+            Queued
+          </div>
+        );
+      case 'pending':
+        return (
+          <div className="inline-flex items-center gap-1 px-2 py-1 bg-amber-100 dark:bg-amber-900/20 text-amber-800 dark:text-amber-400 rounded-full text-xs font-medium" title="Document is pending processing">
+            <Clock className="w-3 h-3" />
+            Pending
+          </div>
+        );
       case 'processing':
         return (
-          <div className="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 dark:bg-blue-900/20 text-blue-800 dark:text-blue-400 rounded-full text-xs font-medium">
-            <Clock className="w-3 h-3 animate-spin" />
+          <div className="inline-flex items-center gap-1 px-2 py-1 bg-blue-100 dark:bg-blue-900/20 text-blue-800 dark:text-blue-400 rounded-full text-xs font-medium" title="Document is actively being processed">
+            <RefreshCw className="w-3 h-3 animate-spin" />
             Processing
           </div>
         );
@@ -1030,10 +1083,12 @@ const NotebookDetails_new: React.FC<NotebookDetailsNewProps> = ({
   const getDocumentStats = () => {
     const total = documents.length;
     const completed = documents.filter(doc => doc.status === 'completed').length;
+    const queued = documents.filter(doc => doc.status === 'queued').length;
+    const pending = documents.filter(doc => doc.status === 'pending').length;
     const processing = documents.filter(doc => doc.status === 'processing').length;
     const failed = documents.filter(doc => doc.status === 'failed').length;
-    
-    return { total, completed, processing, failed };
+
+    return { total, completed, queued, pending, processing, failed };
   };
 
   // Chat functionality
@@ -1077,11 +1132,16 @@ const NotebookDetails_new: React.FC<NotebookDetailsNewProps> = ({
       setChatMessages(prev => [...prev, assistantMessage]);
     } catch (error) {
       console.error('Failed to send message:', error);
-      
+
+      // Check if it's a lock error
+      const isLockError = error instanceof Error && error.message.includes('NOTEBOOK_LOCKED');
+
       const errorMessage: ChatMessage = {
         id: (Date.now() + 1).toString(),
         type: 'assistant',
-        content: 'Sorry, I encountered an error while processing your message. Please try again.',
+        content: isLockError
+          ? '⏳ This notebook is currently processing documents. Please wait a moment and try again. You can check the "Processing Status" section to see progress.'
+          : 'Sorry, I encountered an error while processing your message. Please try again.',
         timestamp: new Date(),
         role: 'assistant'
       };
@@ -1423,20 +1483,32 @@ const NotebookDetails_new: React.FC<NotebookDetailsNewProps> = ({
                       style={{ width: `${stats.total > 0 ? (stats.completed / stats.total) * 100 : 0}%` }}
                     ></div>
                   </div>
-                  <div className="grid grid-cols-3 gap-3 text-xs">
+                  <div className="grid grid-cols-2 gap-3 text-xs mb-3">
                     <div className="text-center glassmorphic bg-emerald-50/80 dark:bg-emerald-900/30 p-3 rounded-xl border border-emerald-200/50 dark:border-emerald-600/30">
                       <div className="text-lg font-bold text-emerald-600 dark:text-emerald-400">{stats.completed}</div>
                       <div className="text-gray-600 dark:text-gray-400 font-medium">Completed</div>
-                    </div>
-                    <div className="text-center glassmorphic bg-blue-50/80 dark:bg-blue-900/30 p-3 rounded-xl border border-blue-200/50 dark:border-blue-600/30">
-                      <div className="text-lg font-bold text-blue-600 dark:text-blue-400">{stats.processing}</div>
-                      <div className="text-gray-600 dark:text-gray-400 font-medium">Processing</div>
                     </div>
                     <div className="text-center glassmorphic bg-red-50/80 dark:bg-red-900/30 p-3 rounded-xl border border-red-200/50 dark:border-red-600/30">
                       <div className="text-lg font-bold text-red-600 dark:text-red-400">{stats.failed}</div>
                       <div className="text-gray-600 dark:text-gray-400 font-medium">Failed</div>
                     </div>
                   </div>
+                  {(stats.queued > 0 || stats.pending > 0 || stats.processing > 0) && (
+                    <div className="grid grid-cols-3 gap-2 text-xs">
+                      <div className="text-center glassmorphic bg-yellow-50/80 dark:bg-yellow-900/30 p-2 rounded-lg border border-yellow-200/50 dark:border-yellow-600/30">
+                        <div className="text-sm font-bold text-yellow-700 dark:text-yellow-400">{stats.queued}</div>
+                        <div className="text-gray-600 dark:text-gray-400 font-medium text-[10px]">Queued</div>
+                      </div>
+                      <div className="text-center glassmorphic bg-amber-50/80 dark:bg-amber-900/30 p-2 rounded-lg border border-amber-200/50 dark:border-amber-600/30">
+                        <div className="text-sm font-bold text-amber-700 dark:text-amber-400">{stats.pending}</div>
+                        <div className="text-gray-600 dark:text-gray-400 font-medium text-[10px]">Pending</div>
+                      </div>
+                      <div className="text-center glassmorphic bg-blue-50/80 dark:bg-blue-900/30 p-2 rounded-lg border border-blue-200/50 dark:border-blue-600/30">
+                        <div className="text-sm font-bold text-blue-600 dark:text-blue-400">{stats.processing}</div>
+                        <div className="text-gray-600 dark:text-gray-400 font-medium text-[10px]">Processing</div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -2339,11 +2411,25 @@ const NotebookDetails_new: React.FC<NotebookDetailsNewProps> = ({
       <div className="fixed bottom-4 left-[12.5rem] z-40">
         <div className="glassmorphic rounded-xl shadow-2xl backdrop-blur-xl border border-white/30 dark:border-gray-700/30 p-3 w-[340px] bg-white/85 dark:bg-gray-900/80">
           <div className="flex items-center justify-between mb-2">
-            <div className={`text-sm font-bold ${modelStatus.overall_status === 'success' ? 'text-gray-900 dark:text-white' : 'text-red-700 dark:text-red-300'}`}>{modelStatus.overall_status === 'success' ? 'Model Connectivity' : 'Notebook cannot connect'}</div>
+            <div className={`text-sm font-bold ${
+              modelStatus.overall_status === 'success'
+                ? 'text-gray-900 dark:text-white'
+                : modelStatus.overall_status === 'checking'
+                ? 'text-blue-700 dark:text-blue-300'
+                : 'text-red-700 dark:text-red-300'
+            }`}>
+              {modelStatus.overall_status === 'success'
+                ? 'Model Connectivity'
+                : modelStatus.overall_status === 'checking'
+                ? 'Checking Connectivity...'
+                : 'Notebook cannot connect'}
+            </div>
             <button
-              className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200"
+              className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1"
+              disabled={isCheckingModelStatus}
               onClick={async () => {
                 try {
+                  setIsCheckingModelStatus(true);
                   if (!claraNotebookService.isBackendHealthy()) return;
                   if (!notebook.llm_provider || !notebook.embedding_provider) {
                     setModelStatus(prev => ({
@@ -2390,31 +2476,56 @@ const NotebookDetails_new: React.FC<NotebookDetailsNewProps> = ({
                     lastChecked: new Date()
                   }));
                   setShowModelStatus(true);
+                } finally {
+                  setIsCheckingModelStatus(false);
                 }
               }}
             >
-              Recheck
+              {isCheckingModelStatus ? (
+                <>
+                  <RefreshCw className="w-3 h-3 animate-spin" />
+                  Checking...
+                </>
+              ) : (
+                'Recheck'
+              )}
             </button>
           </div>
           <div className="space-y-1.5">
             <div className="flex items-center justify-between text-xs">
               <span className="text-gray-600 dark:text-gray-300 font-medium">LLM</span>
-              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border ${modelStatus.llm_accessible ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-700/40' : 'bg-red-50 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-300 dark:border-red-700/40'}`}
-                    title={modelStatus.llm_error || ''}>
-                <span className={`w-2 h-2 rounded-full ${modelStatus.llm_accessible ? 'bg-emerald-500' : 'bg-red-500'}`}></span>
-                {modelStatus.llm_accessible ? 'Connected' : 'Failed'}
-              </span>
+              {isCheckingModelStatus ? (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700/40">
+                  <RefreshCw className="w-2 h-2 animate-spin" />
+                  Checking...
+                </span>
+              ) : (
+                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border ${modelStatus.llm_accessible ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-700/40' : 'bg-red-50 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-300 dark:border-red-700/40'}`}
+                      title={modelStatus.llm_error || ''}>
+                  <span className={`w-2 h-2 rounded-full ${modelStatus.llm_accessible ? 'bg-emerald-500' : 'bg-red-500'}`}></span>
+                  {modelStatus.llm_accessible ? 'Connected' : 'Failed'}
+                </span>
+              )}
             </div>
             <div className="flex items-center justify-between text-xs">
               <span className="text-gray-600 dark:text-gray-300 font-medium">Embedding</span>
-              <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border ${modelStatus.embedding_accessible ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-700/40' : 'bg-red-50 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-300 dark:border-red-700/40'}`}
-                    title={modelStatus.embedding_error || ''}>
-                <span className={`w-2 h-2 rounded-full ${modelStatus.embedding_accessible ? 'bg-emerald-500' : 'bg-red-500'}`}></span>
-                {modelStatus.embedding_accessible ? 'Connected' : 'Failed'}
-              </span>
+              {isCheckingModelStatus ? (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full border bg-blue-50 text-blue-700 border-blue-200 dark:bg-blue-900/30 dark:text-blue-300 dark:border-blue-700/40">
+                  <RefreshCw className="w-2 h-2 animate-spin" />
+                  Checking...
+                </span>
+              ) : (
+                <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full border ${modelStatus.embedding_accessible ? 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-900/30 dark:text-emerald-300 dark:border-emerald-700/40' : 'bg-red-50 text-red-700 border-red-200 dark:bg-red-900/30 dark:text-red-300 dark:border-red-700/40'}`}
+                      title={modelStatus.embedding_error || ''}>
+                  <span className={`w-2 h-2 rounded-full ${modelStatus.embedding_accessible ? 'bg-emerald-500' : 'bg-red-500'}`}></span>
+                  {modelStatus.embedding_accessible ? 'Connected' : 'Failed'}
+                </span>
+              )}
             </div>
             <div className="text-[10px] text-gray-500 dark:text-gray-400 mt-1">
-              Last checked: {modelStatus.lastChecked ? modelStatus.lastChecked.toLocaleTimeString() : '—'}
+              {isCheckingModelStatus
+                ? 'Testing connectivity...'
+                : `Last checked: ${modelStatus.lastChecked ? modelStatus.lastChecked.toLocaleTimeString() : '—'}`}
             </div>
             <div className="flex justify-end mt-1">
               <button

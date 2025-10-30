@@ -58,12 +58,12 @@ const CreateDocumentModal: React.FC<CreateDocumentModalProps> = ({
     try {
       const textFile = createTextFile(content.trim(), filename.trim());
       await onUpload([textFile]);
-      onClose(); // Close modal on success
+      // onClose will be called by parent after successful upload
+      // Don't set isUploading to false here - let parent close the modal
     } catch (error) {
       console.error('Failed to upload document:', error);
       setError(error instanceof Error ? error.message : 'Failed to upload document');
       setShowConfirmation(false);
-    } finally {
       setIsUploading(false);
     }
   };
@@ -81,7 +81,14 @@ const CreateDocumentModal: React.FC<CreateDocumentModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-50 p-4">
+    <div
+      className="fixed inset-0 bg-black/60 backdrop-blur-md flex items-center justify-center z-50 p-4"
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !isUploading && !showConfirmation) {
+          onClose();
+        }
+      }}
+    >
       <div className="glassmorphic bg-white/80 dark:bg-gray-900/80 backdrop-blur-2xl rounded-3xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-hidden border border-white/30 dark:border-gray-700/30">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-white/20 dark:border-gray-800/30">
@@ -100,7 +107,8 @@ const CreateDocumentModal: React.FC<CreateDocumentModalProps> = ({
           </div>
           <button
             onClick={onClose}
-            className="p-3 glassmorphic bg-white/60 dark:bg-gray-800/60 hover:bg-white/80 dark:hover:bg-gray-800/80 rounded-2xl transition-all duration-200 border border-white/30 dark:border-gray-700/30 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 shadow-lg"
+            disabled={isUploading}
+            className="p-3 glassmorphic bg-white/60 dark:bg-gray-800/60 hover:bg-white/80 dark:hover:bg-gray-800/80 rounded-2xl transition-all duration-200 border border-white/30 dark:border-gray-700/30 text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 shadow-lg disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <X className="w-5 h-5" />
           </button>
@@ -188,7 +196,8 @@ const CreateDocumentModal: React.FC<CreateDocumentModalProps> = ({
           <div className="flex items-center gap-3">
             <button
               onClick={onClose}
-              className="px-6 py-3 glassmorphic bg-gray-600 hover:bg-gray-700 text-white rounded-xl transition-all duration-200 border border-gray-500/30 shadow-lg hover:shadow-xl font-semibold"
+              disabled={isUploading}
+              className="px-6 py-3 glassmorphic bg-gray-600 hover:bg-gray-700 text-white rounded-xl transition-all duration-200 border border-gray-500/30 shadow-lg hover:shadow-xl font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
             >
               Cancel
             </button>

@@ -97,16 +97,15 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ onClose, onUpload }) =>
 
   const handleUpload = async () => {
     if (selectedFiles.length === 0) return;
-    
+
     setIsUploading(true);
-    
+
     try {
-      // Simulate upload delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      onUpload(selectedFiles);
+      await onUpload(selectedFiles);
+      // Keep modal open and button disabled until parent closes modal
+      // The parent will close the modal after successful upload
     } catch (error) {
       console.error('Upload error:', error);
-    } finally {
       setIsUploading(false);
     }
   };
@@ -120,7 +119,7 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ onClose, onUpload }) =>
   };
 
   const handleBackdropClick = (e: React.MouseEvent) => {
-    if (e.target === e.currentTarget) {
+    if (e.target === e.currentTarget && !isUploading) {
       onClose();
     }
   };
@@ -143,7 +142,8 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ onClose, onUpload }) =>
           </div>
           <button
             onClick={onClose}
-            className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors"
+            disabled={isUploading}
+            className="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             <X className="w-4 h-4 text-gray-500" />
           </button>
@@ -268,7 +268,8 @@ const DocumentUpload: React.FC<DocumentUploadProps> = ({ onClose, onUpload }) =>
         <div className="flex gap-3 p-6 border-t border-gray-200 dark:border-gray-700">
           <button
             onClick={onClose}
-            className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+            disabled={isUploading}
+            className="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             Cancel
           </button>
