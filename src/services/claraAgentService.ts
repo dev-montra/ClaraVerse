@@ -5,9 +5,9 @@
 
 import { AssistantAPIClient } from '../utils/AssistantAPIClient';
 import type { ChatMessage } from '../utils/APIClient';
-import { 
-  ClaraMessage, 
-  ClaraFileAttachment, 
+import {
+  ClaraMessage,
+  ClaraFileAttachment,
   ClaraAIConfig,
 } from '../types/clara_assistant_types';
 import type { Tool } from '../db';
@@ -15,10 +15,11 @@ import { claraMemoryService } from './claraMemoryService';
 import { structuredToolCallService } from './structuredToolCallService';
 import { claraToolService } from './claraToolService';
 import { claraImageExtractionService } from './claraImageExtractionService';
-import { 
+import {
   validateTokenCount,
-  type TokenValidationResult 
+  type TokenValidationResult
 } from './tokenEstimationService';
+import { personaStorageService } from './personaStorageService';
 
 /**
  * Simple autonomous agent configuration
@@ -585,8 +586,17 @@ export class ClaraAgentService {
 
     console.log(`🤖 Starting autonomous agent with config:`, autonomousConfig);
 
+    // Get active persona to use its system prompt
+    const activePersona = personaStorageService.getActivePersona();
+    let personaPrompt: string | undefined = undefined;
+
+    if (activePersona && activePersona.id !== 'default') {
+      personaPrompt = activePersona.systemPrompt;
+      console.log(`🎭 Using persona "${activePersona.name}" for autonomous mode`);
+    }
+
     // Build enhanced system prompt for autonomous mode
-    const enhancedSystemPrompt = this.createToolMasteryPrompt(tools);
+    const enhancedSystemPrompt = this.createToolMasteryPrompt(tools, personaPrompt);
 
     // Build conversation messages
     const messages: ChatMessage[] = [];
@@ -1041,11 +1051,17 @@ export class ClaraAgentService {
 
   /**
    * Create a tool-focused system prompt that emphasizes persistence and exhaustive problem-solving
+   * Now supports custom personas for autonomous mode
    */
-  private createToolMasteryPrompt(tools: Tool[]): string {
+  private createToolMasteryPrompt(tools: Tool[], personaSystemPrompt?: string): string {
     const toolCategories = this.categorizeTools(tools);
-    
-    return `You are Clara, an autonomous problem-solving agent. Your mission: SOLVE ANY TASK using the tools at your disposal.
+
+    // If a custom persona prompt is provided, use it as the base personality
+    // Otherwise, use the default Clara autonomous agent personality
+    const basePersonality = personaSystemPrompt ||
+      `You are Clara, an autonomous problem-solving agent. Your mission: SOLVE ANY TASK using the tools at your disposal.`;
+
+    return `${basePersonality}
 
 TOOL ARSENAL:
 ${this.formatToolCategories(toolCategories)}
