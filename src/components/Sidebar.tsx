@@ -305,9 +305,10 @@ const Sidebar = ({ activePage = 'dashboard', onPageChange }: SidebarProps) => {
     { icon: Home, label: 'Dashboard', id: 'dashboard' },
     { icon: Bot, label: 'Chat', id: 'clara' },
     { icon: BrainCircuit, label: 'Agents', id: 'agents' },
+    { icon: Zap, label: 'App Builder (Beta)', id: 'lumaui' },
     { icon: BookOpen, label: 'RAG', id: 'notebooks' },
-    // Unhide LumaUI (Alpha) unconditionally
-    { icon: Zap, label: 'Lumaui (Alpha)', id: 'lumaui' },
+    // Unhide UI Builder (Beta) unconditionally
+    
     // { icon: Code2, label: 'LumaUI (Beta)', id: 'lumaui-lite' }, // Hidden - using full Lumaui now
     // Show Image Gen if ComfyUI feature is enabled OR if ComfyUI service is running
     ...(featureConfig.comfyUI || isServiceResponding('comfyui') ? [{
