@@ -1519,7 +1519,7 @@ Follow this plan systematically, but adapt as needed based on actual results.`;
 
       // Use user-defined max tool calls with safety bounds
       const maxToolCalls = Math.min(50, Math.max(1, sessionParameters.maxIterations));
-      const maxConversationTurns = Math.min(25, Math.max(5, Math.ceil(maxToolCalls / 2))); // Reasonable conversation limit - increased to 25
+      const maxConversationTurns = 25; // Default to 25 conversation turns
       
       // Initialize planning execution
       currentPlanning = {
