@@ -154,3 +154,4 @@ settings.json
 downloads/*
 config.yaml.backup.*
 electron/claracore/progress_state.*
+package-lock.json
