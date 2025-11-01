@@ -40,7 +40,6 @@ const NetworkServiceManager = require('./networkServiceManager.cjs');
 const NetlifyOAuthHandler = require('./netlifyOAuthHandler.cjs');
 
 // Immutable Startup Settings Manager
-const { getStartupSettingsManager } = require('./startupSettingsManager.cjs');
 
 // Global helper functions for container configuration
 // These functions can be called from anywhere and will create container configs if needed
@@ -2159,15 +2158,13 @@ function registerPythonBackendHandlers() {
 // Register isolated startup settings IPC handlers
 function registerStartupSettingsHandlers() {
   // Initialize startup settings manager
-  if (!startupSettingsManager) {
-    startupSettingsManager = new StartupSettingsManager();
-    log.info('🔒 Isolated startup settings manager initialized');
-  }
+  const manager = ensureStartupSettingsManager();
+  log.info('🔒 Isolated startup settings manager initialized');
 
   // Get startup settings (read-only for other services)
   ipcMain.handle('startup-settings:get', async () => {
     try {
-      const settings = startupSettingsManager.getSettingsWithSync();
+      const settings = manager.getSettingsWithSync();
       log.info('📄 Startup settings requested:', Object.keys(settings));
       return { success: true, settings };
     } catch (error) {
@@ -2186,22 +2183,27 @@ function registerStartupSettingsHandlers() {
 
       log.info('🔒 Startup settings update with user consent:', Object.keys(newSettings));
       
-      const updatedSettings = startupSettingsManager.updateSettings(newSettings);
+      const updatedSettings = manager.updateSettings(newSettings);
 
-      // Apply auto-start setting immediately if provided
-      if (newSettings.autoStart !== undefined) {
-        const isDevelopment = updatedSettings.isDevelopment;
-        
-        if (isDevelopment) {
-          log.warn('Auto-start disabled in development mode');
+      // Apply auto-start behaviour when relevant settings change
+      const shouldUpdateLoginItem =
+        newSettings.autoStart !== undefined || newSettings.startMinimized !== undefined;
+
+      if (shouldUpdateLoginItem && (process.platform === 'darwin' || process.platform === 'win32')) {
+        const openAtLogin = !updatedSettings.isDevelopment && !!updatedSettings.autoStart;
+        const openAsHidden = !!updatedSettings.startMinimized;
+
+        if (!openAtLogin) {
+          log.info('Disabling login item for ClaraVerse');
           app.setLoginItemSettings({
             openAtLogin: false,
             openAsHidden: false
           });
         } else {
+          log.info('Updating login item preferences for ClaraVerse');
           app.setLoginItemSettings({
-            openAtLogin: newSettings.autoStart,
-            openAsHidden: newSettings.startMinimized || false,
+            openAtLogin,
+            openAsHidden,
             path: process.execPath,
             args: []
           });
@@ -2218,7 +2220,7 @@ function registerStartupSettingsHandlers() {
   // Validate settings integrity
   ipcMain.handle('startup-settings:validate', async (event, frontendChecksum) => {
     try {
-      const settings = startupSettingsManager.getSettingsWithSync();
+      const settings = manager.getSettingsWithSync();
       const isValid = settings.checksum === frontendChecksum;
       
       if (!isValid) {
@@ -2246,8 +2248,8 @@ function registerStartupSettingsHandlers() {
       }
 
       log.info('🔄 Resetting startup settings to defaults');
-      const defaultSettings = { ...startupSettingsManager.defaultSettings };
-      startupSettingsManager.writeSettings(defaultSettings);
+      const defaultSettings = { ...manager.defaultSettings };
+      manager.writeSettings(defaultSettings);
 
       return { success: true, settings: defaultSettings };
     } catch (error) {
@@ -2260,14 +2262,14 @@ function registerStartupSettingsHandlers() {
   ipcMain.handle('startup-settings:get-file-status', async () => {
     try {
       const stats = {
-        mainFileExists: fs.existsSync(startupSettingsManager.settingsFile),
-        backupFileExists: fs.existsSync(startupSettingsManager.backupFile),
-        lockFileExists: fs.existsSync(startupSettingsManager.lockFile),
-        filePath: startupSettingsManager.settingsFile
+        mainFileExists: fs.existsSync(manager.settingsFile),
+        backupFileExists: fs.existsSync(manager.backupFile),
+        lockFileExists: fs.existsSync(manager.lockFile),
+        filePath: manager.settingsFile
       };
 
       if (stats.mainFileExists) {
-        const fileStats = fs.statSync(startupSettingsManager.settingsFile);
+        const fileStats = fs.statSync(manager.settingsFile);
         stats.lastModified = fileStats.mtime;
         stats.fileSize = fileStats.size;
       }
@@ -2469,6 +2471,85 @@ class StartupSettingsManager {
 
 // Global startup settings manager instance (initialized in app ready event)
 let startupSettingsManager;
+
+function ensureStartupSettingsManager() {
+  if (!startupSettingsManager) {
+    startupSettingsManager = new StartupSettingsManager();
+  }
+  return startupSettingsManager;
+}
+
+function loadLegacyStartupPreferences() {
+  try {
+    const legacyPath = path.join(app.getPath('userData'), 'clara-settings.json');
+    if (!fs.existsSync(legacyPath)) {
+      return null;
+    }
+
+    const legacyContent = JSON.parse(fs.readFileSync(legacyPath, 'utf8'));
+    const legacyStartup = legacyContent.startup || {};
+
+    return {
+      startFullscreen:
+        typeof legacyStartup.startFullscreen === 'boolean'
+          ? legacyStartup.startFullscreen
+          : typeof legacyContent.fullscreen_startup === 'boolean'
+            ? legacyContent.fullscreen_startup
+            : undefined,
+      startMinimized:
+        typeof legacyStartup.startMinimized === 'boolean'
+          ? legacyStartup.startMinimized
+          : undefined,
+      autoStartMCP:
+        typeof legacyStartup.autoStartMCP === 'boolean'
+          ? legacyStartup.autoStartMCP
+          : undefined
+    };
+  } catch (error) {
+    log.warn('Failed to read legacy startup settings:', error);
+    return null;
+  }
+}
+
+function getStartupPreferences() {
+  let settings;
+  try {
+    const manager = ensureStartupSettingsManager();
+    settings = manager.readSettings();
+  } catch (error) {
+    log.error('Error loading startup settings, using defaults:', error);
+    settings = {
+      startFullscreen: false,
+      startMinimized: false,
+      autoStart: false,
+      checkUpdates: true,
+      restoreLastSession: true,
+      autoStartMCP: true,
+      isDevelopment: process.env.NODE_ENV === 'development' || !app.isPackaged
+    };
+  }
+
+  const legacy = loadLegacyStartupPreferences();
+  if (legacy) {
+    if (typeof settings.startFullscreen !== 'boolean' && typeof legacy.startFullscreen === 'boolean') {
+      settings.startFullscreen = legacy.startFullscreen;
+    }
+    if (typeof settings.startMinimized !== 'boolean' && typeof legacy.startMinimized === 'boolean') {
+      settings.startMinimized = legacy.startMinimized;
+    }
+    if (typeof settings.autoStartMCP !== 'boolean' && typeof legacy.autoStartMCP === 'boolean') {
+      settings.autoStartMCP = legacy.autoStartMCP;
+    }
+  }
+
+  return {
+    settings,
+    startFullscreen: !!settings.startFullscreen,
+    startMinimized: !!settings.startMinimized,
+    autoStartMCP: settings.autoStartMCP !== false,
+    isDevelopment: !!settings.isDevelopment
+  };
+}
 
 // Register handlers for various app functions
 function registerHandlers() {
@@ -3646,13 +3727,10 @@ function registerHandlers() {
         
         // Check startup settings for MCP auto-start using isolated startup settings
         let shouldAutoStartMCP = true; // Default to true for backward compatibility
-        
+
         try {
-          if (!startupSettingsManager) {
-            startupSettingsManager = new StartupSettingsManager();
-          }
-          const startupSettings = startupSettingsManager.readSettings();
-          shouldAutoStartMCP = startupSettings.autoStartMCP !== false; // Default to true if not set
+          const { autoStartMCP } = getStartupPreferences();
+          shouldAutoStartMCP = autoStartMCP;
           log.info('🔒 Using isolated startup settings for MCP auto-start:', shouldAutoStartMCP);
         } catch (settingsError) {
           log.warn('Error reading isolated startup settings for MCP auto-start:', settingsError);
@@ -3727,35 +3805,14 @@ function registerHandlers() {
 
   // Window management handlers
   ipcMain.handle('get-fullscreen-startup-preference', async () => {
-    try {
-      const userDataPath = app.getPath('userData');
-      const settingsPath = path.join(userDataPath, 'settings.json');
-      
-      if (fs.existsSync(settingsPath)) {
-        const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-        return settings.fullscreen_startup !== false; // Default to true if not set
-      }
-      return true; // Default to fullscreen
-    } catch (error) {
-      log.error('Error reading fullscreen startup preference:', error);
-      return true; // Default to fullscreen on error
-    }
+    const { startFullscreen } = getStartupPreferences();
+    return startFullscreen;
   });
 
   ipcMain.handle('set-fullscreen-startup-preference', async (event, enabled) => {
     try {
-      const userDataPath = app.getPath('userData');
-      const settingsPath = path.join(userDataPath, 'settings.json');
-      
-      let settings = {};
-      if (fs.existsSync(settingsPath)) {
-        settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-      }
-      
-      settings.fullscreen_startup = enabled;
-      fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
-      
-      log.info(`Fullscreen startup preference set to: ${enabled}`);
+      const updated = ensureStartupSettingsManager().updateSettings({ startFullscreen: !!enabled });
+      log.info(`Fullscreen startup preference set to: ${!!updated.startFullscreen}`);
       return true;
     } catch (error) {
       log.error('Error saving fullscreen startup preference:', error);
@@ -5045,12 +5102,8 @@ async function initializeLightweightServicesInBackground() {
       let shouldAutoStartMCP = true; // Default to true for backward compatibility
       
       try {
-        const settingsPath = path.join(app.getPath('userData'), 'clara-settings.json');
-        if (fs.existsSync(settingsPath)) {
-          const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-          const startupSettings = settings.startup || {};
-          shouldAutoStartMCP = startupSettings.autoStartMCP !== false; // Default to true if not set
-        }
+        const { autoStartMCP } = getStartupPreferences();
+        shouldAutoStartMCP = autoStartMCP;
       } catch (settingsError) {
         log.warn('Error reading startup settings for MCP auto-start:', settingsError);
         // Default to true on error to maintain existing behavior
@@ -5163,21 +5216,8 @@ async function initializeServicesInBackground() {
       
       // Auto-start previously running servers based on startup settings
       try {
-        const settingsPath = path.join(app.getPath('userData'), 'clara-settings.json');
-        let startupSettings = {};
-        try {
-          if (fs.existsSync(settingsPath)) {
-            const settingsContent = fs.readFileSync(settingsPath, 'utf8');
-            const allSettings = JSON.parse(settingsContent);
-            startupSettings = allSettings.startup || {};
-          }
-        } catch (settingsError) {
-          log.warn('Error reading startup settings, using defaults:', settingsError);
-        }
-        
-        // Default to true for backward compatibility
-        const autoStartMCP = startupSettings.autoStartMCP !== false;
-        
+        const { autoStartMCP } = getStartupPreferences();
+
         if (autoStartMCP) {
           sendStatus('MCP', 'Restoring MCP servers...', 'info');
           const restoreResults = await mcpService.startPreviouslyRunningServers();
@@ -5261,28 +5301,20 @@ async function initializeServicesInBackground() {
 async function createMainWindow() {
   if (mainWindow) return;
   
-  // Check fullscreen startup preference
-  let shouldStartFullscreen = false;
-  let shouldStartMinimized = false;
-  
-  try {
-    const settingsPath = path.join(app.getPath('userData'), 'clara-settings.json');
-    if (fs.existsSync(settingsPath)) {
-      const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-      // Check both startup.fullscreen and fullscreen_startup for backward compatibility
-      shouldStartFullscreen = settings.startup?.startFullscreen ?? settings.fullscreen_startup ?? false;
-      shouldStartMinimized = settings.startup?.startMinimized ?? false;
-    }
-  } catch (error) {
-    log.error('Error reading startup preferences:', error);
-    shouldStartFullscreen = false; // Default to not fullscreen on error
-    shouldStartMinimized = false; // Default to not minimized on error
-  }
+  const startupPreferences = getStartupPreferences();
+  let shouldStartFullscreen = startupPreferences.startFullscreen;
+  let shouldStartMinimized = startupPreferences.startMinimized;
   
   log.info(`Creating main window with fullscreen: ${shouldStartFullscreen}, minimized: ${shouldStartMinimized}`);
+
+  const loginItemSettings = typeof app.getLoginItemSettings === 'function'
+    ? app.getLoginItemSettings()
+    : null;
+  const launchedAtLogin = !!(loginItemSettings && (loginItemSettings.wasOpenedAtLogin || loginItemSettings.wasOpenedAsHidden));
   
   mainWindow = new BrowserWindow({
     fullscreen: shouldStartFullscreen,
+    fullscreenable: true,
     width: shouldStartFullscreen ? undefined : 1200,
     height: shouldStartFullscreen ? undefined : 800,
     webPreferences: {
@@ -5299,9 +5331,17 @@ async function createMainWindow() {
     frame: true
   });
 
+  if (typeof mainWindow.setFullScreenable === 'function') {
+    mainWindow.setFullScreenable(true);
+  }
+
   // Apply minimized state if needed
   if (shouldStartMinimized) {
-    mainWindow.minimize();
+    if (process.platform === 'darwin') {
+      mainWindow.hide();
+    } else {
+      mainWindow.minimize();
+    }
   }
 
   // Handle window minimize to tray
@@ -5421,23 +5461,41 @@ async function createMainWindow() {
   mainWindow.webContents.once('dom-ready', () => {
     log.info('Main window DOM ready, showing immediately (fast startup mode)');
     
-    // Show window immediately for fast startup
+    // Show window immediately for fast startup (unless user requested start minimized)
     if (mainWindow && !mainWindow.isDestroyed()) {
-      log.info('Showing main window (fast startup)');
-      mainWindow.show();
+      if (!shouldStartMinimized) {
+        if (process.platform === 'darwin' && app.dock && typeof app.dock.show === 'function') {
+          app.dock.show();
+        }
+        log.info('Showing main window (fast startup)');
+        mainWindow.show();
+        mainWindow.focus();
+      } else {
+        log.info('Skipping initial show because startMinimized is enabled');
+      }
     }
     
     // Initialize auto-updater when window is ready
     setupAutoUpdater(mainWindow);
   });
 
+  if (launchedAtLogin && !shouldStartMinimized) {
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+        log.info('Forcing window visible after login launch');
+        mainWindow.show();
+        mainWindow.focus();
+      }
+    }, 750);
+  }
+
   // Fallback: Show window when ready (in case dom-ready doesn't fire)
   mainWindow.once('ready-to-show', () => {
     log.info('Main window ready-to-show event fired');
     // Only show if not already shown by dom-ready handler
-    if (mainWindow && !mainWindow.isVisible()) {
+    if (mainWindow && !mainWindow.isVisible() && !shouldStartMinimized) {
       setTimeout(() => {
-        if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+        if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible() && !shouldStartMinimized) {
           log.info('Fallback: Showing main window via ready-to-show');
           mainWindow.show();
           
@@ -5476,7 +5534,7 @@ app.whenReady().then(async () => {
   });
 
   // Initialize isolated startup settings manager first
-  startupSettingsManager = new StartupSettingsManager();
+  ensureStartupSettingsManager();
   log.info('🔒 Isolated startup settings manager initialized on app ready');
 
   // SECURITY: Clean up any stored passwords from previous versions
@@ -5643,9 +5701,20 @@ app.on('will-quit', async (event) => {
 });
 
 app.on('activate', async () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
     await createMainWindow();
+    return;
   }
+
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+
+  if (!mainWindow.isVisible()) {
+    mainWindow.show();
+  }
+
+  mainWindow.focus();
 });
 
 // Register startup settings handler
@@ -5654,27 +5723,26 @@ ipcMain.handle('set-startup-settings', async (event, settings) => {
   log.warn('⚠️ DEPRECATED: set-startup-settings called. Use startup-settings:update instead.');
   
   try {
-    if (!startupSettingsManager) {
-      startupSettingsManager = new StartupSettingsManager();
-    }
+    const manager = ensureStartupSettingsManager();
     
     // Update using isolated system with implicit consent for backward compatibility
-    const result = await startupSettingsManager.updateSettings(settings);
+    const result = await manager.updateSettings(settings);
     
-    // Apply auto-start setting immediately if provided
-    if (settings.autoStart !== undefined) {
-      const isDevelopment = result.isDevelopment;
-      
-      if (isDevelopment) {
-        log.warn('Auto-start disabled in development mode to prevent startup issues');
+    const shouldUpdateLoginItem =
+      settings.autoStart !== undefined || settings.startMinimized !== undefined;
+    if (shouldUpdateLoginItem && (process.platform === 'darwin' || process.platform === 'win32')) {
+      const openAtLogin = !result.isDevelopment && !!result.autoStart;
+      const openAsHidden = !!result.startMinimized;
+
+      if (!openAtLogin) {
         app.setLoginItemSettings({
           openAtLogin: false,
           openAsHidden: false
         });
       } else {
         app.setLoginItemSettings({
-          openAtLogin: settings.autoStart,
-          openAsHidden: settings.startMinimized || false,
+          openAtLogin,
+          openAsHidden,
           path: process.execPath,
           args: []
         });
@@ -5694,11 +5762,7 @@ ipcMain.handle('get-startup-settings', async () => {
   log.warn('⚠️ DEPRECATED: get-startup-settings called. Use startup-settings:get instead.');
   
   try {
-    if (!startupSettingsManager) {
-      startupSettingsManager = new StartupSettingsManager();
-    }
-    
-    const settings = startupSettingsManager.readSettings();
+    const settings = ensureStartupSettingsManager().readSettings();
     log.info('🔒 Startup settings retrieved via deprecated handler');
     
     return settings;
@@ -7111,12 +7175,8 @@ async function initializeServicesInBackground() {
       let shouldAutoStartMCP = true; // Default to true for backward compatibility
       
       try {
-        const settingsPath = path.join(app.getPath('userData'), 'clara-settings.json');
-        if (fs.existsSync(settingsPath)) {
-          const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-          const startupSettings = settings.startup || {};
-          shouldAutoStartMCP = startupSettings.autoStartMCP !== false; // Default to true if not set
-        }
+        const { autoStartMCP } = getStartupPreferences();
+        shouldAutoStartMCP = autoStartMCP;
       } catch (settingsError) {
         log.warn('Error reading startup settings for MCP auto-start:', settingsError);
         // Default to true on error to maintain existing behavior
