@@ -29,7 +29,8 @@ const (
 	SearXNGURL      = "http://localhost:8080"
 	HealthCheckPath = "/healthz"
 	SearchPath      = "/search"
-	ConfigPath      = "./searxng-config"
+	ConfigDirName   = "searxng-config"
+	ConfigEnvVar    = "CLARA_SEARXNG_CONFIG_DIR"
 )
 
 // Web content and search types
@@ -68,6 +69,7 @@ type WebContent struct {
 type SearXNGManager struct {
 	containerID string
 	isRunning   bool
+	configDir   string
 }
 
 type WebContentFetcher struct {
@@ -179,7 +181,7 @@ func NewPythonMCPServer() *PythonMCPServer {
 	log.Printf("Virtual env: %s", server.venvPath)
 	log.Printf("Active Python: %s", server.pythonPath)
 	log.Printf("Workspace: %s", server.workspaceDir)
-	
+
 	// Verify workspace is writable
 	if err := os.MkdirAll(filepath.Join(server.workspaceDir, "test"), 0755); err != nil {
 		log.Printf("WARNING: Workspace directory is not writable: %v", err)
@@ -760,7 +762,7 @@ func (s *PythonMCPServer) save(params map[string]interface{}) string {
 
 	// Force save to workspace
 	fullPath := filepath.Join(s.workspaceDir, filepath.Base(name))
-	
+
 	// Security check: ensure the file is within workspace directory
 	workspaceAbs, _ := filepath.Abs(s.workspaceDir)
 	fullPathAbs, _ := filepath.Abs(fullPath)
@@ -938,6 +940,109 @@ func NewSearXNGManager() *SearXNGManager {
 	return &SearXNGManager{}
 }
 
+func (sm *SearXNGManager) getConfigDir() (string, error) {
+	if sm.configDir != "" {
+		return sm.configDir, nil
+	}
+
+	dir, err := resolveSearXNGConfigDir()
+	if err != nil {
+		return "", err
+	}
+
+	sm.configDir = dir
+	return sm.configDir, nil
+}
+
+func resolveSearXNGConfigDir() (string, error) {
+	var (
+		errorsList []string
+		tried      = make(map[string]struct{})
+		successDir string
+	)
+
+	tryPath := func(path string) bool {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			return false
+		}
+		if _, seen := tried[path]; seen {
+			return false
+		}
+		tried[path] = struct{}{}
+
+		abs, err := filepath.Abs(filepath.Clean(path))
+		if err != nil {
+			errorsList = append(errorsList, fmt.Sprintf("%s (abs: %v)", path, err))
+			return false
+		}
+
+		if err := os.MkdirAll(abs, 0755); err != nil {
+			errorsList = append(errorsList, fmt.Sprintf("%s (%v)", abs, err))
+			return false
+		}
+
+		successDir = abs
+		return true
+	}
+
+	// 1. User override via environment variable
+	if envDir := os.Getenv(ConfigEnvVar); tryPath(envDir) {
+		return successDir, nil
+	}
+
+	// 2. Legacy current working directory path (for development setups)
+	if cwd, err := os.Getwd(); err == nil {
+		tryPath(filepath.Join(cwd, ConfigDirName))
+		if successDir != "" {
+			return successDir, nil
+		}
+	}
+
+	// 3. Platform-specific config locations
+	if homeDir, err := os.UserHomeDir(); err == nil && homeDir != "" {
+		switch runtime.GOOS {
+		case "darwin":
+			if tryPath(filepath.Join(homeDir, "Library", "Application Support", "ClaraVerse", ConfigDirName)) {
+				return successDir, nil
+			}
+		case "windows":
+			if localAppData := os.Getenv("LOCALAPPDATA"); strings.TrimSpace(localAppData) != "" {
+				if tryPath(filepath.Join(localAppData, "ClaraVerse", ConfigDirName)) {
+					return successDir, nil
+				}
+			}
+			if tryPath(filepath.Join(homeDir, "AppData", "Local", "ClaraVerse", ConfigDirName)) {
+				return successDir, nil
+			}
+		default:
+			if xdgConfig := os.Getenv("XDG_CONFIG_HOME"); strings.TrimSpace(xdgConfig) != "" {
+				if tryPath(filepath.Join(xdgConfig, "claraverse", ConfigDirName)) {
+					return successDir, nil
+				}
+			}
+			if tryPath(filepath.Join(homeDir, ".config", "claraverse", ConfigDirName)) {
+				return successDir, nil
+			}
+		}
+
+		if tryPath(filepath.Join(homeDir, ".claraverse", ConfigDirName)) {
+			return successDir, nil
+		}
+	}
+
+	// 4. System temporary directory fallback
+	if tryPath(filepath.Join(os.TempDir(), "claraverse", ConfigDirName)) {
+		return successDir, nil
+	}
+
+	if len(errorsList) == 0 {
+		return "", fmt.Errorf("unable to determine SearXNG config directory: no valid locations")
+	}
+
+	return "", fmt.Errorf("unable to create SearXNG config directory (tried: %s)", strings.Join(errorsList, "; "))
+}
+
 // NewWebContentFetcher creates a new web content fetcher with smart dynamic detection
 func NewWebContentFetcher() *WebContentFetcher {
 	return &WebContentFetcher{
@@ -993,7 +1098,11 @@ func (sm *SearXNGManager) CheckContainerRunning() bool {
 
 // CreateSearXNGConfig creates a proper SearXNG configuration
 func (sm *SearXNGManager) CreateSearXNGConfig() error {
-	configDir := "searxng-config"
+	configDir, err := sm.getConfigDir()
+	if err != nil {
+		return fmt.Errorf("failed to resolve config directory: %v", err)
+	}
+
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		return fmt.Errorf("failed to create config directory: %v", err)
 	}
@@ -1120,12 +1229,14 @@ func (sm *SearXNGManager) StartContainer() error {
 		return fmt.Errorf("failed to pull SearXNG image: %v", err)
 	}
 
-	// Get absolute path to config
-	cwd, err := os.Getwd()
+	configDir, err := sm.getConfigDir()
 	if err != nil {
-		return fmt.Errorf("failed to get working directory: %v", err)
+		return fmt.Errorf("failed to resolve config directory: %v", err)
 	}
-	configAbsPath := filepath.Join(cwd, "searxng-config")
+
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return fmt.Errorf("failed to prepare config directory: %v", err)
+	}
 
 	// Check if container exists but is stopped
 	if sm.CheckContainerExists() {
@@ -1140,7 +1251,7 @@ func (sm *SearXNGManager) StartContainer() error {
 		cmd := exec.Command("docker", "run", "-d",
 			"--name", ContainerName,
 			"-p", fmt.Sprintf("%s:8080", SearXNGPort),
-			"-v", fmt.Sprintf("%s:/etc/searxng", configAbsPath),
+			"-v", fmt.Sprintf("%s:/etc/searxng", configDir),
 			"-e", "SEARXNG_BASE_URL=http://localhost:8080/",
 			"-e", "SEARXNG_SECRET=clara-secret-key-for-searxng",
 			"--add-host=host.docker.internal:host-gateway", // For localhost access
@@ -2206,7 +2317,7 @@ except Exception as e:
 	if runtime.GOOS == "windows" {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("VIRTUAL_ENV=%s", s.venvPath))
 	}
-	
+
 	// Ensure working directory is set correctly
 	if cmd.Dir == "" || cmd.Dir == "/" {
 		cmd.Dir = s.workspaceDir
@@ -2332,7 +2443,7 @@ func (s *PythonMCPServer) createPDF(params map[string]interface{}) string {
 
 	// Create full path in workspace - ensure it's within workspace
 	fullPath := filepath.Join(s.workspaceDir, filepath.Base(filename))
-	
+
 	// Security check: ensure the file is within workspace directory
 	workspaceAbs, _ := filepath.Abs(s.workspaceDir)
 	fullPathAbs, _ := filepath.Abs(fullPath)
