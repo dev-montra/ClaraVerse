@@ -27,6 +27,40 @@ import { claraAttachmentService } from './claraAttachmentService';
 
 export class ClaraAgentApiService {
   /**
+   * Tool usage guidance to help LLMs choose the right tools
+   */
+  private readonly TOOL_USAGE_GUIDANCE = `
+## Tool Usage Guidelines
+
+When you have access to tools, follow these best practices:
+
+**Web Search & Research:**
+- ALWAYS use the \`search\` tool for web searches, current information, and research
+- DO NOT write Python code to search the web - use the dedicated search tool
+- The search tool uses SearXNG for privacy-focused results
+
+**Web Content:**
+- Use \`fetch_content\` to extract content from web pages
+- Automatically uses Playwright browser automation for dynamic content
+
+**Python Execution:**
+- Use \`py\` tool for calculations, data analysis, and programming tasks
+- Use \`pip\` tool to install any required Python packages
+- Python runs in an isolated environment - safe to experiment
+
+**File Operations:**
+- Use \`save\` to create files, \`load\` to read them, \`ls\` to list workspace files
+- Use \`read_document\` for PDF, DOCX, XLSX, and other document formats
+- Use \`create_pdf\` to generate PDF reports from markdown or text
+
+**Shell Commands:**
+- Use \`sh\` or powershell for system operations, file management, and utilities
+- Python/pip commands automatically route to the isolated environment
+
+**General Rule:** Use the most specific tool for each task - don't reinvent functionality that already exists as a dedicated tool.
+`.trim();
+
+  /**
    * Send a chat message with custom provider support for agents
    */
   public async sendChatMessage(
@@ -63,6 +97,14 @@ export class ClaraAgentApiService {
 
       // Get tools if enabled
       const tools = await claraToolService.getAvailableTools(config, onContentChunk);
+      
+      // Enhance system prompt with tool usage guidance when tools are available
+      let enhancedSystemPrompt = systemPrompt || '';
+      if (tools && tools.length > 0) {
+        enhancedSystemPrompt = enhancedSystemPrompt 
+          ? `${systemPrompt}\n\n${this.TOOL_USAGE_GUIDANCE}`
+          : this.TOOL_USAGE_GUIDANCE;
+      }
 
       // Check if autonomous agent mode is enabled
       const isAutonomousMode = config.autonomousAgent?.enabled !== false;
@@ -85,7 +127,7 @@ export class ClaraAgentApiService {
           tools, 
           config, 
           processedAttachments,
-          systemPrompt,
+          enhancedSystemPrompt,
           conversationHistory,
           onContentChunk,
           claraProviderService.getCurrentProvider()?.id
@@ -114,7 +156,7 @@ export class ClaraAgentApiService {
         tools, 
         config,
         processedAttachments,
-        systemPrompt,
+        enhancedSystemPrompt,
         conversationHistory,
         onContentChunk,
         claraProviderService.getCurrentProvider()?.id,

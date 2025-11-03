@@ -403,7 +403,7 @@ export class ClaraAgentService {
 
             // Conditionally verify if task is complete (smart verification)
             // After tool execution, if no new tool calls, LLM signals completion
-            if (this.shouldVerifyCompletion([])) {
+            if (this.shouldVerifyCompletion(config, [])) {
               console.log(`🔍 Verifying task completion after tool execution...`);
               const verification = await taskCompletionVerifier.verifyCompletion(
                 client,
@@ -433,7 +433,7 @@ export class ClaraAgentService {
 
           } else {
             // LLM says no tools needed - this is natural completion signal
-            if (this.shouldVerifyCompletion([])) {
+            if (this.shouldVerifyCompletion(config, [])) {
               console.log(`🔍 LLM indicates no tools needed - verifying task completion...`);
               const verification = await taskCompletionVerifier.verifyCompletion(
                 client,
@@ -1062,7 +1062,7 @@ export class ClaraAgentService {
 
       if (toolCalls.length > 0 || response.length > 0) {
         // Conditionally verify: only when LLM signals completion (no tool calls)
-        if (this.shouldVerifyCompletion(toolCalls)) {
+        if (this.shouldVerifyCompletion(config, toolCalls)) {
           console.log(`🔍 Verifying task completion after step ${stepNumber}...`);
           const verification = await taskCompletionVerifier.verifyCompletion(
             client,
@@ -1127,7 +1127,14 @@ export class ClaraAgentService {
    * Simple rule: Only verify when LLM signals completion (no tool calls)
    * This respects the LLM's natural flow and minimizes verification calls
    */
-  private shouldVerifyCompletion(toolCalls: any[]): boolean {
+  private shouldVerifyCompletion(config: ClaraAIConfig, toolCalls: any[]): boolean {
+    const deepThinkingEnabled = config.autonomousAgent?.enableDeepThinkingVerification ?? false;
+
+    if (!deepThinkingEnabled) {
+      console.log('⏭️ Skipping verification: Deep Thinking Agent mode disabled');
+      return false;
+    }
+
     // Only verify when LLM signals completion (no tool calls requested)
     // No tool calls = LLM thinks task is done = natural verification point
     const shouldVerify = toolCalls.length === 0;

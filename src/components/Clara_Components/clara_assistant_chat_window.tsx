@@ -778,9 +778,32 @@ const ProcessingIndicator: React.FC<{
   const getIndicatorContent = () => {
     switch (processingState) {
       case 'processing':
+        const thinkingMessages = [
+          'thinking',
+          'wondering',
+          'dreaming',
+          'coding',
+          'pondering',
+          'spelunking',
+          'stitching',
+          'brewing ideas',
+          'conjuring magic',
+          'weaving thoughts',
+          'crafting solutions',
+          'exploring possibilities',
+          'diving deep',
+          'connecting dots',
+          'piecing together',
+          'contemplating',
+          'brainstorming',
+          'architecting',
+          'orchestrating',
+          'illuminating paths'
+        ];
+        const randomThinking = thinkingMessages[Math.floor(Math.random() * thinkingMessages.length)];
         return {
           icon: <Loader2 className="w-5 h-5 animate-spin" />,
-          text: message || 'Clara is thinking...',
+          text: message || `Clara is ${randomThinking}...`,
           bgColor: 'bg-blue-500'
         };
       case 'success':
