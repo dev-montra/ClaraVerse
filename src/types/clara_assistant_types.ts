@@ -604,6 +604,8 @@ export interface ClaraAIConfig {
     confidenceThreshold: number;
     enableChainOfThought: boolean;
     enableErrorLearning: boolean;
+    /** Enables deep verification of task completion using secondary analysis */
+    enableDeepThinkingVerification?: boolean;
   };
   
   /** Custom provider configuration (for non-stored providers) */
@@ -1118,6 +1120,9 @@ export interface ClaraAutonomousAgentConfig {
   
   /** Enable error analysis and learning */
   enableErrorLearning: boolean;
+
+  /** Enable deep verification phase before declaring tasks complete */
+  enableDeepThinkingVerification?: boolean;
 }
 
 // ================================
