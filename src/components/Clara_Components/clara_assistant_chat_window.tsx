@@ -769,54 +769,99 @@ const ScrollToBottomButton: React.FC<{
 };
 
 /**
- * Processing indicator component
+ * Processing indicator component with stable rotating status messages
  */
 const ProcessingIndicator: React.FC<{
   processingState: ClaraProcessingState;
   message?: string;
 }> = ({ processingState, message }) => {
+  // Categories with themed messages and colors
+  const thinkingCategories = {
+    analytical: {
+      messages: ['thinking', 'pondering', 'contemplating', 'analyzing'],
+      colors: 'bg-gradient-to-r from-blue-500 to-indigo-600',
+      emoji: '🤔'
+    },
+    creative: {
+      messages: ['dreaming', 'conjuring magic', 'weaving thoughts', 'brewing ideas'],
+      colors: 'bg-gradient-to-r from-purple-500 to-pink-600',
+      emoji: '✨'
+    },
+    technical: {
+      messages: ['coding', 'architecting', 'crafting solutions', 'building'],
+      colors: 'bg-gradient-to-r from-green-500 to-teal-600',
+      emoji: '⚡'
+    },
+    exploratory: {
+      messages: ['spelunking', 'diving deep', 'exploring possibilities', 'discovering'],
+      colors: 'bg-gradient-to-r from-orange-500 to-amber-600',
+      emoji: '🔍'
+    },
+    connecting: {
+      messages: ['stitching', 'connecting dots', 'piecing together', 'orchestrating'],
+      colors: 'bg-gradient-to-r from-cyan-500 to-blue-600',
+      emoji: '🧩'
+    }
+  };
+
+  // Stable state that only updates every 5 seconds
+  const [currentStatus, setCurrentStatus] = React.useState<{
+    text: string;
+    colors: string;
+    emoji: string;
+  }>(() => {
+    // Initialize with a random category and message
+    const categories = Object.values(thinkingCategories);
+    const randomCategory = categories[Math.floor(Math.random() * categories.length)];
+    const randomMessage = randomCategory.messages[Math.floor(Math.random() * randomCategory.messages.length)];
+    return {
+      text: randomMessage,
+      colors: randomCategory.colors,
+      emoji: randomCategory.emoji
+    };
+  });
+
+  // Update status every 5 seconds when processing
+  React.useEffect(() => {
+    if (processingState !== 'processing') return;
+
+    const interval = setInterval(() => {
+      const categories = Object.values(thinkingCategories);
+      const randomCategory = categories[Math.floor(Math.random() * categories.length)];
+      const randomMessage = randomCategory.messages[Math.floor(Math.random() * randomCategory.messages.length)];
+      
+      setCurrentStatus({
+        text: randomMessage,
+        colors: randomCategory.colors,
+        emoji: randomCategory.emoji
+      });
+    }, 5000); // Change every 5 seconds
+
+    return () => clearInterval(interval);
+  }, [processingState]);
+
   const getIndicatorContent = () => {
     switch (processingState) {
       case 'processing':
-        const thinkingMessages = [
-          'thinking',
-          'wondering',
-          'dreaming',
-          'coding',
-          'pondering',
-          'spelunking',
-          'stitching',
-          'brewing ideas',
-          'conjuring magic',
-          'weaving thoughts',
-          'crafting solutions',
-          'exploring possibilities',
-          'diving deep',
-          'connecting dots',
-          'piecing together',
-          'contemplating',
-          'brainstorming',
-          'architecting',
-          'orchestrating',
-          'illuminating paths'
-        ];
-        const randomThinking = thinkingMessages[Math.floor(Math.random() * thinkingMessages.length)];
         return {
           icon: <Loader2 className="w-5 h-5 animate-spin" />,
-          text: message || `Clara is ${randomThinking}...`,
-          bgColor: 'bg-blue-500'
+          text: message || `Clara is ${currentStatus.text}`,
+          bgColor: currentStatus.colors,
+          emoji: currentStatus.emoji
         };
       case 'success':
         return {
           icon: <Bot className="w-5 h-5" />,
           text: 'Response generated!',
-          bgColor: 'bg-green-500'
+          bgColor: 'bg-gradient-to-r from-green-500 to-emerald-600',
+          emoji: '✓'
         };
       case 'error':
         return {
           icon: <Bot className="w-5 h-5" />,
           text: message || 'Something went wrong',
-          bgColor: 'bg-red-500'
+          bgColor: 'bg-gradient-to-r from-red-500 to-rose-600',
+          emoji: '⚠'
         };
       default:
         return null;
@@ -828,9 +873,12 @@ const ProcessingIndicator: React.FC<{
 
   return (
     <div className="flex justify-center mb-4">
-      <div className={`flex items-center gap-2 px-4 py-2 ${content.bgColor} text-white rounded-full text-sm`}>
+      <div 
+        className={`flex items-center gap-2 px-4 py-2 ${content.bgColor} text-white rounded-full text-sm shadow-lg transition-all duration-500 ease-in-out`}
+      >
         {content.icon}
-        <span>{content.text}</span>
+        <span className="font-medium">{content.emoji}</span>
+        <span>{content.text}...</span>
       </div>
     </div>
   );
