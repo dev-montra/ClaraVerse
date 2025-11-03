@@ -761,7 +761,8 @@ export default Counter;`,
         maxToolCalls: 10,
         confidenceThreshold: 0.7,
         enableChainOfThought: true,
-        enableErrorLearning: true
+      enableErrorLearning: true,
+      enableDeepThinkingVerification: false
       }
     },
     contextWindow: 50 // Include last 50 messages in conversation history
@@ -1296,7 +1297,8 @@ export default Counter;`,
                 maxToolCalls: 10,
                 confidenceThreshold: 0.7,
                 enableChainOfThought: true,
-                enableErrorLearning: true
+              enableErrorLearning: true,
+              enableDeepThinkingVerification: false
               },
               contextWindow: 50 // Include last 50 messages in conversation history
             };
@@ -1632,7 +1634,8 @@ Now tell me what is the result "`;
           maxToolCalls: sessionConfig.aiConfig.autonomousAgent?.maxToolCalls || 10,
           confidenceThreshold: sessionConfig.aiConfig.autonomousAgent?.confidenceThreshold || 0.7,
           enableChainOfThought: sessionConfig.aiConfig.autonomousAgent?.enableChainOfThought || true,
-          enableErrorLearning: sessionConfig.aiConfig.autonomousAgent?.enableErrorLearning || true
+          enableErrorLearning: sessionConfig.aiConfig.autonomousAgent?.enableErrorLearning || true,
+          enableDeepThinkingVerification: sessionConfig.aiConfig.autonomousAgent?.enableDeepThinkingVerification ?? false
         }
       };
 
@@ -2758,7 +2761,8 @@ You can:
             maxToolCalls: 10,
             confidenceThreshold: 0.7,
             enableChainOfThought: true,
-            enableErrorLearning: true
+            enableErrorLearning: true,
+            enableDeepThinkingVerification: false
           },
           contextWindow: savedConfig.contextWindow || 50
         };
@@ -2837,7 +2841,8 @@ You can:
             maxToolCalls: 10,
             confidenceThreshold: 0.7,
             enableChainOfThought: true,
-            enableErrorLearning: true
+            enableErrorLearning: true,
+            enableDeepThinkingVerification: false
           },
           contextWindow: 50 // Include last 50 messages in conversation history
         };
@@ -4440,7 +4445,8 @@ ${data.timezone ? `• **Timezone:** ${data.timezone}` : ''}`;
                         maxToolCalls: newConfig.autonomousAgent.maxToolCalls ?? currentConfig.autonomousAgent?.maxToolCalls ?? 10,
                         confidenceThreshold: newConfig.autonomousAgent.confidenceThreshold ?? currentConfig.autonomousAgent?.confidenceThreshold ?? 0.7,
                         enableChainOfThought: newConfig.autonomousAgent.enableChainOfThought ?? currentConfig.autonomousAgent?.enableChainOfThought ?? true,
-                        enableErrorLearning: newConfig.autonomousAgent.enableErrorLearning ?? currentConfig.autonomousAgent?.enableErrorLearning ?? true
+                        enableErrorLearning: newConfig.autonomousAgent.enableErrorLearning ?? currentConfig.autonomousAgent?.enableErrorLearning ?? true,
+                        enableDeepThinkingVerification: newConfig.autonomousAgent.enableDeepThinkingVerification ?? currentConfig.autonomousAgent?.enableDeepThinkingVerification ?? false
                       } : currentConfig.autonomousAgent,
                       artifacts: newConfig.artifacts ? {
                         enableCodeArtifacts: newConfig.artifacts.enableCodeArtifacts ?? currentConfig.artifacts?.enableCodeArtifacts ?? true,

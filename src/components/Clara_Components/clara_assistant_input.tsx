@@ -853,6 +853,9 @@ const OverflowMenu: React.FC<{
   // Settings
   showAdvancedOptionsPanel?: boolean;
   onAdvancedOptionsToggle?: (show?: boolean) => void;
+  // Deep thinking verification
+  deepThinkingEnabled?: boolean;
+  onDeepThinkingToggle?: () => void;
   // Trigger button ref for click-outside detection
   triggerRef?: React.RefObject<HTMLButtonElement>;
 }> = ({ 
@@ -870,6 +873,8 @@ const OverflowMenu: React.FC<{
   onNotebookModeToggle,
   showAdvancedOptionsPanel = false,
   onAdvancedOptionsToggle,
+  deepThinkingEnabled = false,
+  onDeepThinkingToggle,
   triggerRef
 }) => {
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -1047,6 +1052,44 @@ const OverflowMenu: React.FC<{
             </div>
             {isNotebookMode && (
               <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
+            )}
+          </button>
+
+          {/* Deep Thinking Agent */}
+          <button
+            onClick={() => {
+              onDeepThinkingToggle?.();
+              onClose();
+            }}
+            className={`w-full flex items-center gap-3 p-2 rounded-lg transition-colors text-left ${
+              deepThinkingEnabled
+                ? 'bg-blue-100 dark:bg-blue-900/30 hover:bg-blue-200 dark:hover:bg-blue-900/50'
+                : 'hover:bg-gray-100 dark:hover:bg-gray-700'
+            }`}
+          >
+            <div className={`flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center ${
+              deepThinkingEnabled
+                ? 'bg-blue-200 dark:bg-blue-800/50'
+                : 'bg-blue-100 dark:bg-blue-900/30'
+            }`}>
+              <Brain className={`w-4 h-4 ${
+                deepThinkingEnabled
+                  ? 'text-blue-700 dark:text-blue-400'
+                  : 'text-blue-600 dark:text-blue-400'
+              }`} />
+            </div>
+            <div className="flex-1">
+              <div className="text-sm font-medium text-gray-900 dark:text-white">
+                Deep Thinking Agent {deepThinkingEnabled && (
+                  <span className="text-xs text-blue-600 dark:text-blue-400">(On)</span>
+                )}
+              </div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">
+                Cross-verify completion before ending tasks
+              </div>
+            </div>
+            {deepThinkingEnabled && (
+              <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
             )}
           </button>
 
@@ -2138,7 +2181,8 @@ Skip for: quick answers, simple lists
           maxToolCalls: aiConfig.autonomousAgent?.maxToolCalls || 10,
           confidenceThreshold: aiConfig.autonomousAgent?.confidenceThreshold || 0.7,
           enableChainOfThought: aiConfig.autonomousAgent?.enableChainOfThought || true,
-          enableErrorLearning: aiConfig.autonomousAgent?.enableErrorLearning || true
+          enableErrorLearning: aiConfig.autonomousAgent?.enableErrorLearning || true,
+          enableDeepThinkingVerification: aiConfig.autonomousAgent?.enableDeepThinkingVerification ?? false
         };
       } else {
         // Disabling tools: disable autonomous mode only if streaming is enabled
@@ -2154,7 +2198,8 @@ Skip for: quick answers, simple lists
             maxToolCalls: aiConfig.autonomousAgent?.maxToolCalls || 10,
             confidenceThreshold: aiConfig.autonomousAgent?.confidenceThreshold || 0.7,
             enableChainOfThought: aiConfig.autonomousAgent?.enableChainOfThought || true,
-            enableErrorLearning: aiConfig.autonomousAgent?.enableErrorLearning || true
+            enableErrorLearning: aiConfig.autonomousAgent?.enableErrorLearning || true,
+            enableDeepThinkingVerification: aiConfig.autonomousAgent?.enableDeepThinkingVerification ?? false
           };
         }
       }
@@ -2174,7 +2219,8 @@ Skip for: quick answers, simple lists
         maxToolCalls: aiConfig.autonomousAgent?.maxToolCalls || 10,
         confidenceThreshold: aiConfig.autonomousAgent?.confidenceThreshold || 0.7,
         enableChainOfThought: aiConfig.autonomousAgent?.enableChainOfThought || true,
-        enableErrorLearning: aiConfig.autonomousAgent?.enableErrorLearning || true
+        enableErrorLearning: aiConfig.autonomousAgent?.enableErrorLearning || true,
+        enableDeepThinkingVerification: aiConfig.autonomousAgent?.enableDeepThinkingVerification ?? false
       };
     }
 
@@ -2982,7 +3028,8 @@ Skip for: quick answers, simple lists
                           maxToolCalls: 10,
                           confidenceThreshold: 0.8,
                           enableChainOfThought: false,
-                          enableErrorLearning: true
+                          enableErrorLearning: true,
+                          enableDeepThinkingVerification: false
                         };
                         
                         // When enabling autonomous agent, disable streaming mode
@@ -3112,7 +3159,8 @@ Skip for: quick answers, simple lists
                             maxToolCalls: 10,
                             confidenceThreshold: 0.8,
                             enableChainOfThought: false,
-                            enableErrorLearning: true
+                            enableErrorLearning: true,
+                            enableDeepThinkingVerification: false
                           };
                           
                           onConfigChange?.({
@@ -3147,7 +3195,8 @@ Skip for: quick answers, simple lists
                             maxToolCalls: 10,
                             confidenceThreshold: 0.8,
                             enableChainOfThought: false,
-                            enableErrorLearning: true
+                            enableErrorLearning: true,
+                            enableDeepThinkingVerification: false
                           };
                           
                           onConfigChange?.({
@@ -3178,7 +3227,8 @@ Skip for: quick answers, simple lists
                               maxToolCalls: 10,
                               confidenceThreshold: 0.8,
                               enableChainOfThought: false,
-                              enableErrorLearning: true
+                              enableErrorLearning: true,
+                              enableDeepThinkingVerification: false
                             };
                             
                             onConfigChange?.({
@@ -3208,7 +3258,8 @@ Skip for: quick answers, simple lists
                               maxToolCalls: 10,
                               confidenceThreshold: 0.8,
                               enableChainOfThought: false,
-                              enableErrorLearning: true
+                              enableErrorLearning: true,
+                              enableDeepThinkingVerification: false
                             };
                             
                             onConfigChange?.({
@@ -3238,7 +3289,8 @@ Skip for: quick answers, simple lists
                               maxToolCalls: 10,
                               confidenceThreshold: 0.8,
                               enableChainOfThought: false,
-                              enableErrorLearning: true
+                              enableErrorLearning: true,
+                              enableDeepThinkingVerification: false
                             };
                             
                             onConfigChange?.({
@@ -3698,10 +3750,56 @@ const ClaraAssistantInput: React.FC<ClaraInputProps> = ({
     sessionConfig?.aiConfig?.features.enableStreaming ?? false
   );
 
+  // Deep thinking verification state
+  const [deepThinkingEnabled, setDeepThinkingEnabled] = useState(
+    sessionConfig?.aiConfig?.autonomousAgent?.enableDeepThinkingVerification ?? false
+  );
+
   // Voice chat state - simplified for transcription only
   const [showVoiceChat, setShowVoiceChat] = useState(false);
   const [isVoiceChatEnabled, setIsVoiceChatEnabled] = useState(false);
   const [isVoiceProcessing, setIsVoiceProcessing] = useState(false);
+
+  // Sync deep thinking state with external config changes
+  useEffect(() => {
+    setDeepThinkingEnabled(sessionConfig?.aiConfig?.autonomousAgent?.enableDeepThinkingVerification ?? false);
+  }, [sessionConfig?.aiConfig?.autonomousAgent?.enableDeepThinkingVerification]);
+
+  // Deep thinking toggle handler
+  const handleDeepThinkingToggle = useCallback(() => {
+    const existingAutonomous = sessionConfig?.aiConfig?.autonomousAgent;
+    const currentValue = existingAutonomous?.enableDeepThinkingVerification ?? false;
+    const newValue = !currentValue;
+    setDeepThinkingEnabled(newValue);
+
+    if (!sessionConfig?.aiConfig) {
+      return;
+    }
+
+    const baseAutonomous = existingAutonomous || {
+      enabled: true,
+      maxRetries: 3,
+      retryDelay: 1000,
+      enableSelfCorrection: true,
+      enableToolGuidance: true,
+      enableProgressTracking: true,
+      maxToolCalls: 10,
+      confidenceThreshold: 0.7,
+      enableChainOfThought: true,
+      enableErrorLearning: true,
+      enableDeepThinkingVerification: false,
+    };
+
+    onConfigChange?.({
+      aiConfig: {
+        ...sessionConfig.aiConfig,
+        autonomousAgent: {
+          ...baseAutonomous,
+          enableDeepThinkingVerification: newValue,
+        },
+      },
+    });
+  }, [sessionConfig?.aiConfig, onConfigChange]);
 
   // Overflow menu state
   const [showOverflowMenu, setShowOverflowMenu] = useState(false);
@@ -5131,7 +5229,8 @@ const ClaraAssistantInput: React.FC<ClaraInputProps> = ({
       maxToolCalls: 10,
       confidenceThreshold: 0.8,
       enableChainOfThought: false,
-      enableErrorLearning: true
+      enableErrorLearning: true,
+      enableDeepThinkingVerification: currentAIConfig.autonomousAgent?.enableDeepThinkingVerification ?? false
     };
 
     const updatedConfig: ClaraAIConfig = {
@@ -7551,6 +7650,8 @@ You can right-click on the image to save it or use it in your projects.`;
                         isNotebookMode={isNotebookMode}
                         selectedNotebook={selectedNotebook}
                         onNotebookModeToggle={handleNotebookModeToggle}
+                        deepThinkingEnabled={deepThinkingEnabled}
+                        onDeepThinkingToggle={handleDeepThinkingToggle}
                       />
                     </div>
 

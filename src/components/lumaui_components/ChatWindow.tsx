@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Send, Loader2, Bot, Trash2, Settings, ChevronDown, Wand2, Scissors, StopCircle, ChevronRight } from 'lucide-react';
+import { Send, Loader2, Bot, Trash2, Settings, Wand2, Scissors, StopCircle, ChevronRight } from 'lucide-react';
 import { useProviders } from '../../contexts/ProvidersContext';
 import { LumaUIAPIClient, ChatMessage as LumaChatMessage } from './services/lumaUIApiClient';
 import type { Tool } from '../../db';
