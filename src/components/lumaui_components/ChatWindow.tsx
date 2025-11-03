@@ -807,6 +807,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
   ];
 
   const [messages, setMessages] = useState<Message[]>(defaultMessages);
+  const [shouldScrollToBottom, setShouldScrollToBottom] = useState(false);
 
   const [inputMessage, setInputMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -945,6 +946,9 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
       if (savedData && savedData.messages.length > 0) {
         setMessages(savedData.messages);
         console.log('📖 Loaded', savedData.messages.length, 'messages for project:', projectId);
+        
+        // Set flag to trigger scroll after messages are rendered
+        setShouldScrollToBottom(true);
       } else {
         setMessages(defaultMessages);
         console.log('🆕 Starting fresh chat for project:', projectId);
@@ -962,15 +966,31 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
     }
   }, [projectId, messages, checkpoints, projectName]);
 
-  // Auto-scroll to bottom
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
-  // Auto-scroll when loading state changes
+  // Auto-scroll to bottom when messages change
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Auto-scroll when loading state changes (streaming responses)
+  useEffect(() => {
+    if (isLoading) {
+      scrollToBottom();
+    }
+  }, [isLoading]);
+
+  // Handle forced scroll to bottom (after loading history)
+  useEffect(() => {
+    if (shouldScrollToBottom && messages.length > 0) {
+      // Use multiple techniques to ensure scroll happens after render
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          scrollToBottom();
+          console.log('🔽 Forced scroll to bottom after history load');
+          setShouldScrollToBottom(false);
+        });
+      });
+    }
+  }, [shouldScrollToBottom, messages]);
 
   // Animate header when tools are executing or AI is planning
   useEffect(() => {
@@ -1525,6 +1545,9 @@ ${reflection.nextSteps.map((step, i) => `${i + 1}. ${step}`).join('\n')}
     setInputMessage('');
     setIsLoading(true);
     setCurrentTask('Analyzing request...');
+
+    // Auto-scroll to show user's new message
+    setTimeout(() => scrollToBottom(), 100);
 
     // Create new abort controller for this operation
     abortControllerRef.current = new AbortController();

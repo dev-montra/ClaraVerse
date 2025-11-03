@@ -2451,11 +2451,14 @@ func (s *PythonMCPServer) createPDF(params map[string]interface{}) string {
 		return "ERROR: Invalid file path - outside workspace directory"
 	}
 
-	// Create PDF
+	// Create PDF with UTF-8 support
 	pdf := gofpdf.New("P", "mm", "A4", "")
+
+	// Enable UTF-8 support for proper bullet point rendering
+	tr := pdf.UnicodeTranslatorFromDescriptor("")
 	pdf.SetCreator("Clara MCP", true)
-	pdf.SetAuthor(author, true)
-	pdf.SetTitle(title, true)
+	pdf.SetAuthor(tr(author), true)
+	pdf.SetTitle(tr(title), true)
 	pdf.SetSubject("Document created by Clara MCP", true)
 
 	// Add page
@@ -2467,7 +2470,7 @@ func (s *PythonMCPServer) createPDF(params map[string]interface{}) string {
 	// Add title if provided
 	if title != "" {
 		pdf.SetFont("Arial", "B", 16)
-		pdf.Cell(0, 10, title)
+		pdf.Cell(0, 10, tr(title))
 		pdf.Ln(15)
 		pdf.SetFont("Arial", "", 12)
 	}
@@ -2487,37 +2490,37 @@ func (s *PythonMCPServer) createPDF(params map[string]interface{}) string {
 		if strings.HasPrefix(line, "# ") {
 			pdf.Ln(5)
 			pdf.SetFont("Arial", "B", 14)
-			pdf.Cell(0, 8, strings.TrimPrefix(line, "# "))
+			pdf.Cell(0, 8, tr(strings.TrimPrefix(line, "# ")))
 			pdf.Ln(10)
 			pdf.SetFont("Arial", "", 12)
 		} else if strings.HasPrefix(line, "## ") {
 			pdf.Ln(3)
 			pdf.SetFont("Arial", "B", 13)
-			pdf.Cell(0, 8, strings.TrimPrefix(line, "## "))
+			pdf.Cell(0, 8, tr(strings.TrimPrefix(line, "## ")))
 			pdf.Ln(8)
 			pdf.SetFont("Arial", "", 12)
 		} else if strings.HasPrefix(line, "### ") {
 			pdf.Ln(2)
 			pdf.SetFont("Arial", "B", 12)
-			pdf.Cell(0, 7, strings.TrimPrefix(line, "### "))
+			pdf.Cell(0, 7, tr(strings.TrimPrefix(line, "### ")))
 			pdf.Ln(7)
 			pdf.SetFont("Arial", "", 12)
 		} else if strings.HasPrefix(line, "- ") || strings.HasPrefix(line, "* ") {
-			// Bullet points
-			pdf.Cell(10, 6, "•")
-			s.addTextWithFormatting(pdf, strings.TrimPrefix(strings.TrimPrefix(line, "- "), "* "))
+			// Bullet points with proper UTF-8 encoding
+			pdf.Cell(10, 6, tr("• "))
+			s.addTextWithFormatting(pdf, tr, strings.TrimPrefix(strings.TrimPrefix(line, "- "), "* "))
 			pdf.Ln(6)
 		} else if regexp.MustCompile(`^\d+\.\s`).MatchString(line) {
 			// Numbered lists
 			parts := regexp.MustCompile(`^(\d+\.\s)(.*)`).FindStringSubmatch(line)
 			if len(parts) == 3 {
 				pdf.Cell(10, 6, parts[1])
-				s.addTextWithFormatting(pdf, parts[2])
+				s.addTextWithFormatting(pdf, tr, parts[2])
 				pdf.Ln(6)
 			}
 		} else {
 			// Regular paragraph
-			s.addTextWithFormatting(pdf, line)
+			s.addTextWithFormatting(pdf, tr, line)
 			pdf.Ln(6)
 		}
 	}
@@ -2564,8 +2567,8 @@ func (s *PythonMCPServer) createPDF(params map[string]interface{}) string {
 	return output.String()
 }
 
-// addTextWithFormatting adds text to PDF with basic markdown formatting
-func (s *PythonMCPServer) addTextWithFormatting(pdf *gofpdf.Fpdf, text string) {
+// addTextWithFormatting adds text to PDF with basic markdown formatting and UTF-8 support
+func (s *PythonMCPServer) addTextWithFormatting(pdf *gofpdf.Fpdf, tr func(string) string, text string) {
 	// Handle bold **text**
 	boldRegex := regexp.MustCompile(`\*\*(.*?)\*\*`)
 	// Handle italic *text*
@@ -2588,11 +2591,11 @@ func (s *PythonMCPServer) addTextWithFormatting(pdf *gofpdf.Fpdf, text string) {
 		}
 		testLine += word
 
-		// Check if line fits
-		lineWidth := pdf.GetStringWidth(testLine)
+		// Check if line fits (using translated text for width calculation)
+		lineWidth := pdf.GetStringWidth(tr(testLine))
 		if lineWidth > maxWidth && currentLine != "" {
-			// Output current line and start new one
-			pdf.Cell(0, 6, currentLine)
+			// Output current line and start new one (with UTF-8 encoding)
+			pdf.Cell(0, 6, tr(currentLine))
 			pdf.Ln(6)
 			currentLine = word
 		} else {
@@ -2600,9 +2603,9 @@ func (s *PythonMCPServer) addTextWithFormatting(pdf *gofpdf.Fpdf, text string) {
 		}
 	}
 
-	// Output remaining text
+	// Output remaining text (with UTF-8 encoding)
 	if currentLine != "" {
-		pdf.Cell(0, 6, currentLine)
+		pdf.Cell(0, 6, tr(currentLine))
 	}
 }
 
