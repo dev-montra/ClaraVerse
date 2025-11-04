@@ -1500,7 +1500,8 @@ const ClaraMessageBubble: React.FC<ClaraMessageBubbleProps> = ({
           )}
 
           {/* Show response content */}
-          {responseContent && (
+          {/* Hide content during streaming if we're inside thinking tags to prevent glitchy text */}
+          {responseContent && !(message.metadata?.isStreaming && message.metadata?.hideStreamingContent) && (
             <MessageContentRenderer
               content={responseContent}
               isStreaming={message.metadata?.isStreaming}

@@ -130,6 +130,12 @@ export interface ClaraMessageMetadata {
   /** Whether this is a streaming message that's being updated */
   isStreaming?: boolean;
   
+  /** Whether to hide streaming content (e.g., when inside thinking tags) */
+  hideStreamingContent?: boolean;
+  
+  /** Whether this message contains thinking content that should be parsed after streaming */
+  hasThinkingContent?: boolean;
+  
   /** Whether this message was aborted during generation */
   aborted?: boolean;
   
@@ -682,6 +688,9 @@ export interface ClaraChatWindowProps {
 
   /** Callback when user wants to edit a message */
   onEditMessage?: (messageId: string, newContent: string) => void;
+
+  /** Trigger to force scroll to bottom (incremented to trigger scroll) */
+  scrollTrigger?: number;
 }
 
 /**

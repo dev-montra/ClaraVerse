@@ -627,6 +627,9 @@ export default Counter;`,
     lastShownAt: 0
   });
 
+  // Scroll trigger for auto-scrolling when loading chat from history
+  const [scrollTrigger, setScrollTrigger] = useState(0);
+
   // Clara Brain tab state
   const [activeTab, setActiveTab] = useState<'chat' | 'brain'>('chat');
 
@@ -1865,8 +1868,15 @@ Now tell me what is the result "`;
         console.log('🧠 Memory enhancement disabled by persona/user setting - using base system prompt only');
       }
       
+      // Track thinking tag state for filtering during streaming
+      let isInsideThinkingTag = false;
+      let rawStreamContent = ''; // Store raw content including thinking tags
+      
       // Create enhanced streaming callback that updates both message content and status panel
       const enhancedStreamingCallback = (chunk: string) => {
+        // Always accumulate raw content (including thinking tags)
+        rawStreamContent += chunk;
+        
         // Parse status updates from chunk for autonomous agent first
         if (enforcedConfig.autonomousAgent?.enabled && chunk.includes('**')) {
           parseAndUpdateAgentStatus(chunk);
@@ -1903,6 +1913,42 @@ Now tell me what is the result "`;
           }
         }
 
+        // **FIX: Track thinking tag state to hide content during streaming**
+        // Check if this chunk contains thinking tag markers
+        const openThinkMatch = chunk.match(/<think>|<seed:think>/i);
+        const closeThinkMatch = chunk.match(/<\/think>|<\/seed:think>/i);
+        
+        if (openThinkMatch) {
+          isInsideThinkingTag = true;
+          console.log('🧠 Entered thinking mode - hiding content during stream');
+        }
+        
+        if (closeThinkMatch) {
+          isInsideThinkingTag = false;
+          console.log('💭 Exited thinking mode - resuming content display');
+        }
+        
+        // If we're inside thinking tags, don't display the chunk
+        // but still update the raw content for final processing
+        if (isInsideThinkingTag || openThinkMatch || closeThinkMatch) {
+          // Update message with raw content but don't display it
+          setMessages(prev => prev.map(msg => 
+            msg.id === streamingMessageId 
+              ? { 
+                  ...msg, 
+                  content: rawStreamContent, // Store complete raw content
+                  metadata: {
+                    ...msg.metadata,
+                    isStreaming: true,
+                    hasThinkingContent: true,
+                    hideStreamingContent: true // Flag to hide during streaming
+                  }
+                }
+              : msg
+          ));
+          return; // Don't show thinking content during streaming
+        }
+
         // Filter out ALL status messages from chat display when autonomous agent is active
         const isStatusMessage = enforcedConfig.autonomousAgent?.enabled && (
           chunk.includes('**AGENT_STATUS:') || 
@@ -1926,7 +1972,14 @@ Now tell me what is the result "`;
         if (!isStatusMessage) {
           setMessages(prev => prev.map(msg => 
             msg.id === streamingMessageId 
-              ? { ...msg, content: msg.content + chunk }
+              ? { 
+                  ...msg, 
+                  content: rawStreamContent, // Use raw content
+                  metadata: {
+                    ...msg.metadata,
+                    isStreaming: true
+                  }
+                }
               : msg
           ));
         }
@@ -2525,6 +2578,10 @@ You can:
       if (session) {
         setCurrentSession(session);
         setMessages(session.messages);
+        
+        // Trigger scroll to bottom after messages render
+        setScrollTrigger(prev => prev + 1);
+        console.log('📜 Loaded session from history - will scroll to bottom');
       }
     } catch (error) {
       console.error('Failed to load session:', error);
@@ -4352,6 +4409,7 @@ ${data.timezone ? `• **Timezone:** ${data.timezone}` : ''}`;
                     userName={userName}
                     isLoading={isLoading}
                     isInitializing={isLoadingSessions || isLoadingProviders}
+                    scrollTrigger={scrollTrigger}
                     onRetryMessage={handleRetryMessage}
                     onCopyMessage={handleCopyMessage}
                     onEditMessage={handleEditMessage}

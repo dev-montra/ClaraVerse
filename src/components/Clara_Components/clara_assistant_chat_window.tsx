@@ -770,40 +770,59 @@ const ScrollToBottomButton: React.FC<{
 
 /**
  * Processing indicator component
+ * Keeps the same thinking phrase for 20 seconds to avoid rapid changes
  */
 const ProcessingIndicator: React.FC<{
   processingState: ClaraProcessingState;
   message?: string;
 }> = ({ processingState, message }) => {
+  const [currentThinkingPhrase, setCurrentThinkingPhrase] = useState('');
+  const lastUpdateTimeRef = useRef<number>(0);
+
+  const thinkingMessages = [
+    'thinking',
+    'wondering',
+    'dreaming',
+    'coding',
+    'pondering',
+    'spelunking',
+    'stitching',
+    'brewing ideas',
+    'conjuring magic',
+    'weaving thoughts',
+    'crafting solutions',
+    'exploring possibilities',
+    'diving deep',
+    'connecting dots',
+    'piecing together',
+    'contemplating',
+    'brainstorming',
+    'architecting',
+    'orchestrating',
+    'illuminating paths'
+  ];
+
+  // Update thinking phrase only if 20 seconds have passed or it's the first time
+  useEffect(() => {
+    if (processingState === 'processing') {
+      const now = Date.now();
+      const timeSinceLastUpdate = now - lastUpdateTimeRef.current;
+      
+      // Update if first time (no phrase set) or 20 seconds have passed
+      if (!currentThinkingPhrase || timeSinceLastUpdate >= 20000) {
+        const randomThinking = thinkingMessages[Math.floor(Math.random() * thinkingMessages.length)];
+        setCurrentThinkingPhrase(randomThinking);
+        lastUpdateTimeRef.current = now;
+      }
+    }
+  }, [processingState, currentThinkingPhrase]);
+
   const getIndicatorContent = () => {
     switch (processingState) {
       case 'processing':
-        const thinkingMessages = [
-          'thinking',
-          'wondering',
-          'dreaming',
-          'coding',
-          'pondering',
-          'spelunking',
-          'stitching',
-          'brewing ideas',
-          'conjuring magic',
-          'weaving thoughts',
-          'crafting solutions',
-          'exploring possibilities',
-          'diving deep',
-          'connecting dots',
-          'piecing together',
-          'contemplating',
-          'brainstorming',
-          'architecting',
-          'orchestrating',
-          'illuminating paths'
-        ];
-        const randomThinking = thinkingMessages[Math.floor(Math.random() * thinkingMessages.length)];
         return {
           icon: <Loader2 className="w-5 h-5 animate-spin" />,
-          text: message || `Clara is ${randomThinking}...`,
+          text: message || `Clara is ${currentThinkingPhrase || 'thinking'}...`,
           bgColor: 'bg-blue-500'
         };
       case 'success':
@@ -847,7 +866,8 @@ const ClaraChatWindow: React.FC<ClaraChatWindowProps> = ({
   onRetryMessage,
   onCopyMessage,
   onEditMessage,
-  onSendExamplePrompt
+  onSendExamplePrompt,
+  scrollTrigger
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -925,6 +945,19 @@ const ClaraChatWindow: React.FC<ClaraChatWindowProps> = ({
       };
     }
   }, [handleScroll]);
+
+  // Force scroll to bottom when scrollTrigger changes (e.g., loading chat from history)
+  useEffect(() => {
+    if (scrollTrigger && scrollTrigger > 0) {
+      console.log('🔽 Scroll trigger activated - forcing scroll to bottom');
+      // Use requestAnimationFrame to ensure DOM is updated
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          autoScrollerRef.current?.forceScrollToBottom();
+        });
+      });
+    }
+  }, [scrollTrigger]);
 
   // Industry-standard auto-scroll: scroll on EVERY content update (ChatGPT/Claude style)
   useEffect(() => {
