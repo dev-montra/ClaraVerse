@@ -829,13 +829,15 @@ const ProcessingIndicator: React.FC<{
         return {
           icon: <Bot className="w-5 h-5" />,
           text: 'Response generated!',
-          bgColor: 'bg-green-500'
+          bgColor: 'bg-gradient-to-r from-green-500 to-emerald-600',
+          emoji: '✓'
         };
       case 'error':
         return {
           icon: <Bot className="w-5 h-5" />,
           text: message || 'Something went wrong',
-          bgColor: 'bg-red-500'
+          bgColor: 'bg-gradient-to-r from-red-500 to-rose-600',
+          emoji: '⚠'
         };
       default:
         return null;
@@ -847,9 +849,12 @@ const ProcessingIndicator: React.FC<{
 
   return (
     <div className="flex justify-center mb-4">
-      <div className={`flex items-center gap-2 px-4 py-2 ${content.bgColor} text-white rounded-full text-sm`}>
+      <div 
+        className={`flex items-center gap-2 px-4 py-2 ${content.bgColor} text-white rounded-full text-sm shadow-lg transition-all duration-500 ease-in-out`}
+      >
         {content.icon}
-        <span>{content.text}</span>
+        <span className="font-medium">{content.emoji}</span>
+        <span>{content.text}...</span>
       </div>
     </div>
   );
