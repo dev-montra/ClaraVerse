@@ -362,23 +362,79 @@ const SERVICE_DEFINITIONS = {
     autoRestart: true,
     priority: 6,
     dependencies: ['python-backend'],
-    
+
     customStart: async () => {
       const MCPService = require('./mcpService.cjs');
       const service = new MCPService();
       await service.start();
       return service;
     },
-    
+
     customStop: async (service) => {
       if (service.instance && service.instance.stop) {
         await service.instance.stop();
       }
     },
-    
+
     healthCheck: async () => {
       // MCP health check logic
       return true; // Placeholder
+    }
+  },
+
+  // MCP HTTP Proxy Service (for browser support)
+  'mcp-proxy': {
+    name: 'MCP HTTP Proxy',
+    type: 'http-service',
+    critical: false,
+    autoRestart: true,
+    priority: 7,
+    dependencies: ['mcp'],
+
+    ports: { main: 8092 },
+
+    customStart: async (mcpServiceInstance) => {
+      const MCPProxyService = require('./mcpProxyService.cjs');
+
+      // Get the MCP service instance from dependencies
+      // If not provided, create one (fallback)
+      let mcpService = mcpServiceInstance;
+      if (!mcpService) {
+        const MCPService = require('./mcpService.cjs');
+        mcpService = new MCPService();
+      }
+
+      const proxyService = new MCPProxyService(mcpService);
+      const result = await proxyService.start(8092);
+
+      return {
+        instance: proxyService,
+        url: result.url,
+        port: result.port,
+        healthCheck: result.healthCheck
+      };
+    },
+
+    customStop: async (service) => {
+      if (service.instance && service.instance.stop) {
+        await service.instance.stop();
+      }
+    },
+
+    healthCheck: async (serviceUrl = null) => {
+      const http = require('http');
+      const url = serviceUrl || 'http://localhost:8092';
+      const endpoint = serviceUrl ? `${url}/health` : 'http://localhost:8092/health';
+      return new Promise((resolve) => {
+        const req = http.get(endpoint, (res) => {
+          resolve(res.statusCode === 200);
+        });
+        req.on('error', () => resolve(false));
+        req.setTimeout(3000, () => {
+          req.destroy();
+          resolve(false);
+        });
+      });
     }
   }
 };
