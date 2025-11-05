@@ -16,6 +16,7 @@ export interface LumaToolsConfig {
   onTerminalWrite: (message: string) => void;
   workingDirectory: string;
   onRefreshFileTree?: () => Promise<void>;
+  onSaveProject?: (files: FileNode[]) => Promise<void>;
 }
 
 export class LumaTools {
@@ -81,6 +82,16 @@ export class LumaTools {
       // Update local file tree
       const updatedFiles = this.addFileToTree(this.config.files, path, content);
       this.config.onFilesUpdate(updatedFiles);
+
+      // Auto-save project immediately after file creation
+      if (this.config.onSaveProject) {
+        try {
+          await this.config.onSaveProject(updatedFiles);
+          this.config.onTerminalWrite(`\x1b[90m💾 Project auto-saved\x1b[0m\n`);
+        } catch (saveError) {
+          this.config.onTerminalWrite(`\x1b[33m⚠️ Warning: Auto-save failed\x1b[0m\n`);
+        }
+      }
 
       // Refresh file tree from WebContainer to ensure sync
       if (this.config.onRefreshFileTree) {
@@ -161,6 +172,16 @@ export class LumaTools {
       // Update editor if this file is currently selected
       this.config.onFileSelect(path, content);
 
+      // Auto-save project immediately after file update
+      if (this.config.onSaveProject) {
+        try {
+          await this.config.onSaveProject(updatedFiles);
+          this.config.onTerminalWrite(`\x1b[90m💾 Project auto-saved\x1b[0m\n`);
+        } catch (saveError) {
+          this.config.onTerminalWrite(`\x1b[33m⚠️ Warning: Auto-save failed\x1b[0m\n`);
+        }
+      }
+
       // Refresh file tree from WebContainer to ensure sync
       if (this.config.onRefreshFileTree) {
         setTimeout(() => this.config.onRefreshFileTree!(), 100);
@@ -227,6 +248,16 @@ export class LumaTools {
       // Update editor if this file is currently selected
       this.config.onFileSelect(path, newContent);
 
+      // Auto-save project immediately after file section edit
+      if (this.config.onSaveProject) {
+        try {
+          await this.config.onSaveProject(updatedFiles);
+          this.config.onTerminalWrite(`\x1b[90m💾 Project auto-saved\x1b[0m\n`);
+        } catch (saveError) {
+          this.config.onTerminalWrite(`\x1b[33m⚠️ Warning: Auto-save failed\x1b[0m\n`);
+        }
+      }
+
       // Refresh file tree from WebContainer to ensure sync
       if (this.config.onRefreshFileTree) {
         setTimeout(() => this.config.onRefreshFileTree!(), 100);
@@ -269,6 +300,16 @@ export class LumaTools {
       // Update local file tree
       const updatedFiles = this.removeFileFromTree(this.config.files, path);
       this.config.onFilesUpdate(updatedFiles);
+      
+      // Auto-save project immediately after file deletion
+      if (this.config.onSaveProject) {
+        try {
+          await this.config.onSaveProject(updatedFiles);
+          this.config.onTerminalWrite(`\x1b[90m💾 Project auto-saved\x1b[0m\n`);
+        } catch (saveError) {
+          this.config.onTerminalWrite(`\x1b[33m⚠️ Warning: Auto-save failed\x1b[0m\n`);
+        }
+      }
       
       this.config.onTerminalWrite(`\x1b[32m✅ Deleted file: ${path}\x1b[0m\n`);
       
@@ -698,6 +739,74 @@ export class LumaTools {
     return null;
   }
 
+  async buildAndStart(): Promise<ToolResult> {
+    try {
+      // Check if package.json exists and has a build script
+      const packageJsonResult = await this.readFile('package.json');
+      if (!packageJsonResult.success) {
+        return { 
+          success: false, 
+          message: 'No package.json found. Cannot build project.', 
+          error: 'NO_PACKAGE_JSON' 
+        };
+      }
+
+      const packageJson = JSON.parse(packageJsonResult.data.content);
+      const scripts = packageJson.scripts || {};
+      
+      // Check if build script exists
+      if (!scripts.build) {
+        return {
+          success: false,
+          message: 'No "build" script found in package.json. Please add a "build" script to package.json.',
+          error: 'NO_BUILD_SCRIPT'
+        };
+      }
+
+      // Run npm run build
+      const result = await this.runCommand('npm', ['run', 'build']);
+      
+      if (result.success) {
+        return {
+          success: true,
+          message: `✅ Build completed successfully using 'npm run build'.\n\n` +
+                   `Project has been built without errors.\n` +
+                   `All files compiled successfully.\n\n` +
+                   `Output:\n${result.data?.output || 'Build completed successfully'}`,
+          data: {
+            script: 'build',
+            command: 'npm run build',
+            output: result.data?.output
+          }
+        };
+      } else {
+        return {
+          success: false,
+          message: `❌ Build failed when running 'npm run build'.\n\n` +
+                   `Error:\n${result.error || result.message || 'Unknown build error'}\n\n` +
+                   `Please check the code for:\n` +
+                   `- Syntax errors\n` +
+                   `- TypeScript type errors\n` +
+                   `- Missing dependencies\n` +
+                   `- Import/export issues`,
+          error: result.error || result.message || 'BUILD_FAILED',
+          data: {
+            script: 'build',
+            command: 'npm run build',
+            output: result.data?.output
+          }
+        };
+      }
+    } catch (error) {
+      const errorMsg = `Failed to run build: ${error}`;
+      return { 
+        success: false, 
+        message: `❌ ${errorMsg}\n\nPlease ensure all dependencies are installed and there are no syntax errors.`, 
+        error: String(error) 
+      };
+    }
+  }
+
   private addFileToTree(nodes: FileNode[], path: string, content: string): FileNode[] {
     const pathParts = path.split('/');
     const fileName = pathParts.pop()!;
@@ -820,6 +929,7 @@ export const createLumaTools = (config: LumaToolsConfig): Record<string, any> =>
     search_files: (params: any) => tools.searchFiles(params.pattern, params.search_content !== false),
     get_all_files: () => tools.getAllFiles(),
     get_file_structure: () => tools.getFileStructure(),
+    build_and_start: () => tools.buildAndStart(),
 
     // Additional aliases for common AI expectations
     ls: (params: any) => tools.listDirectory(params?.path || '.', params?.include_content || false),

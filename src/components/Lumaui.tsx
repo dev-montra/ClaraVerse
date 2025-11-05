@@ -48,6 +48,12 @@ const LumaUICore: React.FC = () => {
   const [projectViewMode, setProjectViewMode] = useState<'play' | 'edit'>('edit'); // Track if user wants play-only or full IDE
   const [terminalOutput, setTerminalOutput] = useState<Array<{id: string; text: string; timestamp: Date}>>([]);
 
+  // Console messages from preview iframe for error detection
+  const [previewConsoleMessages, setPreviewConsoleMessages] = useState<Array<{
+    level: string;
+    args: any[];
+    timestamp: Date;
+  }>>([]);
 
   // Refs
   const terminalRef = useRef<Terminal | null>(null);
@@ -128,6 +134,65 @@ const LumaUICore: React.FC = () => {
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
   }, []);
+
+  // Listen for console messages from preview iframe
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      // Only capture console messages (errors and warnings)
+      if (event.data.type === 'console-message') {
+        const { level, args, timestamp } = event.data;
+        
+        // Only track errors and warnings (ignore log, info, debug)
+        if (level === 'error' || level === 'warn') {
+          setPreviewConsoleMessages(prev => {
+            const newMessage = {
+              level,
+              args,
+              timestamp: new Date(timestamp)
+            };
+            
+            // Keep only last 60 seconds of messages to prevent memory buildup
+            const cutoffTime = new Date(Date.now() - 60000);
+            const recentMessages = prev.filter(msg => msg.timestamp > cutoffTime);
+            
+            return [...recentMessages, newMessage];
+          });
+        }
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+
+  // Function to check for console errors after a file operation
+  const checkPreviewConsoleErrors = useCallback(async (afterTimestamp: Date): Promise<{hasErrors: boolean; errors: string[]}> => {
+    // Wait 2 seconds for Vite HMR and preview reload to complete
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    // Check for errors/warnings that occurred after the given timestamp
+    const errorsAfterOperation = previewConsoleMessages.filter(msg => 
+      msg.timestamp > afterTimestamp
+    );
+    
+    if (errorsAfterOperation.length === 0) {
+      return { hasErrors: false, errors: [] };
+    }
+    
+    // Format error messages
+    const errorMessages = errorsAfterOperation.map(msg => {
+      const levelPrefix = msg.level === 'error' ? '❌' : '⚠️';
+      const argsStr = msg.args.map(arg => 
+        typeof arg === 'string' ? arg : JSON.stringify(arg)
+      ).join(' ');
+      return `${levelPrefix} ${argsStr}`;
+    });
+    
+    return {
+      hasErrors: true,
+      errors: errorMessages
+    };
+  }, [previewConsoleMessages]);
 
   // Load wallpaper from database
   useEffect(() => {
@@ -578,6 +643,12 @@ This is a browser security requirement for WebContainer.`;
     writeToTerminal(`\n\x1b[90m${'─'.repeat(80)}\x1b[0m\n`);
     writeToTerminal(`\x1b[36m🔄 Switching to project: ${project.name}\x1b[0m\n`);
     
+    // CRITICAL: Clear files and selection IMMEDIATELY to prevent showing wrong project files
+    writeToTerminal('\x1b[33m🧹 Clearing current project state...\x1b[0m\n');
+    setFiles([]);
+    setSelectedFile(null);
+    setSelectedFileContent('');
+    
     // Force cleanup any existing WebContainer instance before switching
     if (webContainer || selectedProject) {
       writeToTerminal('\x1b[33m🛑 Stopping current project and cleaning up containers...\x1b[0m\n');
@@ -694,7 +765,7 @@ This is a browser security requirement for WebContainer.`;
           setWebContainer(null);
         }
         
-        // Clear UI state
+        // Clear UI state - CRITICAL: Clear all project-related state
         setSelectedProject(null);
         setFiles([]);
         setSelectedFile(null);
@@ -1541,7 +1612,19 @@ This is a browser security requirement for WebContainer.`;
     }
   }, [selectedProject, webContainer, writeToTerminal]);
 
+  // Auto-save handler for tool operations
+  const handleAutoSaveProject = useCallback(async (updatedFiles: FileNode[]) => {
+    if (selectedProject) {
+      try {
+        await saveProjectToDB(selectedProject, updatedFiles);
+      } catch (error) {
+        console.error('Auto-save failed:', error);
+      }
+    }
+  }, [selectedProject, saveProjectToDB]);
+
   // Create LumaTools instance for AI operations (after all handlers are defined)
+  // IMPORTANT: Include selectedProject?.id to force recreation when switching projects
   const lumaTools = useMemo(() => {
     const tools = createLumaTools({
       webContainer,
@@ -1550,11 +1633,12 @@ This is a browser security requirement for WebContainer.`;
       onFileSelect: handleFileSelect,
       onTerminalWrite: writeToTerminal,
       workingDirectory: selectedProject?.name || '.',
-      onRefreshFileTree: refreshFileTree
+      onRefreshFileTree: refreshFileTree,
+      onSaveProject: handleAutoSaveProject
     });
 
     return tools;
-  }, [webContainer, files, selectedProject?.name, handleFileSelect, writeToTerminal, refreshFileTree]);
+  }, [webContainer, files, selectedProject?.id, selectedProject?.name, handleFileSelect, writeToTerminal, refreshFileTree, handleAutoSaveProject]);
 
   // Show manager page if no project selected or user clicked "Projects" button
   if (showManagerPage || !selectedProject) {
@@ -1722,6 +1806,7 @@ This is a browser security requirement for WebContainer.`;
                 projectId={selectedProject?.id || 'no-project'}
                 projectName={selectedProject?.name || 'No Project'}
                 refreshFileTree={refreshFileTree}
+                onCheckConsoleErrors={checkPreviewConsoleErrors}
               />
             </aside>
           )}

@@ -83,6 +83,7 @@ interface ChatWindowProps {
   projectId?: string;
   projectName?: string;
   refreshFileTree?: () => void | Promise<void>;
+  onCheckConsoleErrors?: (afterTimestamp: Date) => Promise<{hasErrors: boolean; errors: string[]}>;
 }
 
 // LumaUI Tool Definitions (matching db Tool interface)
@@ -177,6 +178,24 @@ const LUMA_TOOLS: Tool[] = [
     description: "Get information about the current project including package.json, installed dependencies, and project structure.",
     parameters: [],
     implementation: "lumaTools.get_project_info", 
+    isEnabled: true
+  },
+  {
+    id: "build_and_start",
+    name: "build_and_start",
+    description: "Build the project by running 'npm run build'. This compiles the project and reports whether the build succeeded or failed, including any compilation errors, TypeScript errors, or missing dependencies.",
+    parameters: [],
+    implementation: "lumaTools.build_and_start",
+    isEnabled: true
+  },
+  {
+    id: "grep",
+    name: "grep",
+    description: "Search for a pattern in file names and file contents across the entire project. Returns matching files with line numbers and preview of matching lines. Case-insensitive search.",
+    parameters: [
+      { name: "pattern", type: "string", description: "The text pattern to search for (e.g., 'useState', 'import React', 'function handleClick')", required: true }
+    ],
+    implementation: "lumaTools.grep",
     isEnabled: true
   }
 ];
@@ -793,7 +812,8 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
   lumaTools,
   projectId,
   projectName,
-  refreshFileTree
+  refreshFileTree,
+  onCheckConsoleErrors
 }) => {
   const { createCheckpoint, revertToCheckpoint, clearCheckpoints, getCheckpointByMessageId, checkpoints, setCurrentProject, loadProjectData } = useCheckpoints();
   
@@ -1380,12 +1400,6 @@ ${reflection.nextSteps.map((step, i) => `${i + 1}. ${step}`).join('\n')}
               toolResultContent = `✅ ${functionName}: completed\n\nProject info:\n${JSON.stringify(result.data, null, 2)}`;
             }
             
-            results.push({
-              id: toolCall.id,
-              result: toolResultContent,
-              success: true
-            });
-            
             // Update file selection if a file was created/edited
             if (result.data?.path && (functionName === 'create_file' || functionName === 'edit_file' || functionName === 'edit_file_section')) {
               if (onFileSelect && result.data?.content) {
@@ -1394,6 +1408,28 @@ ${reflection.nextSteps.map((step, i) => `${i + 1}. ${step}`).join('\n')}
                 onFileSelect(result.data.path, parameters.content);
               }
             }
+            
+            // Check for console errors after file operations (if checker is available)
+            if (onCheckConsoleErrors && (functionName === 'create_file' || functionName === 'edit_file' || functionName === 'edit_file_section')) {
+              try {
+                const operationTimestamp = new Date();
+                const { hasErrors, errors } = await onCheckConsoleErrors(operationTimestamp);
+                
+                if (hasErrors && errors.length > 0) {
+                  // Append console error warnings to the result
+                  toolResultContent += `\n\n⚠️ **Preview Console Errors Detected:**\n${errors.join('\n')}`;
+                }
+              } catch (error) {
+                console.error('Error checking console errors:', error);
+                // Don't fail the operation if console checking fails
+              }
+            }
+            
+            results.push({
+              id: toolCall.id,
+              result: toolResultContent,
+              success: true
+            });
             
             success = true;
             
@@ -1642,10 +1678,33 @@ ${reflection.nextSteps.map((step, i) => `${i + 1}. ${step}`).join('\n')}
       );
 
       // Build conversation history following OpenAI format
+      // Include last 10 messages for context (5 exchanges typically)
+      const recentMessages = messages.slice(-10).filter(m => m.type === 'user' || m.type === 'assistant');
+      
       let conversationHistory: Array<{ role: string; content: string; tool_calls?: any[]; tool_call_id?: string; name?: string }> = [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: currentInput }
+        { role: 'system', content: systemPrompt }
       ];
+      
+      // Add recent conversation history for context
+      for (const msg of recentMessages) {
+        if (msg.type === 'user') {
+          conversationHistory.push({
+            role: 'user',
+            content: msg.content
+          });
+        } else if (msg.type === 'assistant') {
+          conversationHistory.push({
+            role: 'assistant',
+            content: msg.content
+          });
+        }
+      }
+      
+      // Add current user message
+      conversationHistory.push({
+        role: 'user',
+        content: currentInput
+      });
 
       // Add initial planning context to system prompt if available
       if (initialPlan) {
