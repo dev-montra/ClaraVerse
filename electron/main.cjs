@@ -3755,6 +3755,17 @@ function registerHandlers() {
       } catch (error) {
         log.error('Error auto-restoring MCP servers on app ready:', error);
       }
+
+      // Start MCP HTTP Proxy service for browser support
+      try {
+        log.info('🚀 Starting MCP HTTP proxy for browser support...');
+        const MCPProxyService = require('./mcpProxyService.cjs');
+        const mcpProxyService = new MCPProxyService(mcpService);
+        await mcpProxyService.start(8092);
+        log.info('✅ MCP HTTP proxy service started successfully on port 8092');
+      } catch (proxyError) {
+        log.error('❌ Error starting MCP HTTP proxy:', proxyError);
+      }
     }
   });
 
@@ -5137,6 +5148,24 @@ async function initializeLightweightServicesInBackground() {
       sendStatus('MCP', 'MCP service initialization failed', 'warning');
     }
 
+    // Initialize MCP HTTP Proxy service for browser support
+    sendStatus('MCP Proxy', 'Starting MCP HTTP proxy...', 'info');
+    try {
+      if (mcpService) {
+        const MCPProxyService = require('./mcpProxyService.cjs');
+        const mcpProxyService = new MCPProxyService(mcpService);
+        await mcpProxyService.start(8092);
+        sendStatus('MCP Proxy', 'MCP HTTP proxy started on port 8092', 'success');
+        log.info('✅ MCP HTTP proxy service started successfully');
+      } else {
+        log.warn('⚠️ MCP service not available, skipping proxy start');
+        sendStatus('MCP Proxy', 'Skipped (MCP service not available)', 'warning');
+      }
+    } catch (proxyError) {
+      log.error('Error starting MCP HTTP proxy:', proxyError);
+      sendStatus('MCP Proxy', 'MCP proxy failed to start', 'warning');
+    }
+
     // Initialize Watchdog service (lightweight mode)
     sendStatus('Watchdog', 'Initializing Watchdog service...', 'info');
     try {
@@ -5242,6 +5271,24 @@ async function initializeServicesInBackground() {
     } catch (mcpError) {
       log.error('Error initializing MCP service:', mcpError);
       sendStatus('MCP', 'MCP service initialization failed', 'warning');
+    }
+
+    // Initialize MCP HTTP Proxy service for browser support
+    sendStatus('MCP Proxy', 'Starting MCP HTTP proxy...', 'info');
+    try {
+      if (mcpService) {
+        const MCPProxyService = require('./mcpProxyService.cjs');
+        const mcpProxyService = new MCPProxyService(mcpService);
+        await mcpProxyService.start(8092);
+        sendStatus('MCP Proxy', 'MCP HTTP proxy started on port 8092', 'success');
+        log.info('✅ MCP HTTP proxy service started successfully');
+      } else {
+        log.warn('⚠️ MCP service not available, skipping proxy start');
+        sendStatus('MCP Proxy', 'Skipped (MCP service not available)', 'warning');
+      }
+    } catch (proxyError) {
+      log.error('Error starting MCP HTTP proxy:', proxyError);
+      sendStatus('MCP Proxy', 'MCP proxy failed to start', 'warning');
     }
 
     // Initialize Watchdog service in background (with Docker support)
@@ -7211,6 +7258,24 @@ async function initializeServicesInBackground() {
       if (centralServiceManager) {
         updateServiceStateInCentralManager('mcp', 'error', null);
       }
+    }
+
+    // Initialize MCP HTTP Proxy service for browser support
+    sendStatus('MCP Proxy', 'Starting MCP HTTP proxy...', 'info');
+    try {
+      if (mcpService) {
+        const MCPProxyService = require('./mcpProxyService.cjs');
+        const mcpProxyService = new MCPProxyService(mcpService);
+        await mcpProxyService.start(8092);
+        sendStatus('MCP Proxy', 'MCP HTTP proxy started on port 8092', 'success');
+        log.info('✅ MCP HTTP proxy service started successfully');
+      } else {
+        log.warn('⚠️ MCP service not available, skipping proxy start');
+        sendStatus('MCP Proxy', 'Skipped (MCP service not available)', 'warning');
+      }
+    } catch (proxyError) {
+      log.error('Error starting MCP HTTP proxy:', proxyError);
+      sendStatus('MCP Proxy', 'MCP proxy failed to start', 'warning');
     }
 
     // Initialize Watchdog service in background (with Docker support)
