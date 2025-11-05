@@ -155,3 +155,6 @@ downloads/*
 config.yaml.backup.*
 electron/claracore/progress_state.*
 package-lock.json
+
+# Agent deployment container testing
+test_agent_container/

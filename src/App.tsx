@@ -284,7 +284,7 @@ function App() {
 
               {/* Background processing indicator */}
               {isClaraProcessing && activePage !== 'clara' && (
-                <div className="fixed bottom-4 right-4 z-50 flex items-center gap-2 px-4 py-2 bg-sakura-500 text-white rounded-full shadow-lg animate-pulse">
+                <div className="fixed bottom-4 right-4 z-50 flex items-center gap-2 px-4 py-2 bg-sakura-500 text-white rounded-full shadow-lg">
                   <div className="w-2 h-2 bg-white rounded-full animate-ping"></div>
                   <span className="text-sm font-medium">Clara is processing in background...</span>
                 </div>
