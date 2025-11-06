@@ -12,6 +12,8 @@ interface PreviewPaneProps {
   onClearTerminal?: () => void;
   webContainer?: WebContainer | null;
   writeToTerminal?: (data: string) => void;
+  filesReady?: boolean;
+  allowAutoStart?: boolean;
 }
 
 const PreviewPane: React.FC<PreviewPaneProps> = ({
@@ -21,7 +23,9 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({
   terminalOutput = [],
   onClearTerminal,
   webContainer,
-  writeToTerminal
+  writeToTerminal,
+  filesReady = true,
+  allowAutoStart = true
 }) => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [showConsole, setShowConsole] = useState(false);
@@ -38,18 +42,26 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({
   const startButtonRef = useRef<HTMLButtonElement>(null);
   const commandInputRef = useRef<HTMLInputElement>(null);
 
-  // Auto-start project when preview opens (if idle)
+  // Auto-start project when preview opens (if idle and all conditions met)
   useEffect(() => {
-    if (project.status === 'idle' && !isStarting && !hasAutoStarted && startButtonRef.current) {
+    if (
+      project.status === 'idle' &&
+      !isStarting &&
+      !hasAutoStarted &&
+      filesReady &&
+      allowAutoStart &&
+      startButtonRef.current
+    ) {
       // Small delay to ensure UI is ready
       const timer = setTimeout(() => {
+        console.log('🚀 PreviewPane: Auto-starting project (files ready, auto-start allowed)');
         startButtonRef.current?.click();
         setHasAutoStarted(true);
       }, 100);
 
       return () => clearTimeout(timer);
     }
-  }, [project.status, isStarting, hasAutoStarted]);
+  }, [project.status, isStarting, hasAutoStarted, filesReady, allowAutoStart]);
 
   // Auto-scroll console to bottom when new output arrives
   useEffect(() => {

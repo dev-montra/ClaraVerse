@@ -21,6 +21,7 @@ import { useProviders } from '../contexts/ProvidersContext';
 import { db } from '../db';
 import { getDefaultWallpaper } from '../utils/uiPreferences';
 import ChatPersistence from './lumaui_components/ChatPersistence';
+import ProjectLoadingOverlay, { ProjectLoadingState } from './lumaui_components/ProjectLoadingOverlay';
 
 // Providers
 import { ProvidersProvider } from '../contexts/ProvidersContext';
@@ -54,6 +55,17 @@ const LumaUICore: React.FC = () => {
     args: any[];
     timestamp: Date;
   }>>([]);
+
+  // Project loading state for showing loader overlay
+  const [projectLoadingState, setProjectLoadingState] = useState<ProjectLoadingState>({
+    isLoading: false,
+    phase: 'idle',
+    filesLoaded: false,
+    monacoReady: false,
+    webContainerReady: false,
+    error: null,
+    startedAt: null
+  });
 
   // Refs
   const terminalRef = useRef<Terminal | null>(null);
@@ -626,111 +638,243 @@ This is a browser security requirement for WebContainer.`;
     }
   };
 
+  // Handle Monaco editor readiness
+  const handleEditorReady = useCallback(() => {
+    console.log('✅ Monaco Editor is ready!');
+    writeToTerminal('\x1b[32m✅ Monaco Editor initialized successfully!\x1b[0m\n');
+    writeToTerminal('\x1b[32m✅ Project opened successfully!\x1b[0m\n\n');
+
+    // Set Monaco ready and mark phase as ready
+    setProjectLoadingState(prev => {
+      // Only update if we're still in the loading/initializing phase
+      if (prev.isLoading && prev.phase === 'initializing-monaco') {
+        return {
+          ...prev,
+          monacoReady: true,
+          phase: 'ready',
+          webContainerReady: true // Mark container as ready when Monaco is ready
+        };
+      }
+      return prev;
+    });
+
+    // Switch to preview mode now that Monaco is ready
+    setRightPanelMode('preview');
+
+    // Clear loading state after brief delay (outside state updater for reliability)
+    setTimeout(() => {
+      console.log('🎉 Clearing loading overlay...');
+      setProjectLoadingState({
+        isLoading: false,
+        phase: 'idle',
+        filesLoaded: false,
+        monacoReady: false,
+        webContainerReady: false,
+        error: null,
+        startedAt: null
+      });
+    }, 500);
+  }, [writeToTerminal]);
+
   const handleProjectSelect = useCallback(async (project: Project, viewMode: 'play' | 'edit' = 'edit') => {
-    // Hide manager page and close modal
-    setShowManagerPage(false);
-    setIsProjectSelectionModalOpen(false);
+    // Initialize loading state and set project immediately to prevent flash
+    setProjectLoadingState({
+      isLoading: true,
+      phase: 'cleanup',
+      filesLoaded: false,
+      monacoReady: false,
+      webContainerReady: false,
+      error: null,
+      startedAt: Date.now()
+    });
+    setSelectedProject(project); // Set immediately so UI doesn't flash to manager page
 
-    // Set the view mode for this project
-    setProjectViewMode(viewMode);
+    try {
+      // PHASE 1: UI State Preparation
+      setShowManagerPage(false);
+      setIsProjectSelectionModalOpen(false);
+      setProjectViewMode(viewMode);
+      setRightPanelMode('editor'); // Start in editor mode
 
-    // Start in editor mode to ensure terminal initializes properly
-    // We'll switch to preview mode after shell is attached
-    setRightPanelMode('editor');
+      writeToTerminal(`\n\x1b[90m${'─'.repeat(80)}\x1b[0m\n`);
+      writeToTerminal(`\x1b[36m🔄 Opening project: ${project.name}\x1b[0m\n`);
 
-    // Don't clear terminal - keep output history persistent
-    // Add visual separator to distinguish between projects
-    writeToTerminal(`\n\x1b[90m${'─'.repeat(80)}\x1b[0m\n`);
-    writeToTerminal(`\x1b[36m🔄 Switching to project: ${project.name}\x1b[0m\n`);
-    
-    // CRITICAL: Clear files and selection IMMEDIATELY to prevent showing wrong project files
-    writeToTerminal('\x1b[33m🧹 Clearing current project state...\x1b[0m\n');
-    setFiles([]);
-    setSelectedFile(null);
-    setSelectedFileContent('');
-    
-    // Force cleanup any existing WebContainer instance before switching
-    if (webContainer || selectedProject) {
-      writeToTerminal('\x1b[33m🛑 Stopping current project and cleaning up containers...\x1b[0m\n');
-      
-      if (selectedProject) {
-        // Update the current project status to idle
-        const updatedCurrentProject = { ...selectedProject, status: 'idle' as const, previewUrl: undefined };
-        setProjects(prev => prev.map(p => p.id === selectedProject.id ? updatedCurrentProject : p));
-      }
-      
-      // Clean up running processes
-      if (runningProcessesRef.current.length > 0) {
-        writeToTerminal('\x1b[33m⏹️ Terminating existing processes...\x1b[0m\n');
-        for (const process of runningProcessesRef.current) {
-          try {
-            if (process && process.kill) {
-              process.kill();
+      // CRITICAL: Clear files IMMEDIATELY
+      setFiles([]);
+      setSelectedFile(null);
+      setSelectedFileContent('');
+
+      // PHASE 2: Cleanup Existing Resources
+      if (webContainer || selectedProject) {
+        writeToTerminal('\x1b[33m🛑 Cleaning up current project...\x1b[0m\n');
+
+        if (selectedProject) {
+          const updatedCurrentProject = { ...selectedProject, status: 'idle' as const, previewUrl: undefined };
+          setProjects(prev => prev.map(p => p.id === selectedProject.id ? updatedCurrentProject : p));
+        }
+
+        if (runningProcessesRef.current.length > 0) {
+          for (const process of runningProcessesRef.current) {
+            try {
+              if (process && process.kill) process.kill();
+            } catch (error) {
+              console.log('Error killing process:', error);
             }
-          } catch (error) {
-            console.log('Error killing process during project switch:', error);
           }
+          runningProcessesRef.current = [];
         }
-        runningProcessesRef.current = [];
-      }
-      
-      // Teardown existing container
-      if (webContainer) {
-        try {
-          await webContainer.teardown();
-          writeToTerminal('\x1b[32m✅ Previous WebContainer cleaned up\x1b[0m\n');
-        } catch (cleanupError) {
-          writeToTerminal('\x1b[33m⚠️ Warning: Error cleaning up previous container, proceeding anyway...\x1b[0m\n');
+
+        if (webContainer) {
+          try {
+            await webContainer.teardown();
+            writeToTerminal('\x1b[32m✅ Previous project cleaned up\x1b[0m\n');
+          } catch (cleanupError) {
+            writeToTerminal('\x1b[33m⚠️ Warning: Error cleaning up previous container\x1b[0m\n');
+          }
+          setWebContainer(null);
         }
-        setWebContainer(null);
+
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
-      
-      // Wait for cleanup to complete
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
-    
-    setSelectedProject(project);
-    
-    writeToTerminal(`\x1b[33m📂 Loading project files from database...\x1b[0m\n`);
-    
-    const savedFiles = await loadProjectFilesFromDB(project.id);
-    writeToTerminal(`\x1b[32m✅ Loaded ${savedFiles.length} files from database\x1b[0m\n`);
-    
-    if (savedFiles.length > 0) {
-      setFiles(savedFiles);
-      // Log some file details for debugging
+
+      // Update loading phase
+      setProjectLoadingState(prev => ({ ...prev, phase: 'loading-files' }));
+
+      // PHASE 3: Load Project Files
+      writeToTerminal(`\x1b[33m📂 Loading project files from database...\x1b[0m\n`);
+
+      const savedFiles = await loadProjectFilesFromDB(project.id);
+      writeToTerminal(`\x1b[32m✅ Loaded ${savedFiles.length} files from database\x1b[0m\n`);
+
+      if (savedFiles.length === 0) {
+        throw new Error('No files found in database for this project');
+      }
+
+      // Log file details
       const fileCount = savedFiles.filter(f => f.type === 'file').length;
       const dirCount = savedFiles.filter(f => f.type === 'directory').length;
-      writeToTerminal(`\x1b[90m   Files: ${fileCount}, Directories: ${dirCount}\x1b[0m\n`);
-      
-      // Check if package.json exists
       const hasPackageJson = savedFiles.some(f => f.name === 'package.json' && f.type === 'file');
-      writeToTerminal(`\x1b[90m   package.json present: ${hasPackageJson ? '✅' : '❌'}\x1b[0m\n`);
-    } else {
-      writeToTerminal(`\x1b[31m❌ No files found in database for project ${project.id}\x1b[0m\n`);
-      return;
+      writeToTerminal(`\x1b[90m   Files: ${fileCount}, Directories: ${dirCount}\x1b[0m\n`);
+      writeToTerminal(`\x1b[90m   package.json: ${hasPackageJson ? '✅' : '❌'}\x1b[0m\n`);
+
+      // CRITICAL: Set files and WAIT for React to process
+      setFiles(savedFiles);
+
+      // Mark files as loaded
+      setProjectLoadingState(prev => ({ ...prev, filesLoaded: true, phase: 'mounting-ui' }));
+
+      // WAIT for state to propagate
+      await new Promise(resolve => setTimeout(resolve, 300));
+
+      // Auto-select a default file so Monaco has something to render
+      const findDefaultFile = (files: FileNode[]): FileNode | null => {
+        // Priority order: index.tsx, App.tsx, main.tsx, first .tsx, first .ts, first .jsx, first .js, any file
+        const priorities = ['index.tsx', 'src/index.tsx', 'App.tsx', 'src/App.tsx', 'main.tsx', 'src/main.tsx'];
+
+        // Check priority files first
+        for (const priority of priorities) {
+          const found = files.find(f => f.type === 'file' && f.path.endsWith(priority));
+          if (found) return found;
+        }
+
+        // Find first .tsx file
+        const firstTsx = files.find(f => f.type === 'file' && f.path.endsWith('.tsx'));
+        if (firstTsx) return firstTsx;
+
+        // Find first .ts file
+        const firstTs = files.find(f => f.type === 'file' && f.path.endsWith('.ts') && !f.path.endsWith('.d.ts'));
+        if (firstTs) return firstTs;
+
+        // Find first .jsx file
+        const firstJsx = files.find(f => f.type === 'file' && f.path.endsWith('.jsx'));
+        if (firstJsx) return firstJsx;
+
+        // Find first .js file
+        const firstJs = files.find(f => f.type === 'file' && f.path.endsWith('.js'));
+        if (firstJs) return firstJs;
+
+        // Find any file
+        return files.find(f => f.type === 'file') || null;
+      };
+
+      const defaultFile = findDefaultFile(savedFiles);
+      if (defaultFile) {
+        setSelectedFile(defaultFile.path);
+        setSelectedFileContent(defaultFile.content || '');
+        writeToTerminal(`\x1b[36m📄 Selected default file: ${defaultFile.path}\x1b[0m\n`);
+      } else {
+        setSelectedFile(null);
+        setSelectedFileContent('');
+      }
+
+      // Restore buffered output
+      const buffer = projectOutputBuffers.current.get(project.id);
+      if (buffer && buffer.length > 0) {
+        writeToTerminal(`\x1b[90m📋 Restoring ${buffer.length} previous output entries...\x1b[0m\n`);
+        writeToTerminal(`\x1b[90m${'─'.repeat(80)}\x1b[0m\n`);
+      }
+
+      writeToTerminal('\x1b[36m💡 Project files loaded. Initializing editor...\x1b[0m\n');
+
+      // Update phase - UI will mount now, Monaco will signal when ready
+      setProjectLoadingState(prev => ({ ...prev, phase: 'initializing-monaco', webContainerReady: true }));
+
+      writeToTerminal('\x1b[36m💡 Waiting for Monaco Editor to initialize...\x1b[0m\n');
+
+      // IMPORTANT: Start in EDITOR mode so Monaco can mount and signal ready
+      // Will switch to preview after Monaco calls onEditorReady
+      setRightPanelMode('editor');
+
+      // Fallback: If Monaco doesn't signal ready within 20 seconds, clear loading anyway
+      setTimeout(() => {
+        setProjectLoadingState(prev => {
+          if (prev.isLoading) {
+            console.warn('⚠️ Loading timeout - clearing overlay (Monaco may not have signaled ready)');
+            writeToTerminal('\x1b[33m⚠️ Editor took longer than expected, but project is ready\x1b[0m\n');
+
+            // Switch to preview mode even if Monaco didn't signal ready
+            setRightPanelMode('preview');
+
+            return {
+              isLoading: false,
+              phase: 'idle',
+              filesLoaded: false,
+              monacoReady: false,
+              webContainerReady: false,
+              error: null,
+              startedAt: null
+            };
+          }
+          return prev;
+        });
+      }, 20000); // 20 second fallback timeout
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('Failed to open project:', error);
+      writeToTerminal(`\x1b[31m❌ Failed to open project: ${errorMessage}\x1b[0m\n`);
+
+      setProjectLoadingState(prev => ({
+        ...prev,
+        isLoading: true, // Keep showing overlay with error
+        error: errorMessage,
+        phase: 'idle'
+      }));
+
+      // Clear error after 5 seconds
+      setTimeout(() => {
+        setProjectLoadingState({
+          isLoading: false,
+          phase: 'idle',
+          filesLoaded: false,
+          monacoReady: false,
+          webContainerReady: false,
+          error: null,
+          startedAt: null
+        });
+      }, 5000);
     }
-    
-    setSelectedFile(null);
-    setSelectedFileContent('');
-
-    // Restore buffered output for this project if it exists
-    const buffer = projectOutputBuffers.current.get(project.id);
-    if (buffer && buffer.length > 0) {
-      writeToTerminal(`\x1b[90m📋 Restoring ${buffer.length} previous output entries...\x1b[0m\n`);
-      writeToTerminal(`\x1b[90m${'─'.repeat(80)}\x1b[0m\n`);
-      // Note: Don't replay the buffer here as it's already in terminal history
-      // The terminal persists, so old output is still visible
-    }
-
-    writeToTerminal('\x1b[36m💡 Project loaded. Click Start to run the project (terminal will activate when started).\x1b[0m\n\n');
-
-    // Wait a moment for terminal to initialize (it's in editor mode now)
-    await new Promise(resolve => setTimeout(resolve, 100));
-
-    // Now switch to preview mode for auto-start
-    setRightPanelMode('preview');
-  }, [writeToTerminal, loadProjectFilesFromDB]); // refreshFileTree removed - defined later in file
+  }, [webContainer, selectedProject, loadProjectFilesFromDB, writeToTerminal]);
 
   const handleDeleteProject = useCallback(async (project: Project) => {
     try {
@@ -1550,8 +1694,8 @@ This is a browser security requirement for WebContainer.`;
       await refreshFileTree();
 
       // Clear selection if the moved file was selected
-      if (selectedFilePath === sourcePath) {
-        setSelectedFilePath(null);
+      if (selectedFile === sourcePath) {
+        setSelectedFile(null);
         setSelectedFileContent('');
       }
     } catch (error) {
@@ -1640,8 +1784,17 @@ This is a browser security requirement for WebContainer.`;
     return tools;
   }, [webContainer, files, selectedProject?.id, selectedProject?.name, handleFileSelect, writeToTerminal, refreshFileTree, handleAutoSaveProject]);
 
+  // Render loading overlay at top level (always visible when loading)
+  const loadingOverlay = (
+    <ProjectLoadingOverlay
+      loadingState={projectLoadingState}
+      projectName={selectedProject?.name || 'Project'}
+    />
+  );
+
   // Show manager page if no project selected or user clicked "Projects" button
-  if (showManagerPage || !selectedProject) {
+  // Don't show manager if we're loading (overlay will cover it, but project UI renders underneath)
+  if ((showManagerPage || !selectedProject) && !projectLoadingState.isLoading) {
     return (
       <div className="h-[calc(100vh-3rem)]  overflow-hidden">
         <ProjectManager
@@ -1663,22 +1816,24 @@ This is a browser security requirement for WebContainer.`;
   }
 
   return (
-    // h-screen makes black empty space below since we have topbar - changed to h-[100vh] - w-screen - the side bar is 5rem wide
-    <div className="h-[calc(100vh-3rem)] w-[calc(100%)] overflow-hidden bg-gradient-to-br from-white to-sakura-50 dark:from-gray-900 dark:to-gray-800 relative">
-      {/* Wallpaper Background - Absolute positioned, doesn't affect layout */}
-      {wallpaperUrl && (
-        <div
-          className="absolute inset-0 z-0"
-          style={{
-            backgroundImage: `url(${wallpaperUrl})`,
-            backgroundSize: 'cover',
-            backgroundPosition: 'center',
-            opacity: 0.15,
-            filter: 'blur(2px)',
-            pointerEvents: 'none'
-          }}
-        />
-      )}
+    <>
+      {loadingOverlay}
+      {/* h-screen makes black empty space below since we have topbar - changed to h-[100vh] - w-screen - the side bar is 5rem wide */}
+      <div className="h-[calc(100vh-3rem)] w-[calc(100%)] overflow-hidden bg-gradient-to-br from-white to-sakura-50 dark:from-gray-900 dark:to-gray-800 relative">
+        {/* Wallpaper Background - Absolute positioned, doesn't affect layout */}
+        {wallpaperUrl && (
+          <div
+            className="absolute inset-0 z-0"
+            style={{
+              backgroundImage: `url(${wallpaperUrl})`,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+              opacity: 0.15,
+              filter: 'blur(2px)',
+              pointerEvents: 'none'
+            }}
+          />
+        )}
 
       {/* Main Content Layer - Takes full height/width but width - 2rem for sidebar */}
       <div className="relative z-10 h-[calc(100vh-3rem)] w-[calc(100%)] flex flex-col">
@@ -1832,12 +1987,15 @@ This is a browser security requirement for WebContainer.`;
               onCutFile={handleCutFile}
               selectedFileContent={selectedFileContent}
               onFileContentChange={handleFileContentChange}
+              onEditorReady={handleEditorReady}
               terminalRef={terminalRef}
               webContainer={webContainer}
               onReconnectShell={handleReconnectShell}
               project={selectedProject}
               isStarting={isStarting}
               onStartProject={startProject}
+              filesReady={projectLoadingState.filesLoaded}
+              allowAutoStart={!projectLoadingState.isLoading}
               onClearChat={handleClearChat}
               onResetProject={handleResetProject}
               viewMode={projectViewMode}
@@ -1874,7 +2032,8 @@ This is a browser security requirement for WebContainer.`;
         onCreateProject={handleCreateProject}
         scaffoldProgress={scaffoldProgress}
       />
-    </div>
+      </div>
+    </>
   );
 };
 

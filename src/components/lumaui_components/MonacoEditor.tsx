@@ -15,17 +15,19 @@ interface MonacoEditorProps {
   showPreviewToggle?: boolean;
   projectFiles?: FileNode[];
   webContainer?: any;
+  onEditorReady?: () => void;
 }
 
-const MonacoEditor: React.FC<MonacoEditorProps> = ({ 
-  content, 
-  fileName, 
-  onChange, 
+const MonacoEditor: React.FC<MonacoEditorProps> = ({
+  content,
+  fileName,
+  onChange,
   isPreviewVisible = false,
   onTogglePreview,
   showPreviewToggle = false,
   projectFiles = [],
-  webContainer
+  webContainer,
+  onEditorReady
 }) => {
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof monaco | null>(null);
@@ -207,7 +209,12 @@ const MonacoEditor: React.FC<MonacoEditorProps> = ({
       monacoRef.current = monacoInstance;
       setIsEditorReady(true);
       setEditorError(null);
-      
+
+      // Notify parent that editor is ready
+      if (onEditorReady) {
+        onEditorReady();
+      }
+
       // Setup TypeScript language service
       setupTypeScriptLanguageService(monacoInstance);
 
@@ -254,7 +261,7 @@ const MonacoEditor: React.FC<MonacoEditorProps> = ({
       setEditorError(error instanceof Error ? error.message : 'Unknown error');
       setIsEditorReady(false);
     }
-  }, [setupTypeScriptLanguageService, getDiagnostics]); // Removed isIdle to prevent re-mounting
+  }, [setupTypeScriptLanguageService, getDiagnostics, onEditorReady]); // Removed isIdle to prevent re-mounting
 
   // Handle editor mount errors
   const handleEditorError = useCallback((error: any) => {

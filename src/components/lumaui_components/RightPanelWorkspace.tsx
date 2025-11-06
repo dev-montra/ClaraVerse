@@ -35,6 +35,7 @@ interface RightPanelWorkspaceProps {
   // Monaco Editor props
   selectedFileContent: string;
   onFileContentChange: (content: string) => void;
+  onEditorReady?: () => void;
 
   // Terminal props
   terminalRef: React.RefObject<Terminal | null>;
@@ -45,6 +46,8 @@ interface RightPanelWorkspaceProps {
   project: Project | null;
   isStarting: boolean;
   onStartProject: (project: Project) => void;
+  filesReady?: boolean;
+  allowAutoStart?: boolean;
 
   // Settings props
   onClearChat?: () => void;
@@ -80,12 +83,15 @@ const RightPanelWorkspace: React.FC<RightPanelWorkspaceProps> = ({
   onCutFile,
   selectedFileContent,
   onFileContentChange,
+  onEditorReady,
   terminalRef,
   webContainer,
   onReconnectShell,
   project,
   isStarting,
   onStartProject,
+  filesReady,
+  allowAutoStart,
   onClearChat,
   onResetProject,
   viewMode = 'edit',
@@ -179,6 +185,7 @@ const RightPanelWorkspace: React.FC<RightPanelWorkspaceProps> = ({
                 projectFiles={files}
                 webContainer={webContainer}
                 showPreviewToggle={false}
+                onEditorReady={onEditorReady}
               />
             </div>
           </div>
@@ -206,6 +213,8 @@ const RightPanelWorkspace: React.FC<RightPanelWorkspaceProps> = ({
               onClearTerminal={onClearTerminal}
               webContainer={webContainer}
               writeToTerminal={writeToTerminal}
+              filesReady={filesReady}
+              allowAutoStart={allowAutoStart}
             />
           </div>
         )}
