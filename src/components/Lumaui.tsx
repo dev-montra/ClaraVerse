@@ -232,19 +232,25 @@ const LumaUICore: React.FC = () => {
     loadWallpaper();
   }, []);
 
-  // Load projects on mount
+  // Load projects on mount (runs once)
   useEffect(() => {
     const loadProjects = async () => {
       const savedProjects = await loadProjectsFromDB();
       setProjects(savedProjects);
-
-      // Show manager page if no project selected
-      if (!selectedProject) {
-        setShowManagerPage(true);
-      }
     };
     loadProjects();
-  }, [loadProjectsFromDB, selectedProject]);
+  }, [loadProjectsFromDB]);
+
+  // Separate effect: Show manager page if no project selected (and not loading)
+  useEffect(() => {
+    // Only show manager if:
+    // 1. No project is selected
+    // 2. We're not currently loading a project
+    // 3. Manager page isn't already showing
+    if (!selectedProject && !projectLoadingState.isLoading && !showManagerPage) {
+      setShowManagerPage(true);
+    }
+  }, [selectedProject, projectLoadingState.isLoading, showManagerPage]);
 
   // Cleanup on unmount and page unload
   useEffect(() => {
@@ -1783,6 +1789,44 @@ This is a browser security requirement for WebContainer.`;
 
     return tools;
   }, [webContainer, files, selectedProject?.id, selectedProject?.name, handleFileSelect, writeToTerminal, refreshFileTree, handleAutoSaveProject]);
+
+  // Auto-start project preview after loading overlay closes
+  const wasLoadingRef = useRef(false);
+  const hasAutoStartedRef = useRef(false);
+
+  useEffect(() => {
+    const isCurrentlyLoading = projectLoadingState.isLoading;
+    const wasLoading = wasLoadingRef.current;
+
+    // Detect transition from loading -> not loading
+    const justFinishedLoading = wasLoading && !isCurrentlyLoading;
+
+    // Only auto-start once per project load
+    if (justFinishedLoading &&
+        selectedProject &&
+        selectedProject.status === 'idle' &&
+        !hasAutoStartedRef.current) {
+
+      console.log('🚀 Loading completed, auto-starting project:', selectedProject.name);
+
+      // Small delay to ensure overlay is completely dismissed
+      setTimeout(() => {
+        writeToTerminal('\x1b[36m🚀 Auto-starting project preview...\x1b[0m\n');
+        startProject(selectedProject);
+      }, 300);
+
+      // Mark that we've auto-started
+      hasAutoStartedRef.current = true;
+    }
+
+    // Update ref for next check
+    wasLoadingRef.current = isCurrentlyLoading;
+  }, [projectLoadingState.isLoading, selectedProject, writeToTerminal]);
+
+  // Reset auto-start flag when project changes
+  useEffect(() => {
+    hasAutoStartedRef.current = false;
+  }, [selectedProject?.id]);
 
   // Render loading overlay at top level (always visible when loading)
   const loadingOverlay = (
