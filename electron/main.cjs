@@ -217,6 +217,15 @@ if (!gotTheLock) {
       }
       mainWindow.focus();
       mainWindow.show();
+      
+      // CRITICAL FIX: Force webContents focus when second instance launches
+      if (mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+        setTimeout(() => {
+          if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+            mainWindow.webContents.focus();
+          }
+        }, 100);
+      }
     } else {
       // If no window exists, create one
       createMainWindow().catch(error => {
@@ -3809,6 +3818,15 @@ function registerHandlers() {
       }
       mainWindow.show();
       mainWindow.focus();
+      
+      // CRITICAL FIX: Force webContents focus when showing from tray
+      if (mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+        setTimeout(() => {
+          if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+            mainWindow.webContents.focus();
+          }
+        }, 100);
+      }
     } else {
       createMainWindow();
     }
@@ -5517,6 +5535,12 @@ async function createMainWindow() {
         log.info('Showing main window (fast startup)');
         mainWindow.show();
         mainWindow.focus();
+        
+        // CRITICAL FIX: Force webContents to regain focus for input elements
+        // This prevents the input box click issue where window is focused but inputs don't work
+        if (mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+          mainWindow.webContents.focus();
+        }
       } else {
         log.info('Skipping initial show because startMinimized is enabled');
       }
@@ -5532,6 +5556,15 @@ async function createMainWindow() {
         log.info('Forcing window visible after login launch');
         mainWindow.show();
         mainWindow.focus();
+        
+        // CRITICAL FIX: Force webContents focus after login launch
+        if (mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+          setTimeout(() => {
+            if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+              mainWindow.webContents.focus();
+            }
+          }, 100);
+        }
       }
     }, 750);
   }
@@ -5552,6 +5585,30 @@ async function createMainWindow() {
           }
         }
       }, 3000);
+    }
+  });
+
+  // ADDITIONAL FIX: Handle window focus events to ensure webContents stays in sync
+  mainWindow.on('focus', () => {
+    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+      // Force webContents to focus when window gains focus
+      // This solves input box click issues after minimize/restore or DevTools toggle
+      setTimeout(() => {
+        if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+          mainWindow.webContents.focus();
+        }
+      }, 100);
+    }
+  });
+
+  // ADDITIONAL FIX: Handle window restore (from minimize) to ensure inputs work
+  mainWindow.on('restore', () => {
+    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+      setTimeout(() => {
+        if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+          mainWindow.webContents.focus();
+        }
+      }, 100);
     }
   });
 
@@ -5577,6 +5634,15 @@ app.whenReady().then(async () => {
     if (mainWindow) {
       if (mainWindow.isMinimized()) mainWindow.restore();
       mainWindow.focus();
+      
+      // CRITICAL FIX: Force webContents focus on second instance
+      if (mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+        setTimeout(() => {
+          if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+            mainWindow.webContents.focus();
+          }
+        }, 100);
+      }
     }
   });
 
@@ -5762,6 +5828,15 @@ app.on('activate', async () => {
   }
 
   mainWindow.focus();
+  
+  // CRITICAL FIX: Force webContents focus on app activate (macOS dock click)
+  if (mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+        mainWindow.webContents.focus();
+      }
+    }, 100);
+  }
 });
 
 // Register startup settings handler
@@ -7637,6 +7712,15 @@ function createTray() {
               }
               mainWindow.show();
               mainWindow.focus();
+              
+              // CRITICAL FIX: Force webContents focus when showing from tray menu
+              if (mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+                setTimeout(() => {
+                  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+                    mainWindow.webContents.focus();
+                  }
+                }, 100);
+              }
             } else if (!isQuitting) {
               createMainWindow();
             }
@@ -7686,6 +7770,15 @@ function createTray() {
             }
             mainWindow.show();
             mainWindow.focus();
+            
+            // CRITICAL FIX: Force webContents focus on tray click
+            if (mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+              setTimeout(() => {
+                if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+                  mainWindow.webContents.focus();
+                }
+              }, 100);
+            }
           }
         } else if (!isQuitting) {
           createMainWindow();
@@ -7704,6 +7797,15 @@ function createTray() {
           }
           mainWindow.show();
           mainWindow.focus();
+          
+          // CRITICAL FIX: Force webContents focus on tray double-click
+          if (mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+            setTimeout(() => {
+              if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+                mainWindow.webContents.focus();
+              }
+            }, 100);
+          }
         } else if (!isQuitting) {
           createMainWindow();
         }
