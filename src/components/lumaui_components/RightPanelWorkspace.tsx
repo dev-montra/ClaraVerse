@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Eye, Code, Settings as SettingsIcon } from 'lucide-react';
 import FileExplorer from './FileExplorer';
 import MonacoEditor from './MonacoEditor';
@@ -99,6 +99,19 @@ const RightPanelWorkspace: React.FC<RightPanelWorkspaceProps> = ({
   onClearTerminal,
   writeToTerminal
 }) => {
+  // Trigger Monaco layout when switching to editor mode
+  // This fixes the issue where Monaco doesn't re-layout after being hidden in play mode
+  useEffect(() => {
+    if (mode === 'editor') {
+      // Small delay to ensure the editor is visible before triggering layout
+      const timer = setTimeout(() => {
+        // Dispatch a resize event to trigger Monaco's layout
+        window.dispatchEvent(new Event('resize'));
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [mode]);
+
   return (
     <div className="h-full w-full max-w-full flex flex-col overflow-hidden">
       {/* Mode Toggle Buttons - Hidden in play mode */}

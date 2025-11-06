@@ -1926,7 +1926,10 @@ This is a browser security requirement for WebContainer.`;
                 <div className="flex items-center gap-1">
                   {projectViewMode === 'play' ? (
                     <button
-                      onClick={() => setProjectViewMode('edit')}
+                      onClick={() => {
+                        setProjectViewMode('edit');
+                        setRightPanelMode('editor');
+                      }}
                       className="flex items-center gap-1 px-3 py-1.5 text-xs bg-gradient-to-r from-blue-500 to-blue-600 dark:from-sakura-500 dark:to-sakura-600 text-white rounded-lg hover:from-blue-600 hover:to-blue-700 dark:hover:from-sakura-600 dark:hover:to-sakura-700 transition-all shadow-lg"
                     >
                       <Code className="w-3 h-3" />
