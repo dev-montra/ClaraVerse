@@ -1,0 +1,224 @@
+services:
+  # ComfyUI - AI Image Generation
+  clara_comfyui:
+    image: clara17verse/clara-comfyui:with-custom-nodes
+    container_name: clara_comfyui
+    ports:
+      - "8188:8188"
+    environment:
+      # GPU Environment (will be enabled if NVIDIA GPU detected)
+      - NVIDIA_VISIBLE_DEVICES=all
+      - CUDA_VISIBLE_DEVICES=0
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:2048,expandable_segments:True
+      - CUDA_LAUNCH_BLOCKING=0
+      - TORCH_CUDNN_V8_API_ENABLED=1
+      - CUDA_MODULE_LOADING=LAZY
+      - XFORMERS_MORE_DETAILS=0
+      - COMFYUI_FORCE_FP16=1
+      - COMFYUI_DISABLE_XFORMERS_WARNING=1
+      - COMFYUI_HIGHVRAM=1
+      - COMFYUI_DISABLE_MODEL_OFFLOAD=1
+      - COMFYUI_VRAM_USAGE=gpu-only
+    volumes:
+      - comfyui_models:/app/ComfyUI/models
+      - comfyui_output:/app/ComfyUI/output
+      - comfyui_input:/app/ComfyUI/input
+      - comfyui_custom_nodes:/app/ComfyUI/custom_nodes
+      - comfyui_temp:/app/ComfyUI/temp
+      - comfyui_user:/app/ComfyUI/user
+    networks:
+      - clara_network
+    runtime: nvidia  # Will be removed if no GPU detected
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8188/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Python Backend - Core AI Processing
+  clara_python:
+    image: clara17verse/clara-backend:latest
+    container_name: clara_python
+    ports:
+      - "5001:5000"
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TOKENIZERS_PARALLELISM=false
+      - OMP_NUM_THREADS=1
+      # GPU Environment (will be enabled if NVIDIA GPU detected)
+      - NVIDIA_VISIBLE_DEVICES=all
+      - CUDA_VISIBLE_DEVICES=0
+      - PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512,expandable_segments:True
+      - CUDA_LAUNCH_BLOCKING=0
+      - TORCH_CUDNN_V8_API_ENABLED=1
+      - CUDA_MODULE_LOADING=LAZY
+      - CUDA_CACHE_DISABLE=0
+      - WHISPER_CUDA=1
+      - FASTER_WHISPER_DEVICE=cuda
+    volumes:
+      - python_data:/home/clara
+      - python_models:/app/models
+    networks:
+      - clara_network
+    runtime: nvidia  # Will be removed if no GPU detected
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # n8n - Workflow Automation
+  clara_n8n:
+    image: n8nio/n8n:latest
+    container_name: clara_n8n
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=clara123  # Change this!
+      - N8N_HOST=0.0.0.0
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://localhost:5678/
+    volumes:
+      - n8n_data:/home/node/.n8n
+    networks:
+      - clara_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5678/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # PostgreSQL - Database for Agent Runner
+  clara_postgres:
+    image: postgres:16-alpine
+    container_name: clara_postgres
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=clara_workflows
+      - POSTGRES_USER=clara
+      - POSTGRES_PASSWORD=clara123  # Change this!
+      - PGDATA=/var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../sdk/migrations:/docker-entrypoint-initdb.d
+    networks:
+      - clara_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clara"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Agent Runner - Workflow Deployment Service
+  clara_agent_runner:
+    build:
+      context: ../sdk
+      dockerfile: Dockerfile
+    container_name: clara_agent_runner
+    ports:
+      - "3000:3000"
+    environment:
+      # Server Configuration
+      - PORT=3000
+      - NODE_ENV=production
+      - HOST=0.0.0.0
+      - BASE_URL=http://localhost:3000
+
+      # Database Configuration
+      - DATABASE_URL=postgresql://clara:clara123@clara_postgres:5432/clara_workflows
+
+      # External Services (connecting to other Clara services)
+      - COMFYUI_URL=http://clara_comfyui:8188
+      - PYTHON_BACKEND_URL=http://clara_python:5000
+      - CLARA_ASSISTANT_URL=http://localhost:8069
+      - OLLAMA_URL=http://localhost:11434
+
+      # API Keys (set your actual keys here or in .env file)
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+
+      # Execution Limits
+      - MAX_EXECUTION_TIME=300000
+      - MAX_CONCURRENT_EXECUTIONS=10
+      - MAX_INPUT_SIZE=10485760
+
+      # Rate Limiting
+      - RATE_LIMIT_ENABLED=true
+      - RATE_LIMIT_WINDOW_MS=3600000
+      - RATE_LIMIT_MAX_REQUESTS=100
+
+      # Security
+      - CORS_ORIGINS=*
+      - TRUST_PROXY=false
+
+      # Logging
+      - LOG_LEVEL=info
+      - ENABLE_EXECUTION_LOGGING=true
+    volumes:
+      - agent_runner_logs:/app/logs
+    networks:
+      - clara_network
+    depends_on:
+      clara_postgres:
+        condition: service_healthy
+      clara_comfyui:
+        condition: service_healthy
+      clara_python:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+# Docker Networks
+networks:
+  clara_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.25.0.0/16
+
+# Docker Volumes for Data Persistence
+volumes:
+  # ComfyUI Data
+  comfyui_models:
+    driver: local
+  comfyui_output:
+    driver: local
+  comfyui_input:
+    driver: local
+  comfyui_custom_nodes:
+    driver: local
+  comfyui_temp:
+    driver: local
+  comfyui_user:
+    driver: local
+  
+  # Python Backend Data
+  python_data:
+    driver: local
+  python_models:
+    driver: local
+  
+  # n8n Data
+  n8n_data:
+    driver: local
+  # PostgreSQL Data
+  postgres_data:
+    driver: local
+
+  # Agent Runner Data
+  agent_runner_logs:
+    driver: local

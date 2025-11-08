@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Clara Agent Runner - Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        sakura: {
+                            50: '#fdf2f8',
+                            100: '#fce7f3',
+                            200: '#fbcfe8',
+                            300: '#f9a8d4',
+                            400: '#f472b6',
+                            500: '#ec4899',
+                            600: '#db2777',
+                            700: '#be185d',
+                            800: '#9d174d',
+                            900: '#831843',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        [x-cloak] { display: none !important; }
+    </style>
+</head>
+<body class="bg-gray-50 dark:bg-gray-900 min-h-screen">
+    <div id="app" x-data="dashboardApp()" x-init="init()" x-cloak>
+        <!-- Header -->
+        <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 shadow-sm">
+            <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h1 class="text-3xl font-bold text-gray-900 dark:text-white flex items-center gap-3">
+                            <svg class="w-8 h-8 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                            </svg>
+                            Clara Agent Runner
+                        </h1>
+                        <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">
+                            Manage, test, and monitor your deployed AI workflows
+                        </p>
+                    </div>
+
+                    <div class="flex items-center gap-3">
+                        <!-- Health Status -->
+                        <div x-show="healthStatus" class="flex items-center gap-2 px-3 py-2 rounded-lg"
+                             :class="healthStatus?.status === 'healthy' ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300' : 'bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300'">
+                            <div class="w-2 h-2 rounded-full" :class="healthStatus?.status === 'healthy' ? 'bg-green-500' : 'bg-red-500'"></div>
+                            <span class="text-sm font-medium" x-text="healthStatus?.status || 'unknown'"></span>
+                        </div>
+
+                        <!-- Refresh Button -->
+                        <button @click="loadWorkflows()" class="p-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors">
+                            <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Search and Filter -->
+                <div class="mt-6 flex items-center gap-4">
+                    <div class="flex-1 relative">
+                        <svg class="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                        <input type="text" x-model="searchQuery" placeholder="Search workflows..."
+                               class="w-full pl-10 pr-4 py-2 bg-gray-100 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    </div>
+
+                    <div class="flex items-center gap-2 bg-gray-100 dark:bg-gray-700 rounded-lg p-1">
+                        <template x-for="filter in ['all', 'active', 'inactive']" :key="filter">
+                            <button @click="filterStatus = filter"
+                                    class="px-4 py-1.5 rounded-md text-sm font-medium transition-colors"
+                                    :class="filterStatus === filter ? 'bg-white dark:bg-gray-800 text-gray-900 dark:text-white shadow-sm' : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'"
+                                    x-text="filter.charAt(0).toUpperCase() + filter.slice(1)"></button>
+                        </template>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+            <!-- Loading State -->
+            <div x-show="loading" class="flex items-center justify-center h-64">
+                <div class="flex flex-col items-center gap-4">
+                    <div class="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+                    <p class="text-gray-600 dark:text-gray-400">Loading workflows...</p>
+                </div>
+            </div>
+
+            <!-- Error State -->
+            <div x-show="error && !loading" class="bg-red-100 dark:bg-red-900/30 border border-red-300 dark:border-red-800 rounded-lg p-6">
+                <div class="flex items-start gap-3">
+                    <svg class="w-6 h-6 text-red-600 dark:text-red-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <div>
+                        <h3 class="text-lg font-semibold text-red-900 dark:text-red-200">Error Loading Workflows</h3>
+                        <p class="mt-1 text-red-800 dark:text-red-300" x-text="error"></p>
+                        <button @click="loadWorkflows()" class="mt-3 px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium transition-colors">
+                            Retry
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Empty State -->
+            <div x-show="!loading && !error && filteredWorkflows.length === 0" class="text-center py-12">
+                <svg class="mx-auto w-16 h-16 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
+                </svg>
+                <h3 class="mt-4 text-lg font-semibold text-gray-900 dark:text-white">No workflows found</h3>
+                <p class="mt-2 text-gray-600 dark:text-gray-400" x-text="searchQuery ? 'Try adjusting your search criteria' : 'Deploy your first workflow to get started'"></p>
+            </div>
+
+            <!-- Workflows Grid -->
+            <div x-show="!loading && !error && filteredWorkflows.length > 0" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <template x-for="workflow in filteredWorkflows" :key="workflow.id">
+                    <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 hover:shadow-lg transition-shadow">
+                        <!-- Header -->
+                        <div class="p-5 border-b border-gray-200 dark:border-gray-700">
+                            <div class="flex items-start justify-between">
+                                <div class="flex-1">
+                                    <h3 class="text-lg font-semibold text-gray-900 dark:text-white" x-text="workflow.name"></h3>
+                                    <p class="mt-1 text-sm text-gray-600 dark:text-gray-400" x-text="workflow.description || 'No description'"></p>
+                                </div>
+                                <span class="px-2 py-1 text-xs font-medium rounded-full"
+                                      :class="workflow.isActive ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300' : 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-300'"
+                                      x-text="workflow.isActive ? 'Active' : 'Inactive'"></span>
+                            </div>
+                            <div class="mt-3">
+                                <code class="px-2 py-1 bg-gray-100 dark:bg-gray-900 rounded text-sm font-mono text-blue-600 dark:text-blue-400"
+                                      x-text="'/' + workflow.slug"></code>
+                            </div>
+                        </div>
+
+                        <!-- Stats -->
+                        <div class="px-5 py-4 bg-gray-50 dark:bg-gray-900/50">
+                            <div class="grid grid-cols-2 gap-4 text-sm">
+                                <div>
+                                    <div class="text-gray-600 dark:text-gray-400">Executions</div>
+                                    <div class="mt-1 font-semibold text-gray-900 dark:text-white" x-text="workflow.executionCount || 0"></div>
+                                </div>
+                                <div>
+                                    <div class="text-gray-600 dark:text-gray-400">Last Run</div>
+                                    <div class="mt-1 font-semibold text-gray-900 dark:text-white" x-text="workflow.lastExecuted ? new Date(workflow.lastExecuted).toLocaleDateString() : 'Never'"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Actions -->
+                        <div class="p-4 flex items-center gap-2">
+                            <button @click="viewDetails(workflow)" class="flex-1 px-3 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-sm font-medium transition-colors">
+                                View & Test
+                            </button>
+                            <button @click="copyEndpoint(workflow.endpoint)" class="p-2 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors" title="Copy endpoint">
+                                <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                </svg>
+                            </button>
+                        </div>
+                    </div>
+                </template>
+            </div>
+        </div>
+
+        <!-- Workflow Details Modal with Tabs -->
+        <div x-show="selectedWorkflow" @click.self="closeModal()" class="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div @click.stop class="bg-white dark:bg-gray-800 rounded-xl shadow-2xl w-full max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
+                <!-- Modal Header -->
+                <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+                    <div>
+                        <h2 class="text-2xl font-bold text-gray-900 dark:text-white" x-text="selectedWorkflow?.name"></h2>
+                        <p class="text-sm text-gray-600 dark:text-gray-400 mt-1" x-text="selectedWorkflow?.description"></p>
+                    </div>
+                    <button @click="closeModal()" class="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors">
+                        <svg class="w-6 h-6 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                        </svg>
+                    </button>
+                </div>
+
+                <!-- Tabs -->
+                <div class="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
+                    <div class="px-6 flex gap-1">
+                        <template x-for="tab in ['overview', 'schema', 'test', 'docs']" :key="tab">
+                            <button @click="activeTab = tab"
+                                    class="px-4 py-3 text-sm font-medium transition-colors capitalize"
+                                    :class="activeTab === tab ? 'text-blue-600 dark:text-blue-400 border-b-2 border-blue-600 dark:border-blue-400' : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'"
+                                    x-text="tab"></button>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- Tab Content -->
+                <div class="flex-1 overflow-y-auto p-6">
+                    <!-- Overview Tab -->
+                    <div x-show="activeTab === 'overview'" class="space-y-6">
+                        <!-- Endpoint -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">API Endpoint</label>
+                            <div class="flex items-center gap-2">
+                                <code class="flex-1 px-4 py-3 bg-gray-100 dark:bg-gray-900 rounded-lg text-sm font-mono text-blue-600 dark:text-blue-400 break-all" x-text="selectedWorkflow?.endpoint"></code>
+                                <button @click="copyEndpoint(selectedWorkflow?.endpoint)" class="p-2 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors" title="Copy">
+                                    <svg class="w-5 h-5 text-gray-600 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Slug -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Workflow Slug</label>
+                            <code class="block px-4 py-3 bg-gray-100 dark:bg-gray-900 rounded-lg text-sm font-mono text-gray-900 dark:text-white" x-text="selectedWorkflow?.slug"></code>
+                        </div>
+
+                        <!-- Stats Grid -->
+                        <div class="grid grid-cols-3 gap-4">
+                            <div class="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-4">
+                                <div class="text-sm text-gray-600 dark:text-gray-400 mb-1">Executions</div>
+                                <div class="text-2xl font-bold text-gray-900 dark:text-white" x-text="selectedWorkflow?.executionCount || 0"></div>
+                            </div>
+                            <div class="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-4">
+                                <div class="text-sm text-gray-600 dark:text-gray-400 mb-1">Status</div>
+                                <span class="inline-block px-2 py-1 text-sm font-medium rounded-full"
+                                      :class="selectedWorkflow?.isActive ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300' : 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-300'"
+                                      x-text="selectedWorkflow?.isActive ? 'Active' : 'Inactive'"></span>
+                            </div>
+                            <div class="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-4">
+                                <div class="text-sm text-gray-600 dark:text-gray-400 mb-1">Last Run</div>
+                                <div class="text-lg font-semibold text-gray-900 dark:text-white" x-text="selectedWorkflow?.lastExecuted ? new Date(selectedWorkflow.lastExecuted).toLocaleDateString() : 'Never'"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Schema Tab -->
+                    <div x-show="activeTab === 'schema'" class="space-y-6">
+                        <div x-show="loadingSchema" class="flex items-center justify-center py-12">
+                            <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+                        </div>
+
+                        <div x-show="!loadingSchema && workflowSchema" class="space-y-6">
+                            <!-- Input Schema -->
+                            <div>
+                                <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
+                                    <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                                    </svg>
+                                    Input Schema
+                                </h3>
+                                <pre class="p-4 bg-gray-100 dark:bg-gray-900 rounded-lg overflow-x-auto text-sm text-gray-800 dark:text-gray-200" x-text="JSON.stringify(workflowSchema?.input, null, 2)"></pre>
+                            </div>
+
+                            <!-- Output Schema -->
+                            <div>
+                                <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-3 flex items-center gap-2">
+                                    <svg class="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 17h8m0 0V9m0 8l-8-8-4 4-6-6" />
+                                    </svg>
+                                    Output Schema
+                                </h3>
+                                <pre class="p-4 bg-gray-100 dark:bg-gray-900 rounded-lg overflow-x-auto text-sm text-gray-800 dark:text-gray-200" x-text="JSON.stringify(workflowSchema?.output, null, 2)"></pre>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Test Tab -->
+                    <div x-show="activeTab === 'test'" class="space-y-6">
+                        <!-- API Key Info Banner -->
+                        <div class="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+                            <div class="flex items-start gap-3">
+                                <svg class="w-5 h-5 text-blue-600 dark:text-blue-400 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                                <div class="text-sm text-blue-800 dark:text-blue-300">
+                                    <p class="font-semibold mb-1">API Key Required for Testing</p>
+                                    <p class="text-blue-700 dark:text-blue-400">Each workflow has a unique API key for authentication. The API key is shown only once when you deploy a workflow. If you don't have it, you can regenerate it using the <code class="px-1 bg-blue-100 dark:bg-blue-900/40 rounded text-xs">POST /api/workflows/:id/regenerate-key</code> endpoint.</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- API Key Input -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">API Key *</label>
+                            <input type="password" x-model="testApiKey" placeholder="clara_sk_..."
+                                   class="w-full px-4 py-2 bg-gray-100 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-white font-mono focus:ring-2 focus:ring-blue-500 focus:border-transparent">
+                            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Format: Bearer token starting with "clara_sk_"</p>
+                        </div>
+
+                        <!-- Input Editor -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Request Body (JSON)</label>
+                            <textarea x-model="testInput" rows="10" placeholder='{"key": "value"}'
+                                      class="w-full px-4 py-3 bg-gray-100 dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-lg text-gray-900 dark:text-white font-mono text-sm focus:ring-2 focus:ring-blue-500 focus:border-transparent"></textarea>
+                            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">Enter JSON input for the workflow</p>
+                        </div>
+
+                        <!-- Execute Button -->
+                        <button @click="executeWorkflow()" :disabled="executing || !testApiKey"
+                                class="w-full px-6 py-3 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2">
+                            <svg x-show="!executing" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                            </svg>
+                            <div x-show="executing" class="animate-spin rounded-full h-5 w-5 border-b-2 border-white"></div>
+                            <span x-text="executing ? 'Executing...' : 'Execute Workflow'"></span>
+                        </button>
+
+                        <!-- Execution Result -->
+                        <div x-show="testResult" class="space-y-4">
+                            <div class="flex items-center justify-between">
+                                <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Response</h3>
+                                <span class="px-2 py-1 text-sm font-medium rounded-full"
+                                      :class="testResult?.success ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-300' : 'bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-300'"
+                                      x-text="testResult?.success ? 'Success' : 'Error'"></span>
+                            </div>
+
+                            <div x-show="testResult?.success" class="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-4">
+                                <div class="text-sm text-green-800 dark:text-green-200 mb-2">
+                                    <span class="font-medium">Duration:</span> <span x-text="testResult?.metadata?.duration"></span>
+                                </div>
+                                <div class="mt-3">
+                                    <div class="text-sm font-medium text-green-800 dark:text-green-200 mb-2">Output:</div>
+                                    <pre class="p-3 bg-white dark:bg-gray-900 rounded text-xs text-gray-800 dark:text-gray-200 overflow-x-auto max-h-96" x-text="JSON.stringify(testResult?.outputs, null, 2)"></pre>
+                                </div>
+                            </div>
+
+                            <div x-show="!testResult?.success" class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
+                                <div class="text-sm font-medium text-red-800 dark:text-red-200">Error Message:</div>
+                                <p class="mt-2 text-red-700 dark:text-red-300" x-text="testResult?.error || testResult?.message"></p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Docs Tab -->
+                    <div x-show="activeTab === 'docs'" class="space-y-4">
+                        <div class="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+                            <h3 class="text-lg font-semibold text-blue-900 dark:text-blue-100 mb-2">Interactive API Documentation</h3>
+                            <p class="text-blue-800 dark:text-blue-200 text-sm mb-4">
+                                View the full OpenAPI/Swagger documentation for this workflow with interactive testing capabilities.
+                            </p>
+                            <a :href="selectedWorkflow?.docs" target="_blank" class="inline-flex items-center gap-2 px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg transition-colors">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                                </svg>
+                                Open Swagger Documentation
+                            </a>
+                        </div>
+
+                        <div class="space-y-4">
+                            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">Quick Reference</h3>
+
+                            <!-- cURL Example -->
+                            <div>
+                                <div class="flex items-center justify-between mb-2">
+                                    <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">cURL Command</h4>
+                                    <button @click="copyCurlCommand()" class="text-xs px-2 py-1 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded transition-colors">Copy</button>
+                                </div>
+                                <pre class="p-3 bg-gray-100 dark:bg-gray-900 rounded-lg overflow-x-auto text-xs text-gray-800 dark:text-gray-200" x-text="getCurlCommand()"></pre>
+                            </div>
+
+                            <!-- Python Example -->
+                            <div>
+                                <div class="flex items-center justify-between mb-2">
+                                    <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">Python (requests)</h4>
+                                    <button @click="copyPythonCode()" class="text-xs px-2 py-1 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded transition-colors">Copy</button>
+                                </div>
+                                <pre class="p-3 bg-gray-100 dark:bg-gray-900 rounded-lg overflow-x-auto text-xs text-gray-800 dark:text-gray-200" x-text="getPythonCode()"></pre>
+                            </div>
+
+                            <!-- JavaScript Example -->
+                            <div>
+                                <div class="flex items-center justify-between mb-2">
+                                    <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">JavaScript (fetch)</h4>
+                                    <button @click="copyJavaScriptCode()" class="text-xs px-2 py-1 text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded transition-colors">Copy</button>
+                                </div>
+                                <pre class="p-3 bg-gray-100 dark:bg-gray-900 rounded-lg overflow-x-auto text-xs text-gray-800 dark:text-gray-200" x-text="getJavaScriptCode()"></pre>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Alpine.js -->
+    <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
+
+    <script>
+        function dashboardApp() {
+            return {
+                workflows: [],
+                healthStatus: null,
+                loading: true,
+                error: null,
+                searchQuery: '',
+                filterStatus: 'all',
+                selectedWorkflow: null,
+                activeTab: 'overview',
+                workflowSchema: null,
+                loadingSchema: false,
+                testApiKey: '',
+                testInput: '{}',
+                testResult: null,
+                executing: false,
+
+                get filteredWorkflows() {
+                    return this.workflows.filter(w => {
+                        const matchesSearch = w.name.toLowerCase().includes(this.searchQuery.toLowerCase()) ||
+                                            w.slug.toLowerCase().includes(this.searchQuery.toLowerCase());
+                        const matchesFilter = this.filterStatus === 'all' ||
+                                            (this.filterStatus === 'active' && w.isActive) ||
+                                            (this.filterStatus === 'inactive' && !w.isActive);
+                        return matchesSearch && matchesFilter;
+                    });
+                },
+
+                async init() {
+                    await this.checkHealth();
+                    await this.loadWorkflows();
+                    // Auto-refresh every 30 seconds
+                    setInterval(() => {
+                        this.checkHealth();
+                        this.loadWorkflows();
+                    }, 30000);
+                },
+
+                async checkHealth() {
+                    try {
+                        const response = await fetch('/health');
+                        this.healthStatus = await response.json();
+                    } catch (err) {
+                        console.error('Health check failed:', err);
+                    }
+                },
+
+                async loadWorkflows() {
+                    try {
+                        this.loading = true;
+                        this.error = null;
+                        const response = await fetch('/api/deployments?limit=100');
+                        if (!response.ok) throw new Error('Failed to load workflows');
+                        const data = await response.json();
+                        this.workflows = data.deployments || [];
+                    } catch (err) {
+                        this.error = err.message || 'Failed to load workflows';
+                        console.error('Failed to load workflows:', err);
+                    } finally {
+                        this.loading = false;
+                    }
+                },
+
+                async viewDetails(workflow) {
+                    this.selectedWorkflow = workflow;
+                    this.activeTab = 'overview';
+                    this.testResult = null;
+                    this.testInput = '{}';
+                    await this.loadSchema(workflow.slug);
+                },
+
+                async loadSchema(slug) {
+                    this.loadingSchema = true;
+                    try {
+                        const response = await fetch(`/api/workflows/${slug}/schema`);
+                        if (response.ok) {
+                            const openApiSchema = await response.json();
+                            // Extract input/output schemas from OpenAPI format
+                            const path = Object.keys(openApiSchema.paths)[0];
+                            const operation = openApiSchema.paths[path]?.post;
+
+                            this.workflowSchema = {
+                                input: operation?.requestBody?.content?.['application/json']?.schema || {},
+                                output: operation?.responses?.['200']?.content?.['application/json']?.schema?.properties?.outputs || {},
+                                fullSchema: openApiSchema
+                            };
+
+                            // Pre-fill test input with example from schema
+                            const example = operation?.requestBody?.content?.['application/json']?.examples?.default?.value;
+                            if (example) {
+                                this.testInput = JSON.stringify(example, null, 2);
+                            }
+                        }
+                    } catch (err) {
+                        console.error('Failed to load schema:', err);
+                    } finally {
+                        this.loadingSchema = false;
+                    }
+                },
+
+                async executeWorkflow() {
+                    if (!this.testApiKey || !this.selectedWorkflow) return;
+
+                    this.executing = true;
+                    this.testResult = null;
+
+                    try {
+                        const input = JSON.parse(this.testInput);
+                        const response = await fetch(this.selectedWorkflow.endpoint, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${this.testApiKey}`,
+                            },
+                            body: JSON.stringify(input),
+                        });
+
+                        const result = await response.json();
+                        this.testResult = result;
+
+                        if (response.ok) {
+                            // Reload workflows to update execution count
+                            await this.loadWorkflows();
+                        }
+                    } catch (err) {
+                        this.testResult = {
+                            success: false,
+                            error: err.message || 'Failed to execute workflow',
+                        };
+                    } finally {
+                        this.executing = false;
+                    }
+                },
+
+                closeModal() {
+                    this.selectedWorkflow = null;
+                    this.activeTab = 'overview';
+                    this.testResult = null;
+                    this.testApiKey = '';
+                    this.testInput = '{}';
+                },
+
+                copyEndpoint(endpoint) {
+                    navigator.clipboard.writeText(endpoint).then(() => {
+                        alert('Endpoint copied to clipboard!');
+                    });
+                },
+
+                getCurlCommand() {
+                    if (!this.selectedWorkflow) return '';
+                    return `curl -X POST ${this.selectedWorkflow.endpoint} \\
+  -H "Authorization: Bearer YOUR_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '${this.testInput}'`;
+                },
+
+                getPythonCode() {
+                    if (!this.selectedWorkflow) return '';
+                    return `import requests
+
+endpoint = "${this.selectedWorkflow.endpoint}"
+api_key = "YOUR_API_KEY"
+inputs = ${this.testInput}
+
+response = requests.post(
+    endpoint,
+    headers={"Authorization": f"Bearer {api_key}"},
+    json=inputs
+)
+result = response.json()
+print(result)`;
+                },
+
+                getJavaScriptCode() {
+                    if (!this.selectedWorkflow) return '';
+                    return `const endpoint = "${this.selectedWorkflow.endpoint}";
+const apiKey = "YOUR_API_KEY";
+const inputs = ${this.testInput};
+
+const response = await fetch(endpoint, {
+  method: "POST",
+  headers: {
+    "Authorization": \`Bearer \${apiKey}\`,
+    "Content-Type": "application/json",
+  },
+  body: JSON.stringify(inputs),
+});
+
+const result = await response.json();
+console.log(result);`;
+                },
+
+                copyCurlCommand() {
+                    navigator.clipboard.writeText(this.getCurlCommand()).then(() => {
+                        alert('cURL command copied!');
+                    });
+                },
+
+                copyPythonCode() {
+                    navigator.clipboard.writeText(this.getPythonCode()).then(() => {
+                        alert('Python code copied!');
+                    });
+                },
+
+                copyJavaScriptCode() {
+                    navigator.clipboard.writeText(this.getJavaScriptCode()).then(() => {
+                        alert('JavaScript code copied!');
+                    });
+                }
+            }
+        }
+    </script>
+</body>
+</html>
