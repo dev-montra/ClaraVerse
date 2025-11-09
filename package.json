@@ -295,7 +295,7 @@
     },
     "publish": {
       "provider": "github",
-      "owner": "badboysm890",
+      "owner": "claraverse-space",
       "repo": "ClaraVerse",
       "releaseType": "release",
       "private": false

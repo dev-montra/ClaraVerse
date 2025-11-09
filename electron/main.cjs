@@ -5469,21 +5469,35 @@ async function createMainWindow() {
     const url = webContents.getURL();
     const n8nPort = dockerSetup?.ports?.n8n; // Get the determined n8n port
 
-    // Allow ALL permissions for the main Clara application (development and production)
-    if (url.startsWith('http://localhost:5173') || url.startsWith('file://')) {
-      log.info(`Granted '${permission}' permission for Clara app URL: ${url}`);
-      callback(true);
-      return;
+    try {
+      const parsedUrl = new URL(url);
+      const hostname = parsedUrl.hostname;
+      
+      // Allow ALL permissions for Clara app on localhost/127.0.0.1
+      if ((hostname === 'localhost' || hostname === '127.0.0.1') && !url.includes('/n8n')) {
+        log.info(`Granted '${permission}' permission for Clara app URL: ${url}`);
+        callback(true);
+        return;
+      }
+      
+      // Allow permissions for n8n service
+      if (n8nPort && (hostname === 'localhost' || hostname === '127.0.0.1') && 
+          url.startsWith(`http://${hostname}:${n8nPort}`)) {
+        log.info(`Granted '${permission}' permission for n8n URL: ${url}`);
+        callback(true);
+        return;
+      }
+    } catch (error) {
+      // Fallback for file:// URLs or parsing errors
+      if (url.startsWith('file://')) {
+        log.info(`Granted '${permission}' permission for file:// URL`);
+        callback(true);
+        return;
+      }
     }
-
-    // Allow all permissions for n8n service as well
-    if (n8nPort && url.startsWith(`http://localhost:${n8nPort}`)) {
-      log.info(`Granted '${permission}' permission for n8n URL: ${url}`);
-      callback(true);
-    } else {
-      log.warn(`Blocked permission request '${permission}' for URL: ${url} (n8n port: ${n8nPort})`);
-      callback(false);
-    }
+    
+    log.warn(`Blocked permission request '${permission}' for URL: ${url}`);
+    callback(false);
   });
 
   // CRITICAL FIX: Register ALL event listeners BEFORE loading the URL
