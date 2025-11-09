@@ -5468,16 +5468,16 @@ async function createMainWindow() {
   mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
     const url = webContents.getURL();
     const n8nPort = dockerSetup?.ports?.n8n; // Get the determined n8n port
-    
+
     // Allow ALL permissions for the main Clara application (development and production)
     if (url.startsWith('http://localhost:5173') || url.startsWith('file://')) {
       log.info(`Granted '${permission}' permission for Clara app URL: ${url}`);
       callback(true);
       return;
     }
-    
+
     // Allow all permissions for n8n service as well
-    if (n8nPort && url.startsWith(`http://localhost:${n8nPort}`)) { 
+    if (n8nPort && url.startsWith(`http://localhost:${n8nPort}`)) {
       log.info(`Granted '${permission}' permission for n8n URL: ${url}`);
       callback(true);
     } else {
@@ -5486,51 +5486,12 @@ async function createMainWindow() {
     }
   });
 
-  // Development mode with hot reload
-  if (process.env.NODE_ENV === 'development') {
-    if (process.env.ELECTRON_HOT_RELOAD === 'true') {
-      // Hot reload mode
-      const devServerUrl = process.env.ELECTRON_START_URL || 'http://localhost:5173';
-      
-      log.info('Loading development server with hot reload:', devServerUrl);
-      mainWindow.loadURL(devServerUrl).catch(err => {
-        log.error('Failed to load dev server:', err);
-        // Fallback to local file if dev server fails
-        mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
-      });
-
-      // Enable hot reload by watching the renderer process
-      mainWindow.webContents.on('did-fail-load', () => {
-        log.warn('Page failed to load, retrying...');
-        setTimeout(() => {
-          mainWindow?.webContents.reload();
-        }, 1000);
-      });
-    } else {
-      // Development mode without hot reload - use built files
-      log.info('Loading development build from dist directory');
-      mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
-    }
-
-    // Open DevTools in both development modes
-    mainWindow.webContents.openDevTools();
-  } else {
-    // Production mode - serve via loopback server so COOP/COEP headers are present
-    try {
-      const port = await ensureStaticServer();
-  const prodUrl = `http://${STATIC_SERVER_HOST}:${port}/index.html`;
-      log.info(`Loading production build from ${prodUrl}`);
-      await mainWindow.loadURL(prodUrl);
-    } catch (error) {
-      log.error('Falling back to file:// load after static server failure:', error);
-      await mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
-    }
-  }
-
+  // CRITICAL FIX: Register ALL event listeners BEFORE loading the URL
+  // This prevents race conditions where the event fires before the listener is attached
   // Wait for DOM content to be fully loaded before showing
   mainWindow.webContents.once('dom-ready', () => {
     log.info('Main window DOM ready, showing immediately (fast startup mode)');
-    
+
     // Show window immediately for fast startup (unless user requested start minimized)
     if (mainWindow && !mainWindow.isDestroyed()) {
       if (!shouldStartMinimized) {
@@ -5540,7 +5501,7 @@ async function createMainWindow() {
         log.info('Showing main window (fast startup)');
         mainWindow.show();
         mainWindow.focus();
-        
+
         // CRITICAL FIX: Force webContents to regain focus for input elements
         // This prevents the input box click issue where window is focused but inputs don't work
         if (mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
@@ -5550,7 +5511,7 @@ async function createMainWindow() {
         log.info('Skipping initial show because startMinimized is enabled');
       }
     }
-    
+
     // Initialize auto-updater when window is ready
     setupAutoUpdater(mainWindow);
   });
@@ -5561,7 +5522,7 @@ async function createMainWindow() {
         log.info('Forcing window visible after login launch');
         mainWindow.show();
         mainWindow.focus();
-        
+
         // CRITICAL FIX: Force webContents focus after login launch
         if (mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
           setTimeout(() => {
@@ -5583,7 +5544,7 @@ async function createMainWindow() {
         if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible() && !shouldStartMinimized) {
           log.info('Fallback: Showing main window via ready-to-show');
           mainWindow.show();
-          
+
           if (loadingScreen) {
             loadingScreen.close();
             loadingScreen = null;
@@ -5620,6 +5581,48 @@ async function createMainWindow() {
   mainWindow.on('closed', () => {
     mainWindow = null;
   });
+
+  // NOW load the URL after all event listeners are registered
+  // Development mode with hot reload
+  if (process.env.NODE_ENV === 'development') {
+    if (process.env.ELECTRON_HOT_RELOAD === 'true') {
+      // Hot reload mode
+      const devServerUrl = process.env.ELECTRON_START_URL || 'http://localhost:5173';
+
+      log.info('Loading development server with hot reload:', devServerUrl);
+      mainWindow.loadURL(devServerUrl).catch(err => {
+        log.error('Failed to load dev server:', err);
+        // Fallback to local file if dev server fails
+        mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+      });
+
+      // Enable hot reload by watching the renderer process
+      mainWindow.webContents.on('did-fail-load', () => {
+        log.warn('Page failed to load, retrying...');
+        setTimeout(() => {
+          mainWindow?.webContents.reload();
+        }, 1000);
+      });
+    } else {
+      // Development mode without hot reload - use built files
+      log.info('Loading development build from dist directory');
+      mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+    }
+
+    // Open DevTools in both development modes
+    mainWindow.webContents.openDevTools();
+  } else {
+    // Production mode - serve via loopback server so COOP/COEP headers are present
+    try {
+      const port = await ensureStaticServer();
+      const prodUrl = `http://${STATIC_SERVER_HOST}:${port}/index.html`;
+      log.info(`Loading production build from ${prodUrl}`);
+      await mainWindow.loadURL(prodUrl);
+    } catch (error) {
+      log.error('Falling back to file:// load after static server failure:', error);
+      await mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+    }
+  }
 }
 
 // Initialize app when ready
