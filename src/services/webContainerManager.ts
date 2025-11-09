@@ -56,6 +56,7 @@ export class WebContainerManager {
   private shellProcess: any = null;
   private containerInfo: ContainerInfo | null = null;
   private isInitialized = false;
+  private initializationFailed = false;
   private onContainerDestroyed: (() => void) | null = null;
 
   static getInstance(): WebContainerManager {
@@ -77,14 +78,60 @@ export class WebContainerManager {
    */
   async initialize(): Promise<void> {
     if (this.isInitialized) return;
-
-    // Check cross-origin isolation
-    if (!window.crossOriginIsolated) {
-      throw new Error('WebContainers require cross-origin isolation. Please ensure proper headers are set.');
+    
+    // If initialization already failed once, don't retry (prevents restart loops)
+    if (this.initializationFailed) {
+      throw new Error('WebContainer initialization previously failed. Restart the app to retry.');
     }
 
-    this.isInitialized = true;
-    console.log('✅ WebContainerManager initialized - ONE INSTANCE MODE');
+    try {
+      // Check internet connectivity first
+      if (!navigator.onLine) {
+        throw new Error('⚠️ WebContainers require an internet connection. Please check your network and try again.\n\n' +
+          'WebContainers are powered by StackBlitz and need to:\n' +
+          '• Load runtime files from the cloud\n' +
+          '• Install npm packages\n' +
+          '• Connect to WebContainer servers');
+      }
+
+      // Check cross-origin isolation
+      if (!window.crossOriginIsolated) {
+        throw new Error('WebContainers require cross-origin isolation. Please ensure proper headers are set.');
+      }
+
+      // Test connectivity to StackBlitz CDN
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      
+      await fetch('https://stackblitz.com/headless?version=1.6.1', {
+        method: 'HEAD',
+        signal: controller.signal,
+        cache: 'no-cache'
+      });
+      
+      clearTimeout(timeoutId);
+
+      this.isInitialized = true;
+      console.log('✅ WebContainerManager initialized - ONE INSTANCE MODE');
+    } catch (error) {
+      this.initializationFailed = true;
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      console.error('[WebContainerManager] Initialization failed:', errorMsg);
+      
+      if (errorMsg.includes('abort')) {
+        throw new Error(
+          '⚠️ Cannot reach StackBlitz servers. WebContainers require access to stackblitz.com.\n\n' +
+          'Possible issues:\n' +
+          '• Firewall or antivirus blocking the connection\n' +
+          '• Corporate proxy or network restrictions\n' +
+          '• DNS resolution issues\n' +
+          '• Temporary StackBlitz service outage\n\n' +
+          'LumaUI code builder will be unavailable, but other features work normally.'
+        );
+      }
+      
+      throw error;
+    }
   }
 
   /**
@@ -261,6 +308,27 @@ export class WebContainerManager {
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
+        // Check network status before each attempt
+        if (!navigator.onLine) {
+          throw new Error('⚠️ No internet connection detected. WebContainers require an internet connection to function.');
+        }
+
+        // Test StackBlitz CDN connectivity before booting
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 3000);
+          
+          await fetch('https://stackblitz.com/headless?version=1.6.1', {
+            method: 'HEAD',
+            signal: controller.signal,
+            cache: 'no-cache'
+          });
+          
+          clearTimeout(timeoutId);
+        } catch (fetchError) {
+          throw new Error('Cannot reach StackBlitz CDN. Check firewall/network settings.');
+        }
+
         log(`\x1b[33m🔧 Booting WebContainer (attempt ${attempt}/${maxAttempts})...\x1b[0m\n`);
 
         const container = await WebContainer.boot();
@@ -271,7 +339,18 @@ export class WebContainerManager {
         return container;
       } catch (error) {
         lastError = error instanceof Error ? error : new Error(String(error));
-        log(`\x1b[31m❌ Boot attempt ${attempt} failed: ${lastError.message}\x1b[0m\n`);
+        const errorMsg = lastError.message;
+        
+        log(`\x1b[31m❌ Boot attempt ${attempt} failed: ${errorMsg}\x1b[0m\n`);
+
+        // Don't retry on network errors - fail fast
+        if (errorMsg.includes('StackBlitz CDN') || errorMsg.includes('ERR_NAME_NOT_RESOLVED')) {
+          throw new Error(
+            '⚠️ Cannot reach StackBlitz servers. WebContainers unavailable.\n\n' +
+            'This feature requires internet access to stackblitz.com.\n' +
+            'Please check firewall/proxy settings or use Clara AI without LumaUI.'
+          );
+        }
 
         if (attempt < maxAttempts) {
           const delay = 2000 * attempt; // Exponential backoff
@@ -282,7 +361,12 @@ export class WebContainerManager {
     }
 
     throw new Error(
-      `Failed to boot WebContainer after ${maxAttempts} attempts. Last error: ${lastError?.message || 'Unknown'}. Please refresh the page and try again.`
+      `Failed to boot WebContainer after ${maxAttempts} attempts. Last error: ${lastError?.message || 'Unknown'}.\n\n` +
+      'Try:\n' +
+      '• Refresh the page\n' +
+      '• Check your internet connection\n' +
+      '• Disable firewall temporarily\n' +
+      '• Use Clara AI without LumaUI feature'
     );
   }
 
@@ -421,15 +505,17 @@ export class WebContainerManager {
     onOutput?: (message: string, type: 'output' | 'error' | 'info') => void
   ): Promise<{ url?: string; port?: number }> {
     
-    const containerInfo = this.containers.get(projectId);
-    if (!containerInfo || containerInfo.status !== 'ready') {
+    if (!this.containerInfo || this.containerInfo.status !== 'ready') {
       throw new Error('Container not ready for project ' + projectId);
     }
 
-    const { container } = containerInfo;
+    const container = this.currentContainer;
+    if (!container) {
+      throw new Error('No active container for project ' + projectId);
+    }
     
     try {
-      containerInfo.status = 'running';
+      this.containerInfo.status = 'running';
       
       if (framework === 'vanilla-html') {
         // For vanilla HTML, use WebContainer's built-in static server
@@ -463,7 +549,7 @@ export class WebContainerManager {
         // Start the static server
         onOutput?.('🌐 Starting static server...', 'info');
         const serverProcess = await container.spawn('npx', ['serve', '-s', '.', '-p', '3000']);
-        containerInfo.process = serverProcess;
+        this.containerInfo.process = serverProcess;
         
         serverProcess.output.pipeTo(new WritableStream({
           write(data) {
@@ -481,8 +567,8 @@ export class WebContainerManager {
           container.on('server-ready', async (port, url) => {
             clearTimeout(timeout);
             
-            containerInfo.port = port;
-            containerInfo.previewUrl = url;
+            this.containerInfo!.port = port;
+            this.containerInfo!.previewUrl = url;
             
             // Update persistent storage
             await LumauiProjectStorage.updateProjectStatus(projectId, 'running', url, port);
@@ -493,14 +579,14 @@ export class WebContainerManager {
           
           // Also check manually after a delay as fallback
           setTimeout(async () => {
-            if (!containerInfo.previewUrl) {
+            if (!this.containerInfo?.previewUrl) {
               try {
                 // Try to detect the server manually
                 const port = 3000;
                 const url = `${window.location.protocol}//${window.location.hostname}:${port}`;
                 
-                containerInfo.port = port;
-                containerInfo.previewUrl = url;
+                this.containerInfo!.port = port;
+                this.containerInfo!.previewUrl = url;
                 
                 await LumauiProjectStorage.updateProjectStatus(projectId, 'running', url, port);
                 
@@ -535,7 +621,7 @@ export class WebContainerManager {
         onOutput?.('🌐 Starting development server...', 'info');
         
         const devProcess = await container.spawn('npm', ['run', 'dev']);
-        containerInfo.process = devProcess;
+        this.containerInfo.process = devProcess;
         
         devProcess.output.pipeTo(new WritableStream({
           write(data) {
@@ -553,8 +639,8 @@ export class WebContainerManager {
           container.on('server-ready', async (port, url) => {
             clearTimeout(timeout);
             
-            containerInfo.port = port;
-            containerInfo.previewUrl = url;
+            this.containerInfo!.port = port;
+            this.containerInfo!.previewUrl = url;
             
             // Update persistent storage
             await LumauiProjectStorage.updateProjectStatus(projectId, 'running', url, port);
@@ -566,7 +652,7 @@ export class WebContainerManager {
       }
       
     } catch (error) {
-      containerInfo.status = 'error';
+      this.containerInfo!.status = 'error';
       await LumauiProjectStorage.updateProjectStatus(projectId, 'error');
       throw error;
     }

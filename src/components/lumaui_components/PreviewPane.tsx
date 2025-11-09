@@ -439,37 +439,64 @@ const PreviewPane: React.FC<PreviewPaneProps> = ({
           /* Start Project State */
           <div className="h-full flex items-center justify-center p-8">
             <div className="text-center max-w-md">
-              <div className="w-20 h-20 mx-auto mb-6 bg-gradient-to-br from-sakura-100 to-pink-100 dark:from-sakura-900/30 dark:to-pink-900/30 rounded-2xl flex items-center justify-center shadow-lg">
-                <Monitor className="w-10 h-10 text-sakura-600 dark:text-sakura-400" />
-              </div>
-              <h3 className="text-xl font-bold text-gray-800 dark:text-gray-100 mb-3">
-                Ready to Preview
-              </h3>
-              <p className="text-sm text-gray-600 dark:text-gray-300 mb-6 leading-relaxed">
-                Start your project to see a live preview of your application. Your changes will be reflected in real-time.
-              </p>
-              <button
-                ref={startButtonRef}
-                onClick={() => onStartProject(project)}
-                disabled={isStarting}
-                className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-sakura-500 to-pink-500 text-white rounded-xl font-semibold shadow-lg hover:shadow-xl shadow-sakura-500/25 transition-all duration-200 hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
-              >
-                {isStarting ? (
-                  <>
-                    <Loader2 className="w-5 h-5 animate-spin" />
-                    <span>Starting...</span>
-                  </>
-                ) : (
-                  <>
-                    <Play className="w-5 h-5" />
-                    <span>Start Project</span>
-                  </>
-                )}
-              </button>
-              <div className="flex items-center justify-center gap-2 text-xs text-gray-500 dark:text-gray-400 mt-4">
-                <Eye className="w-4 h-4" />
-                <span>Live reload enabled</span>
-              </div>
+              {/* Check if offline */}
+              {!navigator.onLine ? (
+                <>
+                  <div className="w-20 h-20 mx-auto mb-6 bg-gradient-to-br from-orange-100 to-red-100 dark:from-orange-900/30 dark:to-red-900/30 rounded-2xl flex items-center justify-center shadow-lg">
+                    <Globe className="w-10 h-10 text-orange-600 dark:text-orange-400" />
+                  </div>
+                  <h3 className="text-xl font-bold text-gray-800 dark:text-gray-100 mb-3">
+                    ⚠️ No Internet Connection
+                  </h3>
+                  <p className="text-sm text-gray-600 dark:text-gray-300 mb-4 leading-relaxed">
+                    WebContainers require an active internet connection to function. This technology is powered by StackBlitz and needs to:
+                  </p>
+                  <ul className="text-xs text-left text-gray-600 dark:text-gray-400 mb-6 space-y-2 bg-gray-50 dark:bg-gray-800 rounded-lg p-4">
+                    <li>• Load runtime files from the cloud</li>
+                    <li>• Install npm packages dynamically</li>
+                    <li>• Connect to WebContainer servers</li>
+                  </ul>
+                  <div className="px-4 py-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                    <p className="text-sm text-blue-700 dark:text-blue-300">
+                      💡 <strong>Tip:</strong> Check your network connection and refresh the page once you're back online.
+                    </p>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="w-20 h-20 mx-auto mb-6 bg-gradient-to-br from-sakura-100 to-pink-100 dark:from-sakura-900/30 dark:to-pink-900/30 rounded-2xl flex items-center justify-center shadow-lg">
+                    <Monitor className="w-10 h-10 text-sakura-600 dark:text-sakura-400" />
+                  </div>
+                  <h3 className="text-xl font-bold text-gray-800 dark:text-gray-100 mb-3">
+                    Ready to Preview
+                  </h3>
+                  <p className="text-sm text-gray-600 dark:text-gray-300 mb-6 leading-relaxed">
+                    Start your project to see a live preview of your application. Your changes will be reflected in real-time.
+                  </p>
+                  <button
+                    ref={startButtonRef}
+                    onClick={() => onStartProject(project)}
+                    disabled={isStarting}
+                    className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-sakura-500 to-pink-500 text-white rounded-xl font-semibold shadow-lg hover:shadow-xl shadow-sakura-500/25 transition-all duration-200 hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
+                  >
+                    {isStarting ? (
+                      <>
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                        <span>Starting...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Play className="w-5 h-5" />
+                        <span>Start Project</span>
+                      </>
+                    )}
+                  </button>
+                  <div className="flex items-center justify-center gap-2 text-xs text-gray-500 dark:text-gray-400 mt-4">
+                    <Eye className="w-4 h-4" />
+                    <span>Live reload enabled</span>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         ) : (

@@ -120,6 +120,20 @@ const LumaUICore: React.FC = () => {
         }, 100);
       } catch (error) {
         console.error('Failed to initialize WebContainerManager:', error);
+        
+        // Show error in terminal
+        setTimeout(() => {
+          if (terminalRef.current) {
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            writeToTerminal('\x1b[31m❌ WebContainer initialization failed:\x1b[0m\n');
+            writeToTerminal(`\x1b[33m${errorMsg}\x1b[0m\n\n`);
+            
+            if (errorMsg.includes('StackBlitz') || errorMsg.includes('ERR_NAME_NOT_RESOLVED')) {
+              writeToTerminal('\x1b[90m💡 LumaUI code builder is unavailable without internet access.\x1b[0m\n');
+              writeToTerminal('\x1b[90m   You can still use Clara AI chat and other features.\x1b[0m\n\n');
+            }
+          }
+        }, 100);
       }
     };
     init();
