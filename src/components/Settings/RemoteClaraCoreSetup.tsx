@@ -217,7 +217,13 @@ const RemoteClaraCoreSetup: React.FC = () => {
         : config.hardwareType;
 
       addLog('info', `Using hardware type: ${hardwareType?.toUpperCase()}`);
-      addLog('info', `Docker image: clara17verse/claracore:${hardwareType}`);
+
+      // Show deployment method
+      const deploymentMethod = hardwareType === 'cuda' ? 'Docker' : 'Native Installation';
+      addLog('info', `Deployment method: ${deploymentMethod}`);
+      if (hardwareType === 'cuda') {
+        addLog('info', `Docker image: clara17verse/claracore:${hardwareType}`);
+      }
 
       const result = await (window as any).claraCoreRemote.deploy({
         host: config.host,
@@ -228,21 +234,27 @@ const RemoteClaraCoreSetup: React.FC = () => {
       });
 
       if (result.success) {
-        const url = `http://${config.host}:5890`;
+        // Use port from result (5890 for Docker, 5800 for Native)
+        const deploymentPort = result.port || (hardwareType === 'cuda' ? 5890 : 5800);
+        const url = result.url || `http://${config.host}:${deploymentPort}`;
         setDeploymentUrl(url);
 
         addLog('success', '\n🎉 Deployment successful!');
         addLog('success', `✓ ClaraCore is running at: ${url}`);
-        addLog('info', `✓ Container name: claracore-${hardwareType}`);
+        addLog('info', `✓ Deployment method: ${result.deploymentMethod || deploymentMethod} (Port ${deploymentPort})`);
+        if (result.containerName) {
+          addLog('info', `✓ Container name: ${result.containerName}`);
+        }
         addLog('info', '\nYou can now configure ClaraCore in Remote mode and use this URL');
 
         // Save configuration
         if ((window as any).electron?.store?.set) {
           await (window as any).electron.store.set('claraCoreRemote', {
             host: config.host,
-            port: config.port,
+            port: deploymentPort,
             url: url,
             hardwareType: hardwareType,
+            deploymentMethod: result.deploymentMethod || (hardwareType === 'cuda' ? 'docker' : 'native'),
             deployed: true
           });
 

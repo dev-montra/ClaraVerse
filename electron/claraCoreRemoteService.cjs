@@ -65,6 +65,11 @@ class ClaraCoreRemoteService {
         }
       });
 
+      // Handle keyboard-interactive authentication (required for Raspberry Pi and similar SSH servers)
+      conn.on('keyboard-interactive', (name, instructions, instructionsLang, prompts, finish) => {
+        finish([config.password]);
+      });
+
       conn.on('error', (err) => {
         clearTimeout(timeout);
         log.error('SSH connection error:', err);
@@ -84,6 +89,7 @@ class ClaraCoreRemoteService {
         port: config.port || 22,
         username: config.username,
         password: config.password,
+        tryKeyboard: true, // Enable keyboard-interactive auth (required for some SSH servers like Raspberry Pi)
         readyTimeout: 30000
       });
     });
@@ -246,7 +252,260 @@ class ClaraCoreRemoteService {
   }
 
   /**
-   * Deploy ClaraCore container
+   * Deploy ClaraCore using native installation script
+   * For ROCm, Vulkan, Strix Halo, and CPU modes
+   * Uses port 5800
+   */
+  async deployNative(conn, config, hardwareType) {
+    try {
+      log.info(`[Remote] Starting native ClaraCore installation for ${hardwareType.toUpperCase()}...`);
+
+      // 1. Download install.sh script
+      log.info('[Remote] Downloading ClaraCore installation script...');
+      await this.execCommand(conn, 'curl -fsSL https://raw.githubusercontent.com/claraverse-space/ClaraCore/main/scripts/install.sh -o /tmp/claracore-install.sh');
+
+      // 2. Make executable
+      await this.execCommand(conn, 'chmod +x /tmp/claracore-install.sh');
+
+      // 3. Execute installation script
+      log.info('[Remote] Running ClaraCore installation (this may take a few minutes)...');
+      try {
+        await this.execCommandWithOutput(conn, 'sudo bash /tmp/claracore-install.sh');
+      } catch (installError) {
+        // Check if error is just due to script output or actual failure
+        log.warn(`[Remote] Installation script completed with warnings: ${installError.message}`);
+      }
+
+      // 4. Wait for service to start
+      log.info('[Remote] Waiting for ClaraCore service to start...');
+      await this.sleep(8000); // Give systemd time to start the service
+
+      // 5. Check if service is running via systemd
+      const serviceStatus = await this.execCommand(conn, 'systemctl --user is-active claracore 2>&1 || echo "not-active"');
+
+      if (serviceStatus.includes('active')) {
+        log.info('[Remote] ✅ ClaraCore service is active');
+      } else {
+        log.warn('[Remote] ⚠️  Service may not be active yet. Status: ' + serviceStatus.trim());
+
+        // Try to start it manually
+        log.info('[Remote] Attempting to start service manually...');
+        await this.execCommand(conn, 'systemctl --user start claracore 2>&1 || true');
+        await this.sleep(5000);
+      }
+
+      // 6. Verify service is responding on port 5800
+      log.info('[Remote] Verifying ClaraCore is responding on port 5800...');
+      let healthCheckSuccess = false;
+
+      for (let i = 0; i < 10; i++) {
+        const healthCheck = await this.execCommand(conn, 'curl -sf http://localhost:5800/ 2>&1 || echo "not-ready"');
+
+        if (!healthCheck.includes('not-ready') && !healthCheck.includes('Connection refused')) {
+          healthCheckSuccess = true;
+          log.info('[Remote] ✅ ClaraCore is responding on port 5800');
+          break;
+        }
+
+        log.info(`[Remote] Waiting for service to respond... (attempt ${i + 1}/10)`);
+        await this.sleep(3000);
+      }
+
+      if (!healthCheckSuccess) {
+        // Get service logs for debugging
+        const serviceLogs = await this.execCommand(conn, 'systemctl --user status claracore 2>&1 || journalctl --user -u claracore -n 20 2>&1 || echo "No logs available"');
+        log.warn(`[Remote] Service logs:\n${serviceLogs}`);
+
+        throw new Error('ClaraCore service did not respond on port 5800 after installation. Check service logs.');
+      }
+
+      // 7. Clean up installation script
+      await this.execCommand(conn, 'rm -f /tmp/claracore-install.sh');
+
+      log.info(`[Remote] ✅ Native ClaraCore installation completed successfully (${hardwareType.toUpperCase()})`);
+
+      return {
+        success: true,
+        url: `http://${config.host}:5800`,
+        port: 5800,
+        deploymentMethod: 'native',
+        hardwareType: hardwareType,
+        message: `Successfully deployed ClaraCore via native installation (${hardwareType.toUpperCase()})`,
+        containerName: null // No container for native installation
+      };
+
+    } catch (error) {
+      log.error('[Remote] Native installation failed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Manage native ClaraCore service via systemd
+   * @param {Object} conn - SSH connection
+   * @param {string} action - Action: 'start', 'stop', 'restart', 'status', 'logs'
+   * @returns {Promise<Object>} - Action result
+   */
+  async manageNativeService(conn, action) {
+    try {
+      log.info(`[Remote] Managing ClaraCore service: ${action}`);
+
+      let command;
+      switch (action) {
+        case 'start':
+          command = 'systemctl --user start claracore';
+          break;
+        case 'stop':
+          command = 'systemctl --user stop claracore';
+          break;
+        case 'restart':
+          command = 'systemctl --user restart claracore';
+          break;
+        case 'status':
+          command = 'systemctl --user status claracore';
+          break;
+        case 'logs':
+          command = 'journalctl --user -u claracore -n 50 --no-pager';
+          break;
+        default:
+          throw new Error(`Unknown action: ${action}`);
+      }
+
+      const result = await this.execCommand(conn, command);
+
+      if (action === 'status') {
+        // Parse status output
+        const isActive = result.includes('active (running)');
+        const isEnabled = result.includes('enabled');
+
+        return {
+          success: true,
+          action,
+          isActive,
+          isEnabled,
+          output: result
+        };
+      } else if (action === 'logs') {
+        return {
+          success: true,
+          action,
+          logs: result
+        };
+      } else {
+        // start, stop, restart
+        return {
+          success: true,
+          action,
+          message: `Service ${action} completed successfully`
+        };
+      }
+    } catch (error) {
+      log.error(`[Remote] Service ${action} failed:`, error);
+      return {
+        success: false,
+        action,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Deploy ClaraCore using Docker container
+   * For CUDA mode only
+   * Uses port 5890
+   */
+  async deployDocker(conn, config, hardwareType) {
+    try {
+      const imageName = `clara17verse/claracore:${hardwareType}`;
+      const containerName = `claracore-${hardwareType}`;
+
+      log.info(`[Remote] Deploying ${imageName} via Docker...`);
+
+      // 1. Check if Docker is installed
+      const hasDocker = await this.checkDocker(conn);
+      if (!hasDocker) {
+        log.info('[Remote] Installing Docker...');
+        await this.installDocker(conn);
+      }
+
+      // 1.5. Ensure clara_network exists
+      log.info('[Remote] Setting up Clara network...');
+      const networkCheck = await this.execCommand(conn, 'docker network ls --filter name=clara_network --format "{{.Name}}"');
+      if (!networkCheck || !networkCheck.includes('clara_network')) {
+        await this.execCommand(conn, 'docker network create clara_network --driver bridge --subnet 172.25.0.0/16');
+        log.info('[Remote] ✓ Clara network created');
+      } else {
+        log.info('[Remote] ✓ Clara network exists');
+      }
+
+      // 2. Install CUDA prerequisites (only for CUDA)
+      if (hardwareType === 'cuda') {
+        await this.setupCuda(conn);
+      }
+
+      // 3. Stop and remove existing container
+      log.info('[Remote] Cleaning up existing containers...');
+      await this.execCommand(conn, `docker stop ${containerName} 2>/dev/null || true`);
+      await this.execCommand(conn, `docker rm ${containerName} 2>/dev/null || true`);
+
+      // 4. Pull the image
+      log.info(`[Remote] Pulling image ${imageName}...`);
+      await this.execCommandWithOutput(conn, `docker pull ${imageName}`);
+
+      // 5. Run the container with CUDA flags
+      log.info(`[Remote] Starting container ${containerName}...`);
+      const runCommand = this.buildDockerRunCommand(hardwareType, containerName, imageName, []);
+
+      try {
+        await this.execCommand(conn, runCommand);
+      } catch (runError) {
+        log.error(`[Remote] Docker run command failed: ${runError.message}`);
+        throw new Error(`Failed to start container: ${runError.message}`);
+      }
+
+      // 6. Wait for container to be healthy
+      log.info('[Remote] Waiting for container to start...');
+      await this.sleep(5000);
+
+      // 7. Verify container is running
+      const isRunning = await this.execCommand(conn, `docker ps -q -f name=${containerName}`);
+      if (!isRunning || !isRunning.trim()) {
+        const logs = await this.execCommand(conn, `docker logs ${containerName} 2>&1 || echo "No logs available"`);
+        const inspectResult = await this.execCommand(conn, `docker inspect ${containerName} --format='{{.State.Status}}: {{.State.Error}}' 2>&1 || echo "Container not found"`);
+        throw new Error(`Container failed to start.\n\nStatus: ${inspectResult}\n\nLogs:\n${logs.substring(0, 500)}`);
+      }
+
+      log.info('[Remote] ✅ Container started successfully!');
+
+      // 8. Check if service is responding
+      log.info('[Remote] Verifying service health...');
+      const healthCheck = await this.execCommand(conn, `curl -sf http://localhost:5890/health 2>&1 || echo "Health check not available"`);
+      if (healthCheck.includes('Health check not available')) {
+        log.warn('[Remote] Service health endpoint not available, but container is running');
+      } else {
+        log.info('[Remote] ✅ Service is healthy and responding');
+      }
+
+      return {
+        success: true,
+        url: `http://${config.host}:5890`,
+        port: 5890,
+        deploymentMethod: 'docker',
+        containerName: containerName,
+        hardwareType: hardwareType,
+        message: `Successfully deployed ClaraCore via Docker (${hardwareType.toUpperCase()})`
+      };
+
+    } catch (error) {
+      log.error('[Remote] Docker deployment failed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Deploy ClaraCore - routes to Docker or Native installation based on hardware type
+   * - CUDA: Uses Docker (port 5890)
+   * - ROCm, Vulkan, Strix, CPU: Uses Native installation (port 5800)
    */
   async deploy(config) {
     return new Promise((resolve, reject) => {
@@ -261,6 +520,7 @@ class ClaraCoreRemoteService {
         if (!isResolved) {
           isResolved = true;
           conn.end();
+          this.sudoPassword = null;
           reject(new Error('Deployment timeout after 5 minutes'));
         }
       }, 300000); // 5 minutes
@@ -270,253 +530,27 @@ class ClaraCoreRemoteService {
 
         try {
           const { hardwareType } = config;
-          const imageName = `clara17verse/claracore:${hardwareType}`;
-          const containerName = `claracore-${hardwareType}`;
 
-          log.info(`Deploying ${imageName}...`);
-
-          // 1. Check if Docker is installed
-          const hasDocker = await this.checkDocker(conn);
-          if (!hasDocker) {
-            log.info('Installing Docker...');
-            await this.installDocker(conn);
-          }
-
-          // 1.5. Ensure clara_network exists
-          log.info('Setting up Clara network...');
-          const networkCheck = await this.execCommand(conn, 'docker network ls --filter name=clara_network --format "{{.Name}}"');
-          if (!networkCheck || !networkCheck.includes('clara_network')) {
-            await this.execCommand(conn, 'docker network create clara_network --driver bridge --subnet 172.25.0.0/16');
-            log.info('✓ Clara network created');
+          // Choose deployment method based on hardware type
+          let result;
+          if (hardwareType === 'cuda') {
+            log.info('[Remote] Using Docker deployment for CUDA');
+            result = await this.deployDocker(conn, config, hardwareType);
           } else {
-            log.info('✓ Clara network exists');
+            log.info(`[Remote] Using native installation for ${hardwareType.toUpperCase()}`);
+            result = await this.deployNative(conn, config, hardwareType);
           }
 
-          // 2. Install hardware-specific prerequisites (with CPU fallback option)
-          let actualHardwareType = hardwareType;
-          let gpuAvailable = false;
-
-          if (hardwareType !== 'cpu') {
-            try {
-              if (hardwareType === 'cuda') {
-                await this.setupCuda(conn);
-                gpuAvailable = true;
-              } else if (hardwareType === 'rocm') {
-                // Try ROCm, with automatic Vulkan fallback
-                log.info('[Remote] ROCm deployment requested...');
-                try {
-                  await this.setupRocm(conn);
-                  gpuAvailable = true;
-                  log.info('[Remote] ✅ ROCm validation passed');
-                } catch (rocmError) {
-                  // ROCm failed, try Vulkan fallback
-                  log.warn(`[Remote] ⚠️  ROCm setup failed: ${rocmError.message}`);
-                  log.info('[Remote] 🔄 Attempting automatic Vulkan fallback for GPU acceleration...');
-
-                  try {
-                    await this.setupVulkan(conn);
-                    actualHardwareType = 'vulkan';
-                    gpuAvailable = true;
-                    log.info('[Remote] ✅ Vulkan fallback successful! Switching to Vulkan container.');
-                    log.info('[Remote] ℹ️  Container will use clara17verse/claracore:vulkan instead');
-                  } catch (vulkanError) {
-                    log.warn(`[Remote] Vulkan fallback also failed: ${vulkanError.message}`);
-                    throw rocmError; // Throw original error if both fail
-                  }
-                }
-              } else if (hardwareType === 'vulkan') {
-                await this.setupVulkan(conn);
-                gpuAvailable = true;
-              } else if (hardwareType === 'strix') {
-                await this.setupStrix(conn);
-                gpuAvailable = true;
-              }
-            } catch (gpuError) {
-              // GPU setup failed - offer CPU fallback
-              log.warn(`[Remote] GPU setup failed: ${gpuError.message}`);
-              log.warn('[Remote] ⚠️  GPU acceleration not available. Falling back to CPU mode...');
-              log.warn('[Remote] Note: Inference will run on CPU only, which will be slower.');
-
-              // Switch to CPU container
-              actualHardwareType = 'cpu';
-              gpuAvailable = false;
-            }
-          }
-
-          // Update container name and image based on actual hardware type
-          let finalImageName = `clara17verse/claracore:${actualHardwareType}`;
-          let finalContainerName = `claracore-${actualHardwareType}`;
-
-          if (!gpuAvailable && hardwareType !== 'cpu') {
-            log.info(`[Remote] 🔄 Switching from ${hardwareType} to CPU mode due to GPU unavailability`);
-          }
-
-          // 3. Stop and remove existing container
-          log.info('Cleaning up existing containers...');
-          await this.execCommand(conn, `docker stop ${finalContainerName} 2>/dev/null || true`);
-          await this.execCommand(conn, `docker rm ${finalContainerName} 2>/dev/null || true`);
-
-          // 4. Pull the image
-          log.info(`Pulling image ${finalImageName}...`);
-          await this.execCommandWithOutput(conn, `docker pull ${finalImageName}`);
-
-          // 5. Detect available DRI devices for GPU modes
-          let availableDevices = [];
-          if (actualHardwareType !== 'cpu' && actualHardwareType !== 'cuda') {
-            log.info('[Remote] Detecting available DRI devices...');
-            availableDevices = await this.detectDRIDevices(conn);
-            log.info(`[Remote] Found DRI devices: ${availableDevices.join(', ')}`);
-          }
-
-          // 6. Run the container with appropriate flags
-          log.info(`Starting container ${finalContainerName}...`);
-          const runCommand = this.buildDockerRunCommand(actualHardwareType, finalContainerName, finalImageName, availableDevices);
-
-          try {
-            const runResult = await this.execCommand(conn, runCommand);
-          } catch (runError) {
-            log.error(`Docker run command failed: ${runError.message}`);
-
-            // Special case: If ROCm fails with /dev/kfd error, try Vulkan fallback
-            if (actualHardwareType === 'rocm' && runError.message.includes('/dev/kfd')) {
-              log.warn('[Remote] ⚠️  Docker cannot access /dev/kfd (Docker daemon namespace issue)');
-              log.info('[Remote] 🔄 Attempting Vulkan fallback (doesn\'t require /dev/kfd)...');
-
-              try {
-                // Switch to Vulkan (use strix image which is Vulkan-based)
-                actualHardwareType = 'vulkan';
-                const vulkanImageName = `clara17verse/claracore:strix`;
-                const vulkanContainerName = `claracore-vulkan`;
-
-                // Pull Strix/Vulkan image
-                log.info(`[Remote] Pulling ${vulkanImageName} (Vulkan-based)...`);
-                await this.execCommandWithOutput(conn, `docker pull ${vulkanImageName}`);
-
-                // Remove failed ROCm container
-                await this.execCommand(conn, `docker rm ${finalContainerName} 2>/dev/null || true`);
-
-                // Build Vulkan command (without /dev/kfd)
-                const vulkanCommand = this.buildDockerRunCommand('vulkan', vulkanContainerName, vulkanImageName, availableDevices);
-                log.info('[Remote] Starting Vulkan container...');
-                await this.execCommand(conn, vulkanCommand);
-
-                log.info('[Remote] ✅ Vulkan fallback successful!');
-
-                // Update variables for health check
-                finalImageName = vulkanImageName;
-                finalContainerName = vulkanContainerName;
-                gpuAvailable = true;
-              } catch (vulkanError) {
-                log.error('[Remote] Vulkan fallback also failed:', vulkanError.message);
-                throw new Error(`ROCm failed due to /dev/kfd access issue, and Vulkan fallback also failed: ${vulkanError.message}`);
-              }
-            } else {
-              throw new Error(`Failed to start container: ${runError.message}`);
-            }
-          }
-
-          // 6. Wait for container to be healthy
-          log.info('Waiting for container to start...');
-          await this.sleep(5000);
-
-          // 7. Verify container is running
-          const isRunning = await this.execCommand(conn, `docker ps -q -f name=${finalContainerName}`);
-          if (!isRunning || !isRunning.trim()) {
-            // Get container logs for debugging
-            const logs = await this.execCommand(conn, `docker logs ${finalContainerName} 2>&1 || echo "No logs available"`);
-            const inspectResult = await this.execCommand(conn, `docker inspect ${finalContainerName} --format='{{.State.Status}}: {{.State.Error}}' 2>&1 || echo "Container not found"`);
-
-            // Special case: If ROCm container fails with /dev/kfd error, try Vulkan fallback
-            if (actualHardwareType === 'rocm' && inspectResult.includes('/dev/kfd')) {
-              log.warn('[Remote] ⚠️  ROCm container failed: Docker cannot access /dev/kfd');
-              log.info('[Remote] 🔄 Attempting Vulkan fallback (doesn\'t require /dev/kfd)...');
-
-              try {
-                // Remove failed ROCm container
-                await this.execCommand(conn, `docker rm -f ${finalContainerName} 2>/dev/null || true`);
-
-                // Switch to Vulkan (use strix image which is Vulkan-based for AMD GPUs)
-                actualHardwareType = 'vulkan';
-                finalImageName = `clara17verse/claracore:strix`;
-                finalContainerName = `claracore-vulkan`;
-
-                // Pull Strix/Vulkan image
-                log.info(`[Remote] Pulling ${finalImageName} (Vulkan-based)...`);
-                await this.execCommandWithOutput(conn, `docker pull ${finalImageName}`);
-
-                // Build Vulkan command (without /dev/kfd)
-                const vulkanCommand = this.buildDockerRunCommand('vulkan', finalContainerName, finalImageName, availableDevices);
-                log.info('[Remote] Starting Vulkan container...');
-                await this.execCommand(conn, vulkanCommand);
-
-                // Wait and verify
-                await this.sleep(5000);
-                const vulkanRunning = await this.execCommand(conn, `docker ps -q -f name=${finalContainerName}`);
-
-                if (!vulkanRunning || !vulkanRunning.trim()) {
-                  // Vulkan failed - try one more time with --privileged mode
-                  log.warn('[Remote] Vulkan with device mounting failed, trying --privileged mode...');
-
-                  await this.execCommand(conn, `docker rm -f ${finalContainerName} 2>/dev/null || true`);
-
-                  // Build command with --privileged (no device specification needed)
-                  const privilegedCommand = this.buildDockerRunCommand('vulkan', finalContainerName, finalImageName, []); // Empty array triggers privileged mode
-                  await this.execCommand(conn, privilegedCommand);
-
-                  // Wait and verify
-                  await this.sleep(5000);
-                  const privilegedRunning = await this.execCommand(conn, `docker ps -q -f name=${finalContainerName}`);
-
-                  if (!privilegedRunning || !privilegedRunning.trim()) {
-                    const privilegedLogs = await this.execCommand(conn, `docker logs ${finalContainerName} 2>&1`);
-                    throw new Error(`Vulkan container failed even with --privileged mode:\n${privilegedLogs.substring(0, 500)}`);
-                  }
-
-                  log.info('[Remote] ✅ Vulkan with --privileged mode successful!');
-                }
-
-                log.info('[Remote] ✅ Vulkan fallback successful! Container is running.');
-                gpuAvailable = true;
-                // Continue to health check below
-              } catch (vulkanError) {
-                log.error('[Remote] Vulkan fallback failed:', vulkanError.message);
-                throw new Error(`ROCm failed due to /dev/kfd issue, and Vulkan fallback also failed: ${vulkanError.message}`);
-              }
-            } else {
-              throw new Error(`Container failed to start.\n\nStatus: ${inspectResult}\n\nLogs:\n${logs.substring(0, 500)}`);
-            }
-          }
-          
-          log.info('[Remote] Container started successfully!');
-          
-          // 8. Check if service is responding (optional but recommended)
-          log.info('[Remote] Verifying service health...');
-          const healthCheck = await this.execCommand(conn, `curl -sf http://localhost:5890/health 2>&1 || echo "Health check not available"`);
-          if (healthCheck.includes('Health check not available')) {
-            log.warn('[Remote] Service health endpoint not available, but container is running');
-          } else {
-            log.info('[Remote] Service is healthy and responding');
-          }
-
+          // Deployment successful - clean up and resolve
           clearTimeout(timeout);
           conn.end();
-          
+
           // Clear password from memory
           this.sudoPassword = null;
 
           if (!isResolved) {
             isResolved = true;
-            resolve({
-              success: true,
-              url: `http://${config.host}:5890`,
-              containerName: finalContainerName,
-              hardwareType: actualHardwareType,
-              gpuAvailable: gpuAvailable,
-              fallbackToCpu: (hardwareType !== 'cpu' && actualHardwareType === 'cpu'),
-              message: gpuAvailable
-                ? `Successfully deployed with ${actualHardwareType.toUpperCase()} acceleration`
-                : `Deployed in CPU mode${hardwareType !== 'cpu' ? ' (GPU unavailable)' : ''}`
-            });
+            resolve(result);
           }
 
         } catch (error) {
@@ -546,10 +580,15 @@ class ClaraCoreRemoteService {
         }
       });
 
+      // Handle keyboard-interactive authentication (required for Raspberry Pi and similar SSH servers)
+      conn.on('keyboard-interactive', (name, instructions, instructionsLang, prompts, finish) => {
+        finish([config.password]);
+      });
+
       conn.on('error', (err) => {
         clearTimeout(timeout);
         log.error('SSH connection error during deployment:', err);
-        
+
         // Clear password from memory
         this.sudoPassword = null;
 
@@ -578,6 +617,7 @@ class ClaraCoreRemoteService {
         port: config.port || 22,
         username: config.username,
         password: config.password,
+        tryKeyboard: true, // Enable keyboard-interactive auth (required for some SSH servers like Raspberry Pi)
         readyTimeout: 30000
       });
     });
@@ -1248,6 +1288,11 @@ class ClaraCoreRemoteService {
         }
       });
 
+      // Handle keyboard-interactive authentication (required for Raspberry Pi and similar SSH servers)
+      conn.on('keyboard-interactive', (name, instructions, instructionsLang, prompts, finish) => {
+        finish([config.password]);
+      });
+
       conn.on('error', (err) => {
         if (!isResolved) {
           isResolved = true;
@@ -1261,6 +1306,7 @@ class ClaraCoreRemoteService {
         port: config.port || 22,
         username: config.username,
         password: config.password,
+        tryKeyboard: true, // Enable keyboard-interactive auth (required for some SSH servers like Raspberry Pi)
         readyTimeout: 15000
       });
     });

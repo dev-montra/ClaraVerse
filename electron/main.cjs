@@ -4069,11 +4069,16 @@ function registerHandlers() {
       
       // Show confirmation dialog for sudo operations
       const { dialog } = require('electron');
+      const deploymentMethod = config.hardwareType === 'cuda' ? 'Docker' : 'Native Installation';
+      const methodDetails = config.hardwareType === 'cuda'
+        ? 'The deployment will install Docker and NVIDIA Container Toolkit on the remote server.'
+        : 'The deployment will install ClaraCore natively using the official installation script.';
+
       const { response } = await dialog.showMessageBox({
         type: 'warning',
         title: 'Sudo Password Confirmation',
         message: 'ClaraCore deployment requires sudo privileges',
-        detail: `The deployment will install Docker, NVIDIA Container Toolkit (for CUDA), and other system packages on ${config.host}.\n\nYour SSH password will be used for sudo commands. Continue?`,
+        detail: `Deployment Method: ${deploymentMethod}\n${methodDetails}\n\nServer: ${config.host}\n\nYour SSH password will be used for sudo commands. Continue?`,
         buttons: ['Continue', 'Cancel'],
         defaultId: 0,
         cancelId: 1,

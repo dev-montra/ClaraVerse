@@ -517,7 +517,8 @@ contextBridge.exposeInMainWorld('remoteServer', {
 // Add ClaraCore remote deployment API
 contextBridge.exposeInMainWorld('claraCoreRemote', {
   testSetup: (config) => ipcRenderer.invoke('claracore-remote-test-setup', config),
-  deploy: (config) => ipcRenderer.invoke('claracore-remote-deploy', config)
+  deploy: (config) => ipcRenderer.invoke('claracore-remote-deploy', config),
+  monitor: (config) => ipcRenderer.invoke('claracore-remote:monitor', config)
 });
 
 // Add unified service configuration API
