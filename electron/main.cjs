@@ -5,28 +5,17 @@ const fsSync = require('fs');
 const log = require('electron-log');
 const https = require('https');
 const http = require('http');
+const { URL } = require('url');
 // const { pipeline } = require('stream/promises');
 // const crypto = require('crypto');
 // const { spawn } = require('child_process');
 const DockerSetup = require('./dockerSetup.cjs');
-const { setupAutoUpdater, checkForUpdates, getUpdateInfo, checkLlamacppUpdates, updateLlamacppBinaries } = require('./updateService.cjs');
+const { setupAutoUpdater, checkForUpdates, getUpdateInfo } = require('./updateService.cjs');
 // const SplashScreen = require('./splash.cjs');
 // const LoadingScreen = require('./loadingScreen.cjs');
 const FeatureSelectionScreen = require('./featureSelection.cjs');
 const { createAppMenu } = require('./menu.cjs');
 
-// Helper function to set progress callback for llama-swap service
-function setupLlamaSwapProgressCallback(service) {
-  if (service && typeof service.setProgressCallback === 'function') {
-    service.setProgressCallback((progressData) => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send('llama-progress-update', progressData);
-      }
-    });
-    log.info('✅ Progress callback set for llama-swap service instance');
-  }
-}
-const LlamaSwapService = require('./llamaSwapService.cjs');
 const MCPService = require('./mcpService.cjs');
 const WatchdogService = require('./watchdogService.cjs');
 const ComfyUIModelService = require('./comfyUIModelService.cjs');
@@ -36,14 +25,21 @@ const { debugPaths, logDebugInfo } = require('./debug-paths.cjs');
 const IPCLogger = require('./ipcLogger.cjs');
 const WidgetService = require('./widgetService.cjs');
 const { SchedulerElectronService } = require('./schedulerElectronService.cjs');
+const { setupRemoteServerIPC } = require('./remoteServerIPC.cjs');
 
 // NEW: Enhanced service management system (Backward compatible)
 const CentralServiceManager = require('./centralServiceManager.cjs');
 const ServiceConfigurationManager = require('./serviceConfiguration.cjs');
 const { getPlatformCompatibility, getCompatibleServices } = require('./serviceDefinitions.cjs');
+const ClaraCoreRemoteService = require('./claraCoreRemoteService.cjs');
 
 // Network Service Manager to prevent UI refreshes during crashes
 const NetworkServiceManager = require('./networkServiceManager.cjs');
+
+// Netlify OAuth Handler
+const NetlifyOAuthHandler = require('./netlifyOAuthHandler.cjs');
+
+// Immutable Startup Settings Manager
 
 // Global helper functions for container configuration
 // These functions can be called from anywhere and will create container configs if needed
@@ -142,7 +138,8 @@ const getPythonConfig = () => {
     pythonConfig = {
       name: 'clara_python',
       image: dockerSetup.getArchSpecificImage('clara17verse/clara-backend', 'latest'),
-      port: 5001,
+      // On Linux (host network mode), use port 5000. On Windows/Mac (bridge mode), use port 5001
+      port: process.platform === 'linux' ? 5000 : 5001,
       internalPort: 5000,
       healthCheck: dockerSetup.isPythonRunning.bind(dockerSetup),
       volumes: [
@@ -151,7 +148,15 @@ const getPythonConfig = () => {
         // Keep backward compatibility for existing data paths
         'clara_python_models:/app/models'
       ],
-      volumeNames: ['clara_python_models']
+      volumeNames: ['clara_python_models'],
+      // Request GPU runtime for AI acceleration (e.g., Whisper, image generation)
+      runtime: 'nvidia',
+      // GPU-specific environment variables for Python AI libraries
+      gpuEnvironment: [
+        'CUDA_VISIBLE_DEVICES=0',
+        'TF_CPP_MIN_LOG_LEVEL=2',
+        'PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512'
+      ]
     };
     
     // Add the Python config back to the containers object
@@ -212,6 +217,15 @@ if (!gotTheLock) {
       }
       mainWindow.focus();
       mainWindow.show();
+      
+      // CRITICAL FIX: Force webContents focus when second instance launches
+      if (mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+        setTimeout(() => {
+          if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+            mainWindow.webContents.focus();
+          }
+        }, 100);
+      }
     } else {
       // If no window exists, create one
       createMainWindow().catch(error => {
@@ -275,6 +289,9 @@ app.whenReady().then(() => {
   // Initialize Network Service Manager to prevent UI refreshes during crashes
   networkServiceManager = new NetworkServiceManager();
   log.info('🛡️ Network Service Manager initialized');
+
+  // Note: Startup Settings Manager is initialized later in the main initialization flow (line 4530)
+  // This duplicate initialization has been removed to prevent errors
 });
 
 // macOS Security Configuration - Prevent unnecessary firewall prompts
@@ -295,7 +312,6 @@ let mainWindow;
 let splash;
 let loadingScreen;
 let dockerSetup;
-let llamaSwapService;
 let mcpService;
 let watchdogService;
 let updateService;
@@ -319,6 +335,12 @@ const activeDownloads = new Map();
 let tray = null;
 let isQuitting = false;
 
+// Local static server for packaged builds
+let staticServer = null;
+let staticServerPort = null;
+const STATIC_SERVER_HOST = '127.0.0.1';
+const DEFAULT_STATIC_SERVER_PORT = 37117;
+
 // Helper function to format bytes
 function formatBytes(bytes, decimals = 2) {
   if (bytes === 0) return '0 Bytes';
@@ -330,6 +352,236 @@ function formatBytes(bytes, decimals = 2) {
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+}
+
+/**
+ * Stop all local services before switching to remote
+ * This ensures no conflicts and clean handoff to remote deployment
+ */
+async function stopAllLocalServices(serviceName = null) {
+  const stoppedServices = [];
+  const errors = [];
+
+  try {
+    // If serviceName specified, stop only that service. Otherwise stop all.
+    const servicesToStop = serviceName ? [serviceName] : ['claracore', 'comfyui', 'llamacpp', 'searxng', 'python_backend'];
+
+    for (const service of servicesToStop) {
+      try {
+        // Stop native service via centralServiceManager
+        if (centralServiceManager && centralServiceManager.services.has(service)) {
+          log.info(`Stopping local ${service} native service...`);
+          await centralServiceManager.stopService(service);
+          stoppedServices.push(`${service} (native)`);
+        }
+
+        // Stop Docker services (claraCoreDocker may not be defined in this scope)
+        // Skip Docker stop as it's handled by centralServiceManager
+        // if (service === 'claracore' && claraCoreDockerService) {
+        //   log.info('Stopping local ClaraCore Docker service...');
+        //   await claraCoreDockerService.stopService();
+        //   stoppedServices.push('claracore (docker)');
+        // }
+
+        if (service === 'comfyui' && comfyUIService) {
+          log.info('Stopping local ComfyUI Docker service...');
+          await comfyUIService.stopService();
+          stoppedServices.push('comfyui (docker)');
+        }
+
+        if (service === 'llamacpp' && llamaCppService) {
+          log.info('Stopping local LlamaCpp Docker service...');
+          await llamaCppService.stopService();
+          stoppedServices.push('llamacpp (docker)');
+        }
+
+      } catch (serviceError) {
+        log.warn(`Error stopping ${service} (continuing):`, serviceError.message);
+        errors.push({ service, error: serviceError.message });
+      }
+    }
+
+    if (stoppedServices.length > 0) {
+      log.info(`✅ Stopped local services: ${stoppedServices.join(', ')}`);
+    }
+
+  } catch (error) {
+    log.error('Error in stopAllLocalServices:', error);
+    errors.push({ service: 'general', error: error.message });
+  }
+
+  return {
+    stopped: stoppedServices,
+    errors: errors
+  };
+}
+
+/**
+ * Ensure a loopback static server is running when the packaged app loads renderer assets.
+ * Using a fixed loopback port keeps the renderer origin stable so persisted storage survives restarts.
+ */
+async function ensureStaticServer() {
+  if (staticServer && staticServer.listening && staticServerPort) {
+    return staticServerPort;
+  }
+
+  const distPath = path.join(__dirname, '../dist');
+  if (!fs.existsSync(distPath)) {
+    throw new Error(`Renderer dist directory not found at ${distPath}`);
+  }
+
+  const getMimeType = (filePath) => {
+    const ext = path.extname(filePath).toLowerCase();
+    switch (ext) {
+      case '.html':
+        return 'text/html; charset=utf-8';
+      case '.js':
+        return 'application/javascript; charset=utf-8';
+      case '.css':
+        return 'text/css; charset=utf-8';
+      case '.json':
+        return 'application/json; charset=utf-8';
+      case '.png':
+        return 'image/png';
+      case '.jpg':
+      case '.jpeg':
+        return 'image/jpeg';
+      case '.svg':
+        return 'image/svg+xml';
+      case '.webp':
+        return 'image/webp';
+      case '.woff':
+        return 'font/woff';
+      case '.woff2':
+        return 'font/woff2';
+      case '.ttf':
+        return 'font/ttf';
+      case '.ico':
+        return 'image/x-icon';
+      default:
+        return 'application/octet-stream';
+    }
+  };
+
+  const sendFile = (res, filePath, statusCode = 200) => {
+    res.statusCode = statusCode;
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Cross-Origin-Embedder-Policy', 'credentialless');
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.setHeader('Content-Type', getMimeType(filePath));
+
+    const stream = fs.createReadStream(filePath);
+    stream.on('error', (error) => {
+      log.error('Static server stream error:', error);
+      if (!res.headersSent) {
+        res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+      }
+      res.end('Internal Server Error');
+    });
+    stream.pipe(res);
+  };
+
+  const server = http.createServer((req, res) => {
+    try {
+  const requestUrl = new URL(req.url, `http://${STATIC_SERVER_HOST}`);
+      let pathname = decodeURIComponent(requestUrl.pathname);
+
+      if (pathname.endsWith('/')) {
+        pathname += 'index.html';
+      }
+
+      const resolvedPath = path.normalize(path.join(distPath, pathname));
+
+      if (!resolvedPath.startsWith(distPath)) {
+        res.writeHead(403, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('Forbidden');
+        return;
+      }
+
+      if (fs.existsSync(resolvedPath) && fs.statSync(resolvedPath).isFile()) {
+        sendFile(res, resolvedPath);
+      } else {
+        const fallback = path.join(distPath, 'index.html');
+        if (fs.existsSync(fallback)) {
+          sendFile(res, fallback);
+        } else {
+          res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+          res.end('Not Found');
+        }
+      }
+    } catch (error) {
+      log.error('Static server request error:', error);
+      res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('Internal Server Error');
+    }
+  });
+
+  const listenOnPort = (port) => new Promise((resolve, reject) => {
+    const handleError = (error) => {
+      server.off('listening', handleListening);
+      reject(error);
+    };
+
+    const handleListening = () => {
+      server.off('error', handleError);
+      resolve(server.address().port);
+    };
+
+    server.once('error', handleError);
+    server.once('listening', handleListening);
+    server.listen(port, STATIC_SERVER_HOST);
+  });
+
+  const desiredPort = Number(process.env.CLARA_STATIC_PORT) || DEFAULT_STATIC_SERVER_PORT;
+  let boundPort = desiredPort;
+
+  try {
+    boundPort = await listenOnPort(desiredPort);
+  } catch (error) {
+    if (error && error.code === 'EADDRINUSE') {
+      // CRITICAL: Using a different port will break data persistence (localStorage/IndexedDB)
+      // because the origin (http://127.0.0.1:<port>) will be different
+      log.error(`Static server port ${desiredPort} already in use. This will cause data loss!`);
+      log.error(`Another instance of the app may be running, or another service is using port ${desiredPort}.`);
+      log.error(`All user data (settings, chats, etc.) is tied to the origin http://127.0.0.1:${desiredPort}`);
+
+      // Show error dialog to user
+      const { dialog } = require('electron');
+      const choice = await dialog.showMessageBox({
+        type: 'error',
+        title: 'Port Conflict - Data Loss Risk',
+        message: `Cannot start on port ${desiredPort}`,
+        detail: `Port ${desiredPort} is already in use. This could mean:\n\n` +
+                `1. Another instance of ClaraVerse is running\n` +
+                `2. Another application is using this port\n\n` +
+                `Using a different port will cause you to lose access to your saved data ` +
+                `(settings, chat history, etc.) because browser storage is tied to the port number.\n\n` +
+                `What would you like to do?`,
+        buttons: ['Quit and Fix Port Conflict', 'Continue Anyway (Data Will Be Lost)'],
+        defaultId: 0,
+        cancelId: 0
+      });
+
+      if (choice.response === 0) {
+        // User chose to quit
+        app.quit();
+        throw new Error('Port conflict - user chose to quit');
+      } else {
+        // User chose to continue with random port (data loss)
+        log.warn(`User chose to continue despite port conflict. Using random port - DATA WILL BE LOST!`);
+        boundPort = await listenOnPort(0);
+      }
+    } else {
+      throw error;
+    }
+  }
+
+  staticServer = server;
+  staticServerPort = boundPort;
+  log.info(`Loopback static server ready on http://${STATIC_SERVER_HOST}:${staticServerPort}`);
+
+  return staticServerPort;
 }
 
 // Register Docker container management IPC handlers
@@ -521,1992 +773,6 @@ function registerDockerContainerHandlers() {
     } catch (error) {
       log.error('Error getting container logs:', error);
       return '';
-    }
-  });
-}
-
-// Register llama-swap service IPC handlers
-function registerLlamaSwapHandlers() {
-  // Start llama-swap service
-  ipcMain.handle('start-llama-swap', async () => {
-    try {
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-        setupLlamaSwapProgressCallback(llamaSwapService);
-      }
-      
-      const result = await llamaSwapService.start();
-      return { 
-        success: result.success, 
-        message: result.message,
-        error: result.error,
-        warning: result.warning,
-        diagnostics: result.diagnostics,
-        status: llamaSwapService.getStatus() 
-      };
-    } catch (error) {
-      log.error('Error starting llama-swap service:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Stop llama-swap service
-  ipcMain.handle('stop-llama-swap', async () => {
-    try {
-      if (llamaSwapService) {
-        await llamaSwapService.stop();
-      }
-      return { success: true };
-    } catch (error) {
-      log.error('Error stopping llama-swap service:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Restart llama-swap service
-  ipcMain.handle('restart-llama-swap', async () => {
-    try {
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-        setupLlamaSwapProgressCallback(llamaSwapService);
-      }
-      
-      const result = await llamaSwapService.restart();
-      return { 
-        success: result.success || true, // restart returns boolean for now
-        message: result.message || 'Service restarted',
-        status: llamaSwapService.getStatus() 
-      };
-    } catch (error) {
-      log.error('Error restarting llama-swap service:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Get llama-swap service status
-  ipcMain.handle('get-llama-swap-status', async () => {
-    try {
-      if (!llamaSwapService) {
-        return { isRunning: false, port: null, apiUrl: null };
-      }
-      
-      return llamaSwapService.getStatus();
-    } catch (error) {
-      log.error('Error getting llama-swap status:', error);
-      return { isRunning: false, port: null, apiUrl: null, error: error.message };
-    }
-  });
-
-  // Get llama-swap service status with health check
-  ipcMain.handle('get-llama-swap-status-with-health', async () => {
-    try {
-      if (!llamaSwapService) {
-        return { isRunning: false, port: null, apiUrl: null };
-      }
-      
-      return await llamaSwapService.getStatusWithHealthCheck();
-    } catch (error) {
-      log.error('Error getting llama-swap status with health check:', error);
-      return { isRunning: false, port: null, apiUrl: null, error: error.message };
-    }
-  });
-
-  // Get available models from llama-swap
-  ipcMain.handle('get-llama-swap-models', async () => {
-    try {
-      if (!llamaSwapService) {
-        return [];
-      }
-      
-      return await llamaSwapService.getModels();
-    } catch (error) {
-      log.error('Error getting llama-swap models:', error);
-      return [];
-    }
-  });
-
-  // Get llama-swap API URL
-  ipcMain.handle('get-llama-swap-api-url', async () => {
-    try {
-      if (llamaSwapService && llamaSwapService.isRunning) {
-        return llamaSwapService.getApiUrl();
-      }
-      return null;
-    } catch (error) {
-      log.error('Error getting llama-swap API URL:', error);
-      return null;
-    }
-  });
-
-  // Regenerate config (useful when new models are added)
-  ipcMain.handle('regenerate-llama-swap-config', async () => {
-    try {
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-      }
-      
-      const result = await llamaSwapService.generateConfig();
-      return { success: true, ...result };
-    } catch (error) {
-      log.error('Error regenerating llama-swap config:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Download official llama-swap binary
-  ipcMain.handle('download-official-llama-swap', async () => {
-    try {
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-      }
-      
-      const result = await llamaSwapService.downloadOfficialLlamaSwap();
-      return { success: true, ...result };
-    } catch (error) {
-      log.error('Error downloading official llama-swap:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Check for llama-swap updates
-  ipcMain.handle('check-llama-swap-updates', async () => {
-    try {
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-      }
-      
-      const result = await llamaSwapService.checkForLlamaSwapUpdates();
-      return { success: true, ...result };
-    } catch (error) {
-      log.error('Error checking llama-swap updates:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Update llama-swap to latest version
-  ipcMain.handle('update-llama-swap', async () => {
-    try {
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-      }
-      
-      const result = await llamaSwapService.updateLlamaSwap();
-      return { success: true, ...result };
-    } catch (error) {
-      log.error('Error updating llama-swap:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Get llama-swap version
-  ipcMain.handle('get-llama-swap-version', async () => {
-    try {
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-      }
-      
-      const version = await llamaSwapService.getLlamaSwapVersion();
-      return { success: true, version };
-    } catch (error) {
-      log.error('Error getting llama-swap version:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Run llama optimizer
-  ipcMain.handle('run-llama-optimizer', async (event, preset) => {
-    try {
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-      }
-      
-      const result = await llamaSwapService.runLlamaOptimizer(preset);
-      return result;
-    } catch (error) {
-      log.error('Error running llama optimizer:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Debug binary paths (useful for troubleshooting production builds)
-  ipcMain.handle('debug-binary-paths', async () => {
-    try {
-      const debugInfo = debugPaths();
-      logDebugInfo(); // Also log to electron-log
-      return { success: true, debugInfo };
-    } catch (error) {
-      log.error('Error debugging binary paths:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Get GPU diagnostics information
-  ipcMain.handle('get-gpu-diagnostics', async () => {
-    try {
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-      }
-      
-      const diagnostics = await llamaSwapService.getGPUDiagnostics();
-      return { success: true, ...diagnostics };
-    } catch (error) {
-      log.error('Error getting GPU diagnostics:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Get performance settings
-  ipcMain.handle('get-performance-settings', async () => {
-    try {
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-      }
-      
-      const result = await llamaSwapService.getPerformanceSettings();
-      return result;
-    } catch (error) {
-      log.error('Error getting performance settings:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Save performance settings
-  ipcMain.handle('save-performance-settings', async (event, settings) => {
-    try {
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-      }
-      
-      const result = await llamaSwapService.savePerformanceSettings(settings);
-      return result;
-    } catch (error) {
-      log.error('Error saving performance settings:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Load performance settings
-  ipcMain.handle('load-performance-settings', async () => {
-    try {
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-      }
-      
-      const result = await llamaSwapService.loadPerformanceSettings();
-      return result;
-    } catch (error) {
-      log.error('Error loading performance settings:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Create user consent file for watchdog service
-  ipcMain.handle('createUserConsentFile', async (event, consentData) => {
-    try {
-      const userDataPath = app.getPath('userData');
-      const consentFile = path.join(userDataPath, 'user-service-consent.json');
-      
-      // Ensure the consent data has all required fields
-      const consentFileData = {
-        hasConsented: consentData.hasConsented || false,
-        services: consentData.services || {},
-        timestamp: consentData.timestamp || new Date().toISOString(),
-        onboardingVersion: consentData.onboardingVersion || '1.0'
-      };
-      
-      fsSync.writeFileSync(consentFile, JSON.stringify(consentFileData, null, 2), 'utf8');
-      log.info('User consent file created successfully:', consentFile);
-      
-      return { success: true, filePath: consentFile };
-    } catch (error) {
-      log.error('Error creating user consent file:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Request initialization handler
-  ipcMain.handle('request-initialization', async () => {
-    try {
-      log.info('Frontend requested initialization trigger');
-      
-      // If initialization is already complete, just return success
-      if (initializationComplete) {
-        log.info('Initialization already complete');
-        return { success: true, status: 'complete' };
-      }
-      
-      // If initialization hasn't started or completed, trigger it
-      if (!initializationInProgress) {
-        log.info('Triggering background initialization from frontend request');
-        // Start initialization in the background
-        initializeInBackground().catch(error => {
-          log.error('Background initialization failed:', error);
-        });
-      } else {
-        log.info('Initialization already in progress, no action needed');
-      }
-      
-      return { success: true, status: initializationInProgress ? 'in-progress' : 'started' };
-    } catch (error) {
-      log.error('Error handling initialization request:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Get initialization status
-  ipcMain.handle('get-initialization-status', async () => {
-    try {
-      return { 
-        success: true, 
-        inProgress: initializationInProgress,
-        complete: initializationComplete 
-      };
-    } catch (error) {
-      log.error('Error getting initialization status:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Custom model path handlers
-  ipcMain.handle('set-custom-model-path', async (event, customPath) => {
-    try {
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-      }
-      
-      // Save to file-based storage for persistence across app restarts
-      try {
-        const settingsPath = path.join(app.getPath('userData'), 'clara-settings.json');
-        let settings = {};
-        
-        // Load existing settings if file exists
-        if (fsSync.existsSync(settingsPath)) {
-          try {
-            settings = JSON.parse(fsSync.readFileSync(settingsPath, 'utf8'));
-          } catch (parseError) {
-            log.warn('Could not parse existing settings file, creating new one:', parseError.message);
-            settings = {};
-          }
-        }
-        
-        // Update custom model path
-        if (customPath) {
-          settings.customModelPath = customPath;
-          log.info('Saving custom model path to settings:', customPath);
-        } else {
-          delete settings.customModelPath;
-          log.info('Removing custom model path from settings');
-        }
-        
-        // Save updated settings
-        fsSync.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf8');
-      } catch (settingsError) {
-        log.warn('Could not save custom model path to settings:', settingsError.message);
-        // Continue anyway - the in-memory setting will still work for this session
-      }
-      
-      // Set the custom path in llama-swap service
-      if (customPath) {
-        llamaSwapService.setCustomModelPaths([customPath]);
-      } else {
-        // Clear custom paths when path is null/empty
-        llamaSwapService.setCustomModelPaths([]);
-      }
-      
-      // Regenerate config to include/exclude models
-      await llamaSwapService.generateConfig();
-      
-      return { success: true };
-    } catch (error) {
-      log.error('Error setting custom model path:', error);
-      return { success: false, error: error.message };
-    }
-  });
-  // Watchdog service handlers
-  ipcMain.handle('watchdog-get-services-status', async () => {
-    try {
-      if (!watchdogService) {
-        return { success: false, error: 'Watchdog service not initialized' };
-      }
-      
-      return { success: true, services: watchdogService.getServicesStatus() };
-    } catch (error) {
-      log.error('Error getting watchdog services status:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  ipcMain.handle('watchdog-get-overall-health', async () => {
-    try {
-      if (!watchdogService) {
-        return { success: false, error: 'Watchdog service not initialized' };
-      }
-      
-      return { success: true, health: watchdogService.getOverallHealth() };
-    } catch (error) {
-      log.error('Error getting overall health:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  ipcMain.handle('watchdog-perform-manual-health-check', async () => {
-    try {
-      if (!watchdogService) {
-        return { success: false, error: 'Watchdog service not initialized' };
-      }
-      
-      const status = await watchdogService.performManualHealthCheck();
-      return { success: true, services: status };
-    } catch (error) {
-      log.error('Error performing manual health check:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  ipcMain.handle('watchdog-update-config', async (event, newConfig) => {
-    try {
-      if (!watchdogService) {
-        return { success: false, error: 'Watchdog service not initialized' };
-      }
-      
-      watchdogService.updateConfig(newConfig);
-      return { success: true };
-    } catch (error) {
-      log.error('Error updating watchdog config:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Enable monitoring for a specific service
-  ipcMain.handle('watchdog-enable-service', async (event, serviceKey) => {
-    try {
-      if (!watchdogService) {
-        return { success: false, error: 'Watchdog service not initialized' };
-      }
-      
-      const result = watchdogService.enableServiceMonitoring(serviceKey);
-      return { success: result };
-    } catch (error) {
-      log.error('Error enabling service monitoring:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Disable monitoring for a specific service
-  ipcMain.handle('watchdog-disable-service', async (event, serviceKey) => {
-    try {
-      if (!watchdogService) {
-        return { success: false, error: 'Watchdog service not initialized' };
-      }
-      
-      const result = watchdogService.disableServiceMonitoring(serviceKey);
-      return { success: result };
-    } catch (error) {
-      log.error('Error disabling service monitoring:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Get service monitoring status
-  ipcMain.handle('watchdog-get-monitoring-status', async () => {
-    try {
-      if (!watchdogService) {
-        return { success: false, error: 'Watchdog service not initialized' };
-      }
-      
-      const status = watchdogService.getServiceMonitoringStatus();
-      return { success: true, status };
-    } catch (error) {
-      log.error('Error getting service monitoring status:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  ipcMain.handle('get-custom-model-paths', async () => {
-    try {
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-      }
-      
-      let paths = llamaSwapService.getCustomModelPaths();
-      
-      // If no paths in service, try to load from file storage
-      if (paths.length === 0) {
-        try {
-          const settingsPath = path.join(app.getPath('userData'), 'clara-settings.json');
-          if (fsSync.existsSync(settingsPath)) {
-            const settings = JSON.parse(fsSync.readFileSync(settingsPath, 'utf8'));
-            if (settings.customModelPath) {
-              // Validate that the path still exists before returning it
-              if (fsSync.existsSync(settings.customModelPath)) {
-                paths = [settings.customModelPath];
-                // Also set it in the service for consistency
-                llamaSwapService.setCustomModelPaths(paths);
-              } else {
-                log.warn('Custom model path from settings no longer exists:', settings.customModelPath);
-              }
-            }
-          }
-        } catch (fileError) {
-          log.warn('Could not read custom model path from file storage:', fileError.message);
-        }
-      }
-      
-      return paths;
-    } catch (error) {
-      log.error('Error getting custom model paths:', error);
-      return [];
-    }
-  });
-
-  ipcMain.handle('scan-custom-path-models', async (event, path) => {
-    try {
-      if (!path) {
-        return { success: false, error: 'No path provided' };
-      }
-
-      // Create a temporary service instance to scan the specific path
-      const fs = require('fs').promises;
-      const pathModule = require('path');
-      
-      const models = [];
-      
-      // Recursive function to scan directories for .gguf files
-      async function scanDirectoryRecursive(dirPath, maxDepth = 10, currentDepth = 0) {
-        // Prevent infinite recursion in case of symlinks or very deep folder structures
-        if (currentDepth >= maxDepth) {
-          log.warn(`Maximum depth (${maxDepth}) reached while scanning ${dirPath}`);
-          return;
-        }
-
-        try {
-          const entries = await fs.readdir(dirPath, { withFileTypes: true });
-          
-          // First pass: collect all .gguf files and subdirectories in current directory
-          const ggufFiles = [];
-          const subdirectories = [];
-          
-          for (const entry of entries) {
-            const fullPath = pathModule.join(dirPath, entry.name);
-            
-            if (entry.isDirectory()) {
-              subdirectories.push(fullPath);
-            } else if (entry.isFile() && entry.name.endsWith('.gguf')) {
-              ggufFiles.push({ name: entry.name, path: fullPath });
-            }
-          }
-          
-          // Process multi-part models in current directory
-          const processedFiles = new Set();
-          const multiPartGroups = new Map();
-          
-          // Group multi-part files
-          ggufFiles.forEach(file => {
-            // Pattern: filename-00001-of-00002.gguf
-            const multiPartMatch = file.name.match(/^(.+)-(\d+)-of-(\d+)\.gguf$/);
-            if (multiPartMatch) {
-              const [, baseName, partNum, totalParts] = multiPartMatch;
-              const key = `${baseName}-${totalParts}`;
-              
-              if (!multiPartGroups.has(key)) {
-                multiPartGroups.set(key, {
-                  baseName,
-                  totalParts: parseInt(totalParts),
-                  parts: new Map()
-                });
-              }
-              
-              multiPartGroups.get(key).parts.set(parseInt(partNum), file);
-            }
-          });
-          
-          // Validate and add complete multi-part models
-          for (const [key, group] of multiPartGroups) {
-            const { baseName, totalParts, parts } = group;
-            
-            // Check if all parts are present
-            let allPartsPresent = true;
-            for (let i = 1; i <= totalParts; i++) {
-              if (!parts.has(i)) {
-                allPartsPresent = false;
-                log.warn(`Multi-part model ${baseName} is incomplete: missing part ${i} of ${totalParts}`);
-                break;
-              }
-            }
-            
-            if (allPartsPresent) {
-              // Add only the first part as the model entry
-              const firstPart = parts.get(1);
-              try {
-                const stats = await fs.stat(firstPart.path);
-                
-                // Calculate relative path from the root scan directory for better organization
-                const relativePath = pathModule.relative(path, firstPart.path);
-                const folderHint = pathModule.dirname(relativePath) === '.' ? '' : `(${pathModule.dirname(relativePath)})`;
-                
-                models.push({
-                  name: firstPart.name.replace('.gguf', ''),
-                  file: firstPart.name,
-                  path: firstPart.path,
-                  relativePath: relativePath,
-                  folderHint: folderHint,
-                  size: stats.size,
-                  source: 'custom',
-                  lastModified: stats.mtime,
-                  isMultiPart: true,
-                  totalParts: totalParts
-                });
-                
-                // Mark all parts as processed
-                for (const part of parts.values()) {
-                  processedFiles.add(part.name);
-                }
-                
-                log.info(`Added complete multi-part model: ${baseName} (${totalParts} parts)`);
-              } catch (error) {
-                log.warn(`Error reading stats for multi-part model ${firstPart.path}:`, error);
-              }
-            } else {
-              // Mark incomplete multi-part files as processed (so they won't be added as single files)
-              for (const part of parts.values()) {
-                processedFiles.add(part.name);
-              }
-            }
-          }
-          
-          // Add single-part .gguf files that aren't part of multi-part models
-          for (const file of ggufFiles) {
-            if (!processedFiles.has(file.name)) {
-              try {
-                const stats = await fs.stat(file.path);
-                
-                // Calculate relative path from the root scan directory for better organization
-                const relativePath = pathModule.relative(path, file.path);
-                const folderHint = pathModule.dirname(relativePath) === '.' ? '' : `(${pathModule.dirname(relativePath)})`;
-                
-                models.push({
-                  name: file.name.replace('.gguf', ''),
-                  file: file.name,
-                  path: file.path,
-                  relativePath: relativePath,
-                  folderHint: folderHint,
-                  size: stats.size,
-                  source: 'custom',
-                  lastModified: stats.mtime,
-                  isMultiPart: false
-                });
-              } catch (error) {
-                log.warn(`Error reading stats for ${file.path}:`, error);
-              }
-            }
-          }
-          
-          // Recursively scan subdirectories
-          for (const subdirPath of subdirectories) {
-            await scanDirectoryRecursive(subdirPath, maxDepth, currentDepth + 1);
-          }
-          
-        } catch (error) {
-          // Log but don't fail completely if we can't read a specific directory
-          log.warn(`Error reading directory ${dirPath}:`, error);
-        }
-      }
-      
-      try {
-        // Check if the path exists and is accessible
-        if (await fs.access(path).then(() => true).catch(() => false)) {
-          await scanDirectoryRecursive(path);
-        } else {
-          return { success: false, error: 'Directory is not accessible' };
-        }
-      } catch (error) {
-        log.warn(`Error scanning models in ${path}:`, error);
-        return { success: false, error: error.message };
-      }
-
-      // Sort models by folder structure and then by name for better organization
-      models.sort((a, b) => {
-        const folderCompare = (a.folderHint || '').localeCompare(b.folderHint || '');
-        if (folderCompare !== 0) return folderCompare;
-        return a.file.localeCompare(b.file);
-      });
-
-      return { success: true, models };
-    } catch (error) {
-      log.error('Error scanning custom path models:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  ipcMain.handle('watchdog-reset-failure-counts', async () => {
-    try {
-      if (!watchdogService) {
-        return { success: false, error: 'Watchdog service not initialized' };
-      }
-      
-      watchdogService.resetFailureCounts();
-      return { success: true };
-    } catch (error) {
-      log.error('Error resetting failure counts:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Get model embedding information with mmproj compatibility
-  ipcMain.handle('get-model-embedding-info', async (event, modelPath) => {
-    try {
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-      }
-      
-      const embeddingInfo = await llamaSwapService.getModelEmbeddingInfo(modelPath);
-      return { success: true, ...embeddingInfo };
-    } catch (error) {
-      log.error('Error getting model embedding info:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Search Hugging Face for compatible mmproj files
-  ipcMain.handle('search-huggingface-mmproj', async (event, modelName, embeddingSize) => {
-    try {
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-      }
-      
-      const results = await llamaSwapService.searchHuggingFaceForMmproj(modelName, embeddingSize);
-      return { success: true, results };
-    } catch (error) {
-      log.error('Error searching Hugging Face for mmproj files:', error);
-      return { success: false, error: error.message, results: [] };
-    }
-  });
-
-  // Save mmproj mappings to backend storage
-  ipcMain.handle('save-mmproj-mappings', async (event, mappings) => {
-    try {
-      log.info('🔍 save-mmproj-mappings handler called with mappings:', mappings);
-      
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-      }
-      
-      log.info('🔍 Calling llamaSwapService.saveMmprojMappings...');
-      const result = await llamaSwapService.saveMmprojMappings(mappings);
-      log.info('🔍 LlamaSwapService save result:', result);
-      
-      return { success: true, result };
-    } catch (error) {
-      log.error('❌ Error saving mmproj mappings:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Load mmproj mappings from backend storage
-  ipcMain.handle('load-mmproj-mappings', async () => {
-    try {
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-      }
-      
-      const mappings = await llamaSwapService.loadMmprojMappings();
-      return { success: true, mappings };
-    } catch (error) {
-      log.error('Error loading mmproj mappings:', error);
-      return { success: false, error: error.message, mappings: {} };
-    }
-  });
-
-  // Get available mmproj files from the file system
-  ipcMain.handle('get-available-mmproj-files', async () => {
-    try {
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-      }
-      
-      const result = await llamaSwapService.getAvailableMmprojFiles();
-      return result;
-    } catch (error) {
-      log.error('Error getting available mmproj files:', error);
-      return { success: false, error: error.message, mmprojFiles: [] };
-    }
-  });
-
-  // Restart llamaSwap service to apply configuration changes (e.g., mmproj mappings)
-  ipcMain.handle('restart-llamaswap', async () => {
-    try {
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-      }
-      
-      // Stop the current service
-      await llamaSwapService.stop();
-      
-      // Wait a moment for cleanup
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Regenerate config with updated mmproj mappings
-      try {
-        const configResult = await llamaSwapService.generateConfig();
-        log.info('Config regenerated successfully:', configResult);
-      } catch (configError) {
-        log.warn('Config regeneration had issues:', configError.message);
-      }
-      
-      // Start the service again
-      const result = await llamaSwapService.start();
-      return { 
-        success: result.success, 
-        message: result.message || 'Service restarted successfully',
-        error: result.error 
-      };
-    } catch (error) {
-      log.error('Error restarting llamaSwap service:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  ipcMain.handle('watchdog-start', async () => {
-    try {
-      if (!watchdogService) {
-        return { success: false, error: 'Watchdog service not initialized' };
-      }
-      
-      watchdogService.start();
-      return { success: true };
-    } catch (error) {
-      log.error('Error starting watchdog:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  ipcMain.handle('watchdog-stop', async () => {
-    try {
-      if (!watchdogService) {
-        return { success: false, error: 'Watchdog service not initialized' };
-      }
-      
-      watchdogService.stop();
-      return { success: true };
-    } catch (error) {
-      log.error('Error stopping watchdog:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // NEW: Configuration override IPC handlers
-  
-  // Get available GPU backends/engines
-  ipcMain.handle('get-available-backends', async () => {
-    try {
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-      }
-      
-      const result = llamaSwapService.getAvailableBackends();
-      return result;
-    } catch (error) {
-      log.error('Error getting available backends:', error);
-      return { success: false, error: error.message, backends: [] };
-    }
-  });
-
-  // Set/override backend/engine selection
-  ipcMain.handle('set-backend-override', async (event, backendId) => {
-    try {
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-      }
-      
-      const result = await llamaSwapService.setBackendOverride(backendId);
-      return result;
-    } catch (error) {
-      log.error('Error setting backend override:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Get current backend override setting
-  ipcMain.handle('get-backend-override', async () => {
-    try {
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-      }
-      
-      const result = await llamaSwapService.getBackendOverride();
-      return result;
-    } catch (error) {
-      log.error('Error getting backend override:', error);
-      return { success: false, error: error.message, backendId: null, isOverridden: false };
-    }
-  });
-
-  // Get current configuration as JSON (converted from YAML)
-  ipcMain.handle('get-config-as-json', async () => {
-    try {
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-      }
-      
-      const result = await llamaSwapService.getConfigAsJson();
-      return result;
-    } catch (error) {
-      log.error('Error getting config as JSON:', error);
-      return { success: false, error: error.message, config: null };
-    }
-  });
-
-  // Force reconfigure the service with current settings and overrides
-  ipcMain.handle('force-reconfigure', async () => {
-    try {
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-      }
-      
-      const result = await llamaSwapService.forceReconfigure();
-      return result;
-    } catch (error) {
-      log.error('Error during force reconfiguration:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Get comprehensive configuration information for UI
-  ipcMain.handle('get-configuration-info', async () => {
-    try {
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-      }
-      
-      const result = await llamaSwapService.getConfigurationInfo();
-      return result;
-    } catch (error) {
-      log.error('Error getting configuration info:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Save configuration from JSON (converted to YAML)
-  ipcMain.handle('save-config-from-json', async (event, jsonConfig) => {
-    try {
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-      }
-      
-      const result = await llamaSwapService.saveConfigFromJson(jsonConfig);
-      return result;
-    } catch (error) {
-      log.error('Error saving config from JSON:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Save configuration and restart service
-  ipcMain.handle('save-config-and-restart', async (event, jsonConfig) => {
-    try {
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-      }
-      
-      const result = await llamaSwapService.saveConfigAndRestart(jsonConfig);
-      return result;
-    } catch (error) {
-      log.error('Error saving config and restarting:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Regenerate configuration
-  ipcMain.handle('regenerate-config', async () => {
-    try {
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-      }
-      
-      const result = await llamaSwapService.regenerateConfig();
-      return result;
-    } catch (error) {
-      log.error('Error regenerating config:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Get model configurations with native context sizes
-  ipcMain.handle('get-model-configurations', async () => {
-    try {
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-      }
-      
-      const result = await llamaSwapService.getModelConfigurations();
-      return result;
-    } catch (error) {
-      log.error('Error getting model configurations:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Save configuration for a specific model
-  ipcMain.handle('save-model-configuration', async (event, modelName, modelConfig) => {
-    try {
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-      }
-      
-      const result = await llamaSwapService.saveModelConfiguration(modelName, modelConfig);
-      return result;
-    } catch (error) {
-      log.error('Error saving model configuration:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Save configurations for all models
-  ipcMain.handle('save-all-model-configurations', async (event, modelConfigs) => {
-    try {
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-      }
-      
-      const result = await llamaSwapService.saveAllModelConfigurations(modelConfigs);
-      return result;
-    } catch (error) {
-      log.error('Error saving all model configurations:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Load individual model configurations from persistent storage
-  ipcMain.handle('load-individual-model-configurations', async (event) => {
-    try {
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-      }
-      
-      const result = await llamaSwapService.loadIndividualModelConfigurations();
-      return result;
-    } catch (error) {
-      log.error('Error loading individual model configurations:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Legacy alias for restart-llamaswap (for backward compatibility)
-  ipcMain.handle('restart-llamaswap-with-overrides', async () => {
-    try {
-      log.info('🔄 Starting service restart with backend overrides...');
-      
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-      }
-      
-      // Check current backend override
-      const currentOverride = await llamaSwapService.getBackendOverride();
-      if (currentOverride.success && currentOverride.backendId) {
-        log.info(`🎯 Backend override detected: ${currentOverride.backendId}`);
-      } else {
-        log.info('🎯 No backend override - using auto-detection');
-      }
-      
-      // Stop the current service
-      log.info('🛑 Stopping current service...');
-      await llamaSwapService.stop();
-      log.info('✅ Service stopped successfully');
-      
-      // Wait a moment for cleanup
-      log.info('⏳ Waiting for cleanup...');
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Force reconfigure to apply any overrides
-      try {
-        log.info('🔧 Regenerating configuration with backend overrides...');
-        const configResult = await llamaSwapService.forceReconfigure();
-        log.info('✅ Configuration updated with overrides:', configResult);
-      } catch (configError) {
-        log.warn('⚠️ Config regeneration had issues:', configError.message);
-      }
-      
-      // Start the service again
-      log.info('🚀 Starting service with new configuration...');
-      const result = await llamaSwapService.start();
-      
-      if (result.success) {
-        log.info('✅ Service restarted successfully with backend overrides!');
-      } else {
-        log.error('❌ Service restart failed:', result.error);
-      }
-      
-      return { 
-        success: result.success, 
-        message: result.message || 'Service restarted with overrides successfully',
-        error: result.error 
-      };
-    } catch (error) {
-      log.error('❌ Error restarting llamaSwap service with overrides:', error);
-      return { success: false, error: error.message };
-    }
-  });
-}
-
-function registerModelManagerHandlers() {
-  // Helper functions for vision model detection
-  function isVisionModel(model) {
-    const visionKeywords = ['vl', 'vision', 'multimodal', 'mm', 'clip', 'siglip'];
-    const modelText = `${model.modelId} ${model.description || ''}`.toLowerCase();
-    return visionKeywords.some(keyword => modelText.includes(keyword));
-  }
-
-  function findRequiredMmprojFiles(siblings) {
-    return siblings.filter(file => 
-      file.rfilename.toLowerCase().includes('mmproj') ||
-      file.rfilename.toLowerCase().includes('mm-proj') ||
-      file.rfilename.toLowerCase().includes('projection')
-    );
-  }
-
-  function isVisionModelByName(fileName) {
-    const visionKeywords = ['vl', 'vision', 'multimodal', 'mm', 'clip', 'siglip'];
-    return visionKeywords.some(keyword => fileName.toLowerCase().includes(keyword));
-  }
-
-  function findBestMmprojMatch(modelFileName, mmprojFiles) {
-    const modelBaseName = modelFileName
-      .replace('.gguf', '')
-      .replace(/-(q4_k_m|q4_k_s|q8_0|f16|instruct).*$/i, '')
-      .toLowerCase();
-    
-    // Look for exact matches first
-    for (const mmproj of mmprojFiles) {
-      const mmprojBaseName = mmproj.rfilename
-        .replace(/-(mmproj|mm-proj|projection).*$/i, '')
-        .toLowerCase();
-      
-      if (modelBaseName.includes(mmprojBaseName) || mmprojBaseName.includes(modelBaseName)) {
-        return mmproj;
-      }
-    }
-    
-    // If no exact match, return the first available mmproj file
-    return mmprojFiles[0];
-  }
-
-  async function downloadSingleFile(modelId, fileName, modelsDir) {
-    return downloadSingleFileWithRename(modelId, fileName, fileName, modelsDir);
-  }
-
-  async function downloadSingleFileWithRename(modelId, sourceFileName, targetFileName, modelsDir) {
-    const fs = require('fs');
-    const https = require('https');
-    const http = require('http');
-    const path = require('path');
-    
-    const downloadUrl = `https://huggingface.co/${modelId}/resolve/main/${sourceFileName}`;
-    
-    // Extract just the filename from targetFileName to avoid creating subdirectories
-    // This flattens the file structure so all models go directly into the models folder
-    const flattenedFileName = path.basename(targetFileName);
-    const filePath = path.join(modelsDir, flattenedFileName);
-    
-    // Ensure the models directory exists
-    if (!fs.existsSync(modelsDir)) {
-      try {
-        fs.mkdirSync(modelsDir, { recursive: true });
-        log.info(`Created models directory: ${modelsDir}`);
-      } catch (dirError) {
-        log.error(`Failed to create models directory ${modelsDir}:`, dirError);
-        return { success: false, error: `Failed to create directory: ${dirError.message}` };
-      }
-    }
-    
-    // Check if file already exists
-    if (fs.existsSync(filePath)) {
-      return { success: false, error: 'File already exists' };
-    }
-    
-    log.info(`Starting download: ${downloadUrl} -> ${filePath}`);
-    
-    return new Promise((resolve) => {
-      const protocol = downloadUrl.startsWith('https:') ? https : http;
-      const file = fs.createWriteStream(filePath);
-      let stopped = false;
-      
-      // Store download info for stop functionality (use flattened filename for tracking)
-      const downloadInfo = {
-        request: null,
-        file,
-        filePath,
-        stopped: false
-      };
-      activeDownloads.set(flattenedFileName, downloadInfo);
-      
-      const cleanup = () => {
-        activeDownloads.delete(flattenedFileName);
-        if (file && !file.destroyed) {
-          file.close();
-        }
-        if (fs.existsSync(filePath)) {
-          try {
-            fs.unlinkSync(filePath);
-          } catch (cleanupError) {
-            log.warn('Error cleaning up file:', cleanupError);
-          }
-        }
-      };
-      
-      const request = protocol.get(downloadUrl, (response) => {
-        downloadInfo.request = request;
-        
-        if (downloadInfo.stopped) {
-          cleanup();
-          resolve({ success: false, error: 'Download stopped by user' });
-          return;
-        }
-        
-        if (response.statusCode === 302 || response.statusCode === 301) {
-          // Handle redirect
-          const redirectUrl = response.headers.location;
-          if (redirectUrl) {
-            const redirectProtocol = redirectUrl.startsWith('https:') ? https : http;
-            const redirectRequest = redirectProtocol.get(redirectUrl, (redirectResponse) => {
-              downloadInfo.request = redirectRequest;
-              
-              if (downloadInfo.stopped) {
-                cleanup();
-                resolve({ success: false, error: 'Download stopped by user' });
-                return;
-              }
-              
-              if (redirectResponse.statusCode !== 200) {
-                cleanup();
-                resolve({ success: false, error: `HTTP ${redirectResponse.statusCode}` });
-                return;
-              }
-              
-              const totalSize = parseInt(redirectResponse.headers['content-length'] || '0');
-              let downloadedSize = 0;
-              
-              redirectResponse.pipe(file);
-              
-              redirectResponse.on('data', (chunk) => {
-                if (downloadInfo.stopped) {
-                  redirectResponse.destroy();
-                  cleanup();
-                  resolve({ success: false, error: 'Download stopped by user' });
-                  return;
-                }
-                
-                downloadedSize += chunk.length;
-                const progress = totalSize > 0 ? (downloadedSize / totalSize) * 100 : 0;
-                
-                // Send progress update to renderer (use targetFileName for UI tracking)
-                if (mainWindow) {
-                  mainWindow.webContents.send('download-progress', {
-                    fileName: targetFileName,
-                    progress: Math.round(progress),
-                    downloadedSize,
-                    totalSize
-                  });
-                }
-              });
-              
-              file.on('finish', () => {
-                if (downloadInfo.stopped) {
-                  cleanup();
-                  resolve({ success: false, error: 'Download stopped by user' });
-                  return;
-                }
-                
-                file.close(() => {
-                  activeDownloads.delete(targetFileName);
-                  log.info(`Download completed: ${filePath}`);
-                  
-                  // Send final progress update (use targetFileName for UI tracking)
-                  if (mainWindow) {
-                    mainWindow.webContents.send('download-progress', {
-                      fileName: targetFileName,
-                      progress: 100,
-                      downloadedSize: totalSize,
-                      totalSize
-                    });
-                  }
-                  
-                  resolve({ success: true, filePath });
-                });
-              });
-              
-              file.on('error', (error) => {
-                cleanup();
-                resolve({ success: false, error: error.message });
-              });
-            });
-            
-            redirectRequest.on('error', (error) => {
-              cleanup();
-              resolve({ success: false, error: error.message });
-            });
-          } else {
-            cleanup();
-            resolve({ success: false, error: 'Redirect without location header' });
-          }
-        } else if (response.statusCode !== 200) {
-          cleanup();
-          resolve({ success: false, error: `HTTP ${response.statusCode}` });
-        } else {
-          const totalSize = parseInt(response.headers['content-length'] || '0');
-          let downloadedSize = 0;
-          
-          response.pipe(file);
-          
-          response.on('data', (chunk) => {
-            if (downloadInfo.stopped) {
-              response.destroy();
-              cleanup();
-              resolve({ success: false, error: 'Download stopped by user' });
-              return;
-            }
-            
-            downloadedSize += chunk.length;
-            const progress = totalSize > 0 ? (downloadedSize / totalSize) * 100 : 0;
-            
-            // Send progress update to renderer (use targetFileName for UI tracking)
-            if (mainWindow) {
-              mainWindow.webContents.send('download-progress', {
-                fileName: targetFileName,
-                progress: Math.round(progress),
-                downloadedSize,
-                totalSize
-              });
-            }
-          });
-          
-          file.on('finish', () => {
-            if (downloadInfo.stopped) {
-              cleanup();
-              resolve({ success: false, error: 'Download stopped by user' });
-              return;
-            }
-            
-            file.close(() => {
-              activeDownloads.delete(targetFileName);
-              log.info(`Download completed: ${filePath}`);
-              
-              // Send final progress update (use targetFileName for UI tracking)
-              if (mainWindow) {
-                mainWindow.webContents.send('download-progress', {
-                  fileName: targetFileName,
-                  progress: 100,
-                  downloadedSize: totalSize,
-                  totalSize
-                });
-              }
-              
-              resolve({ success: true, filePath });
-            });
-          });
-          
-          file.on('error', (error) => {
-            cleanup();
-            resolve({ success: false, error: error.message });
-          });
-        }
-      });
-      
-      downloadInfo.request = request;
-      
-      request.on('error', (error) => {
-        cleanup();
-        resolve({ success: false, error: error.message });
-      });
-    });
-  }
-
-  // Search models from Hugging Face
-  ipcMain.handle('search-huggingface-models', async (_event, { query, limit = 20, sort = 'lastModified' }) => {
-    try {
-      // Use Node.js built-in fetch if available (Node 18+), otherwise try node-fetch
-      let fetch;
-      try {
-        fetch = global.fetch || (await import('node-fetch')).default;
-      } catch (importError) {
-        // Fallback for older Node versions or import issues
-        const nodeFetch = require('node-fetch');
-        fetch = nodeFetch.default || nodeFetch;
-      }
-      
-      // Support different sorting options for truly latest models
-      const sortOptions = {
-        'lastModified': 'lastModified',
-        'createdAt': 'createdAt', 
-        'trending': 'downloads',      // Map trending to downloads since HF API doesn't support trending
-        'downloads': 'downloads',
-        'likes': 'likes'
-      };
-      
-      const sortParam = sortOptions[sort] || 'lastModified';
-      const url = `https://huggingface.co/api/models?search=${encodeURIComponent(query)}&filter=gguf&limit=${limit}&sort=${sortParam}&full=true`;
-      
-      const response = await fetch(url);
-      if (!response.ok) {
-        throw new Error(`HuggingFace API error: ${response.status}`);
-      }
-      
-      const models = await response.json();
-      
-      // Filter and format models for GGUF files
-      const ggufModels = models.filter(model => 
-        model.tags && model.tags.includes('gguf') || 
-        model.modelId.toLowerCase().includes('gguf') ||
-        (model.siblings && model.siblings.some(file => file.rfilename.endsWith('.gguf')))
-      ).map(model => ({
-        id: model.modelId || model.id,
-        name: model.modelId || model.id,
-        downloads: model.downloads || 0,
-        likes: model.likes || 0,
-        tags: model.tags || [],
-        description: model.description || '',
-        author: model.author || model.modelId?.split('/')[0] || '',
-        createdAt: model.createdAt || null,
-        lastModified: model.lastModified || null,
-        // Include ALL files, not just .gguf
-        files: model.siblings || [],
-        // Add flags for vision models and required mmproj files
-        isVisionModel: isVisionModel(model),
-        requiredMmprojFiles: findRequiredMmprojFiles(model.siblings || [])
-      }));
-      
-      return { success: true, models: ggufModels };
-    } catch (error) {
-      log.error('Error searching HuggingFace models:', error);
-      return { success: false, error: error.message, models: [] };
-    }
-  });
-
-  // Enhanced download with dependencies
-  ipcMain.handle('download-model-with-dependencies', async (_event, { modelId, fileName, allFiles, downloadPath }) => {
-    try {
-      const fs = require('fs');
-      const path = require('path');
-      const os = require('os');
-      
-      // Use custom download path if provided, otherwise use default
-      const modelsDir = downloadPath || path.join(os.homedir(), '.clara', 'llama-models');
-      if (!fs.existsSync(modelsDir)) {
-        fs.mkdirSync(modelsDir, { recursive: true });
-      }
-
-      // Check if this is a vision model by name patterns
-      const isVision = isVisionModelByName(fileName);
-      
-      // Find required mmproj files from the repository
-      const mmprojFiles = allFiles.filter(file => 
-        file.rfilename.toLowerCase().includes('mmproj') ||
-        file.rfilename.toLowerCase().includes('mm-proj') ||
-        file.rfilename.toLowerCase().includes('projection')
-      );
-      
-      log.info(`🔍 Vision detection - isVision: ${isVision}, mmproj files found: ${mmprojFiles.length}`);
-      if (mmprojFiles.length > 0) {
-        log.info(`📁 Available mmproj files:`, mmprojFiles.map(f => f.rfilename));
-      }
-      
-      const filesToDownload = [fileName];
-      
-      // Check if this is a split model (multiple parts)
-      const splitFiles = allFiles.filter(file => {
-        const filename = file.rfilename.toLowerCase();
-        // Look for split files that match the same base name and quantization as the main file
-        if (filename.match(/\d+-of-\d+\.gguf$/)) {
-          // Extract base name and quantization from both files to match them
-          const mainFileBase = fileName.toLowerCase().replace(/\.gguf$/, '').replace(/-\d+-of-\d+$/, '');
-          const splitFileBase = filename.replace(/\.gguf$/, '').replace(/-\d+-of-\d+$/, '');
-          
-          // Check if this split file belongs to the same model
-          return splitFileBase.includes(mainFileBase) || mainFileBase.includes(splitFileBase);
-        }
-        return false;
-      });
-      
-      // If we found split files, download all parts instead of just the main file
-      if (splitFiles.length > 0) {
-        // Remove the single file and add all split files
-        filesToDownload.splice(0, 1); // Remove the single fileName
-        splitFiles.forEach(splitFile => {
-          filesToDownload.push(splitFile.rfilename);
-          log.info(`🧩 Adding split file to download queue: ${splitFile.rfilename}`);
-        });
-        log.info(`📦 Split model detected: ${splitFiles.length} parts to download`);
-      }
-      
-      // Download mmproj files if they exist (regardless of main model name detection)
-      // This ensures we don't miss vision capabilities due to naming variations
-      if (mmprojFiles.length > 0) {
-        // Always download all mmproj files when available
-        mmprojFiles.forEach(mmprojFile => {
-          filesToDownload.push(mmprojFile.rfilename);
-          log.info(`👁️ Adding mmproj file to download queue: ${mmprojFile.rfilename}`);
-        });
-        
-        const modelFileCount = splitFiles.length > 0 ? splitFiles.length : 1;
-        log.info(`🎯 Total files to download: ${filesToDownload.length} (${modelFileCount} model + ${mmprojFiles.length} mmproj)`);
-      } else if (isVision) {
-        log.warn(`⚠️ Vision model detected by name but no mmproj files found in repository`);
-      } else if (splitFiles.length > 0) {
-        log.info(`🎯 Total split files to download: ${splitFiles.length}`);
-      }
-      
-      // Download all required files
-      const results = [];
-      for (const file of filesToDownload) {
-        try {
-          // Download file with its original name (no renaming needed)
-          log.info(`📥 Starting download: ${file}`);
-          
-          // Send download start notification
-          if (mainWindow) {
-            mainWindow.webContents.send('download-started', {
-              fileName: file,
-              modelId,
-              isVisionFile: file.toLowerCase().includes('mmproj')
-            });
-          }
-          
-          const result = await downloadSingleFile(modelId, file, modelsDir);
-          results.push({ file, success: result.success, error: result.error });
-          
-          // Send download completion notification
-          if (mainWindow) {
-            mainWindow.webContents.send('download-completed', {
-              fileName: file,
-              modelId,
-              success: result.success,
-              error: result.error,
-              isVisionFile: file.toLowerCase().includes('mmproj')
-            });
-          }
-          
-          log.info(`📥 Download ${result.success ? 'completed' : 'failed'}: ${file}${result.error ? ` (${result.error})` : ''}`);
-        } catch (error) {
-          log.error('Error in download loop for file:', file, error);
-          results.push({ file, success: false, error: error.message });
-          
-          // Send download error notification
-          if (mainWindow) {
-            mainWindow.webContents.send('download-completed', {
-              fileName: file,
-              modelId,
-              success: false,
-              error: error.message,
-              isVisionFile: file.toLowerCase().includes('mmproj')
-            });
-          }
-        }
-      }
-      
-      // Check if main model downloaded successfully (it should still have original fileName)
-      const mainResult = results.find(r => r.file === fileName);
-      log.info(`Main result check: looking for ${fileName} in results:`, results.map(r => r.file));
-      log.info(`Main result found:`, mainResult);
-      
-      if (mainResult?.success) {
-        // Restart llama-swap service to load new models
-        try {
-          if (llamaSwapService && llamaSwapService.getStatus().isRunning) {
-            log.info('Restarting llama-swap service to load new models...');
-            await llamaSwapService.restart();
-            log.info('llama-swap service restarted successfully');
-          }
-        } catch (restartError) {
-          log.warn('Failed to restart llama-swap service after download:', restartError);
-        }
-      }
-      
-      const returnValue = { 
-        success: mainResult?.success || false, 
-        results,
-        downloadedFiles: results.filter(r => r.success).map(r => r.file)
-      };
-      
-      log.info(`Returning from download-model-with-dependencies:`, returnValue);
-      return returnValue;
-      
-    } catch (error) {
-      log.error('Error downloading model with dependencies:', error);
-      log.error('Error stack:', error.stack);
-      return { success: false, error: error.message || 'Unknown error occurred' };
-    }
-  });
-
-  // Download model from Hugging Face
-  ipcMain.handle('download-huggingface-model', async (_event, { modelId, fileName, downloadPath }) => {
-    try {
-      const fs = require('fs');
-      const https = require('https');
-      const http = require('http');
-      const path = require('path');
-      const os = require('os');
-      
-      // Use custom download path if provided, otherwise use default
-      const modelsDir = downloadPath || path.join(os.homedir(), '.clara', 'llama-models');
-      if (!fs.existsSync(modelsDir)) {
-        fs.mkdirSync(modelsDir, { recursive: true });
-      }
-      
-      const downloadUrl = `https://huggingface.co/${modelId}/resolve/main/${fileName}`;
-      
-      // Extract just the filename to avoid creating subdirectories
-      // This flattens the file structure so all models go directly into the models folder
-      const flattenedFileName = path.basename(fileName);
-      const filePath = path.join(modelsDir, flattenedFileName);
-      
-      // Check if file already exists
-      if (fs.existsSync(filePath)) {
-        return { success: false, error: 'File already exists' };
-      }
-      
-      log.info(`Starting download: ${downloadUrl} -> ${filePath}`);
-      
-      return new Promise((resolve) => {
-        const protocol = downloadUrl.startsWith('https:') ? https : http;
-        const file = fs.createWriteStream(filePath);
-        let request;
-        let stopped = false;
-        
-        // Store download info for stop functionality
-        const downloadInfo = {
-          request: null,
-          file,
-          filePath,
-          stopped: false
-        };
-        activeDownloads.set(flattenedFileName, downloadInfo);
-        
-        const cleanup = () => {
-          activeDownloads.delete(flattenedFileName);
-          if (file && !file.destroyed) {
-            file.close();
-          }
-          if (fs.existsSync(filePath)) {
-            try {
-              fs.unlinkSync(filePath);
-            } catch (cleanupError) {
-              log.warn('Error cleaning up file:', cleanupError);
-            }
-          }
-        };
-        
-        request = protocol.get(downloadUrl, (response) => {
-          downloadInfo.request = request;
-          
-          if (downloadInfo.stopped) {
-            cleanup();
-            resolve({ success: false, error: 'Download stopped by user' });
-            return;
-          }
-          
-          if (response.statusCode === 302 || response.statusCode === 301) {
-            // Handle redirect
-            const redirectUrl = response.headers.location;
-            if (redirectUrl) {
-              const redirectProtocol = redirectUrl.startsWith('https:') ? https : http;
-              const redirectRequest = redirectProtocol.get(redirectUrl, (redirectResponse) => {
-                downloadInfo.request = redirectRequest;
-                
-                if (downloadInfo.stopped) {
-                  cleanup();
-                  resolve({ success: false, error: 'Download stopped by user' });
-                  return;
-                }
-                
-                if (redirectResponse.statusCode !== 200) {
-                  cleanup();
-                  resolve({ success: false, error: `HTTP ${redirectResponse.statusCode}` });
-                  return;
-                }
-                
-                const totalSize = parseInt(redirectResponse.headers['content-length'] || '0');
-                let downloadedSize = 0;
-                
-                redirectResponse.pipe(file);
-                
-                redirectResponse.on('data', (chunk) => {
-                  if (downloadInfo.stopped) {
-                    redirectResponse.destroy();
-                    cleanup();
-                    resolve({ success: false, error: 'Download stopped by user' });
-                    return;
-                  }
-                  
-                  downloadedSize += chunk.length;
-                  const progress = totalSize > 0 ? (downloadedSize / totalSize) * 100 : 0;
-                  
-                  // Send progress update to renderer
-                  if (mainWindow) {
-                    mainWindow.webContents.send('download-progress', {
-                      fileName,
-                      progress: Math.round(progress),
-                      downloadedSize,
-                      totalSize
-                    });
-                  }
-                });
-                
-                file.on('finish', () => {
-                  if (downloadInfo.stopped) {
-                    cleanup();
-                    resolve({ success: false, error: 'Download stopped by user' });
-                    return;
-                  }
-                  
-                  file.close(async () => {
-                    activeDownloads.delete(fileName);
-                    log.info(`Download completed: ${filePath}`);
-                    
-                    // Restart llama-swap service to load new models
-                    try {
-                      if (llamaSwapService && llamaSwapService.getStatus().isRunning) {
-                        log.info('Restarting llama-swap service to load new models...');
-                        await llamaSwapService.restart();
-                        log.info('llama-swap service restarted successfully');
-                      }
-                    } catch (restartError) {
-                      log.warn('Failed to restart llama-swap service after download:', restartError);
-                    }
-                    
-                    resolve({ success: true, filePath });
-                  });
-                });
-              });
-              
-              redirectRequest.on('error', (error) => {
-                cleanup();
-                resolve({ success: false, error: error.message });
-              });
-            } else {
-              cleanup();
-              resolve({ success: false, error: 'Redirect without location header' });
-            }
-          } else if (response.statusCode !== 200) {
-            cleanup();
-            resolve({ success: false, error: `HTTP ${response.statusCode}` });
-          } else {
-            const totalSize = parseInt(response.headers['content-length'] || '0');
-            let downloadedSize = 0;
-            
-            response.pipe(file);
-            
-            response.on('data', (chunk) => {
-              if (downloadInfo.stopped) {
-                response.destroy();
-                cleanup();
-                resolve({ success: false, error: 'Download stopped by user' });
-                return;
-              }
-              
-              downloadedSize += chunk.length;
-              const progress = totalSize > 0 ? (downloadedSize / totalSize) * 100 : 0;
-              
-              // Send progress update to renderer
-              if (mainWindow) {
-                mainWindow.webContents.send('download-progress', {
-                  fileName,
-                  progress: Math.round(progress),
-                  downloadedSize,
-                  totalSize
-                });
-              }
-            });
-            
-            file.on('finish', () => {
-              if (downloadInfo.stopped) {
-                cleanup();
-                resolve({ success: false, error: 'Download stopped by user' });
-                return;
-              }
-              
-              file.close(async () => {
-                activeDownloads.delete(fileName);
-                log.info(`Download completed: ${filePath}`);
-                
-                // Restart llama-swap service to load new models
-                try {
-                  if (llamaSwapService && llamaSwapService.getStatus().isRunning) {
-                    log.info('Restarting llama-swap service to load new models...');
-                    await llamaSwapService.restart();
-                    log.info('llama-swap service restarted successfully');
-                  }
-                } catch (restartError) {
-                  log.warn('Failed to restart llama-swap service after download:', restartError);
-                }
-                
-                resolve({ success: true, filePath });
-              });
-            });
-          }
-        });
-        
-        downloadInfo.request = request;
-        
-        request.on('error', (error) => {
-          cleanup();
-          resolve({ success: false, error: error.message });
-        });
-      });
-    } catch (error) {
-      log.error('Error downloading model:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Download model from Hugging Face with custom save name
-  ipcMain.handle('download-huggingface-model-with-custom-name', async (_event, { modelId, fileName, customSaveName, downloadPath }) => {
-    try {
-      const fs = require('fs');
-      const path = require('path');
-      const os = require('os');
-      
-      // Use custom download path if provided, otherwise use default
-      const modelsDir = downloadPath || path.join(os.homedir(), '.clara', 'llama-models');
-      if (!fs.existsSync(modelsDir)) {
-        fs.mkdirSync(modelsDir, { recursive: true });
-      }
-
-      log.info(`🎯 Starting custom name download: ${fileName} → ${customSaveName}`);
-      
-      // Use the existing downloadSingleFileWithRename function
-      const result = await downloadSingleFileWithRename(modelId, fileName, customSaveName, modelsDir);
-      
-      if (result.success) {
-        log.info(`✅ Custom name download completed: ${customSaveName}`);
-        
-        // Restart llama-swap service to load new models
-        try {
-          if (llamaSwapService && llamaSwapService.getStatus().isRunning) {
-            log.info('Restarting llama-swap service to load new models...');
-            await llamaSwapService.restart();
-            log.info('llama-swap service restarted successfully');
-          }
-        } catch (restartError) {
-          log.warn('Failed to restart llama-swap service after download:', restartError);
-        }
-      }
-      
-      return result;
-    } catch (error) {
-      log.error('Error downloading model with custom name:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Stop download
-  ipcMain.handle('stop-download', async (_event, { fileName }) => {
-    try {
-      const downloadInfo = activeDownloads.get(fileName);
-      
-      if (!downloadInfo) {
-        return { success: false, error: 'Download not found or already completed' };
-      }
-      
-      downloadInfo.stopped = true;
-      
-      // Destroy the request if it exists
-      if (downloadInfo.request) {
-        downloadInfo.request.destroy();
-      }
-      
-      // Close and cleanup the file
-      if (downloadInfo.file && !downloadInfo.file.destroyed) {
-        downloadInfo.file.close();
-      }
-      
-      // Remove partial file
-      if (downloadInfo.filePath && require('fs').existsSync(downloadInfo.filePath)) {
-        try {
-          require('fs').unlinkSync(downloadInfo.filePath);
-          log.info(`Removed partial download: ${downloadInfo.filePath}`);
-        } catch (cleanupError) {
-          log.warn('Error removing partial download:', cleanupError);
-        }
-      }
-      
-      activeDownloads.delete(fileName);
-      log.info(`Download stopped: ${fileName}`);
-      
-      return { success: true };
-    } catch (error) {
-      log.error('Error stopping download:', error);
-      return { success: false, error: error.message };
-    }
-  });
-
-  // Get local models
-  ipcMain.handle('get-local-models', async () => {
-    try {
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-      }
-      
-      const models = await llamaSwapService.scanModels();
-      return { success: true, models };
-    } catch (error) {
-      log.error('Error getting local models:', error);
-      return { success: false, error: error.message, models: [] };
-    }
-  });
-
-  // Delete local model
-  ipcMain.handle('delete-local-model', async (_event, { filePath }) => {
-    try {
-      const fs = require('fs');
-      const path = require('path');
-      const os = require('os');
-      
-      // Security check - ensure file is in a valid model directory
-      const defaultModelsDir = path.join(os.homedir(), '.clara', 'llama-models');
-      const normalizedPath = path.resolve(filePath);
-      const normalizedDefaultDir = path.resolve(defaultModelsDir);
-      
-      let isValidPath = normalizedPath.startsWith(normalizedDefaultDir);
-      
-      // Also check custom model paths if LlamaSwapService is available
-      if (!isValidPath && llamaSwapService) {
-        const customPaths = llamaSwapService.getCustomModelPaths();
-        for (const customPath of customPaths) {
-          if (customPath) {
-            const normalizedCustomDir = path.resolve(customPath);
-            if (normalizedPath.startsWith(normalizedCustomDir)) {
-              isValidPath = true;
-              break;
-            }
-          }
-        }
-      }
-      
-      if (!isValidPath) {
-        throw new Error('Invalid file path - security violation');
-      }
-      
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-        log.info(`Deleted model: ${filePath}`);
-        
-        // Restart llama-swap service to reload models after deletion
-        try {
-          if (llamaSwapService && llamaSwapService.getStatus().isRunning) {
-            log.info('Restarting llama-swap service to reload models after deletion...');
-            await llamaSwapService.restart();
-            log.info('llama-swap service restarted successfully after model deletion');
-          }
-        } catch (restartError) {
-          log.warn('Failed to restart llama-swap service after model deletion:', restartError);
-        }
-        
-        return { success: true };
-      } else {
-        return { success: false, error: 'File not found' };
-      }
-    } catch (error) {
-      log.error('Error deleting model:', error);
-      return { success: false, error: error.message };
     }
   });
 }
@@ -2799,6 +1065,29 @@ function registerMCPHandlers() {
 function registerServiceConfigurationHandlers() {
   console.log('[main] Registering service configuration IPC handlers...');
   
+  // Helper function to ensure Service Config Manager is initialized
+  function ensureServiceConfigManager() {
+    if (!serviceConfigManager) {
+      log.info('Service config manager not initialized, creating new instance...');
+      try {
+        serviceConfigManager = new ServiceConfigurationManager();
+        if (!centralServiceManager) {
+          centralServiceManager = new CentralServiceManager(serviceConfigManager);
+          
+          const { SERVICE_DEFINITIONS } = require('./serviceDefinitions.cjs');
+          Object.keys(SERVICE_DEFINITIONS).forEach(serviceName => {
+            const serviceDefinition = SERVICE_DEFINITIONS[serviceName];
+            centralServiceManager.registerService(serviceName, serviceDefinition);
+          });
+        }
+      } catch (error) {
+        log.warn('Failed to initialize service config manager:', error);
+        return null;
+      }
+    }
+    return serviceConfigManager;
+  }
+  
   // Get platform compatibility information
   ipcMain.handle('service-config:get-platform-compatibility', async () => {
     try {
@@ -2812,10 +1101,11 @@ function registerServiceConfigurationHandlers() {
   // Get all service configurations
   ipcMain.handle('service-config:get-all-configs', async () => {
     try {
-      if (!serviceConfigManager || typeof serviceConfigManager.getConfigSummary !== 'function') {
+      const configManager = ensureServiceConfigManager();
+      if (!configManager || typeof configManager.getConfigSummary !== 'function') {
         return {};
       }
-      return serviceConfigManager.getConfigSummary();
+      return configManager.getConfigSummary();
     } catch (error) {
       log.error('Error getting service configurations:', error);
       return {};
@@ -2825,16 +1115,58 @@ function registerServiceConfigurationHandlers() {
   // Set service configuration (mode and URL)
   ipcMain.handle('service-config:set-config', async (event, serviceName, mode, url = null) => {
     try {
-      if (!serviceConfigManager || typeof serviceConfigManager.setServiceConfig !== 'function') {
+      log.info(`📝 [Config] Received set-config request: serviceName=${serviceName}, mode=${mode}, url=${url}`);
+
+      const configManager = ensureServiceConfigManager();
+      if (!configManager || typeof configManager.setServiceConfig !== 'function') {
         throw new Error('Service configuration manager not initialized or setServiceConfig method not available');
       }
-      
-      serviceConfigManager.setServiceConfig(serviceName, mode, url);
-      log.info(`Service ${serviceName} configured: mode=${mode}${url ? `, url=${url}` : ''}`);
-      
+
+      configManager.setServiceConfig(serviceName, mode, url);
+      log.info(`✅ [Config] Service ${serviceName} configured: mode=${mode}${url ? `, url=${url}` : ''}`);
+
+      // Verify it was saved
+      const savedMode = configManager.getServiceMode(serviceName);
+      const savedUrl = configManager.getServiceUrl(serviceName);
+      log.info(`🔍 [Config] Verification - saved mode=${savedMode}, saved url=${savedUrl}`);
+
+      // Update CentralServiceManager if the service exists
+      if (centralServiceManager) {
+        const service = centralServiceManager.services.get(serviceName);
+        if (service) {
+          service.deploymentMode = mode;
+          log.info(`✅ Updated CentralServiceManager: ${serviceName} deploymentMode=${mode}`);
+
+          // If switching to remote/manual mode with a URL, check if it's running
+          if ((mode === 'remote' || mode === 'manual') && url) {
+            try {
+              // Test the health of the remote service
+              const healthCheck = await configManager.testManualService(serviceName, url, '/health');
+              if (healthCheck.success) {
+                centralServiceManager.setState(serviceName, centralServiceManager.states.RUNNING);
+                centralServiceManager.setServiceUrl(serviceName, url);
+                service.serviceUrl = url;
+                log.info(`✅ Remote service ${serviceName} is running at ${url}`);
+              } else {
+                centralServiceManager.setState(serviceName, centralServiceManager.states.STOPPED);
+                log.warn(`⚠️  Remote service ${serviceName} at ${url} is not healthy`);
+              }
+            } catch (error) {
+              log.warn(`⚠️  Could not verify remote service ${serviceName}:`, error.message);
+              // Don't fail the config change, just warn
+              centralServiceManager.setState(serviceName, centralServiceManager.states.STOPPED);
+            }
+          } else if (mode === 'local' || mode === 'docker') {
+            // If switching back to local/docker, mark as stopped (user needs to start it)
+            centralServiceManager.setState(serviceName, centralServiceManager.states.STOPPED);
+            service.serviceUrl = null;
+          }
+        }
+      }
+
       return { success: true };
     } catch (error) {
-      log.error(`Error setting service configuration for ${serviceName}:`, error);
+      log.error(`❌ [Config] Error setting service configuration for ${serviceName}:`, error);
       return { success: false, error: error.message };
     }
   });
@@ -2842,11 +1174,12 @@ function registerServiceConfigurationHandlers() {
   // Alias for onboarding compatibility
   ipcMain.handle('service-config:set-manual-url', async (event, serviceName, url) => {
     try {
-      if (!serviceConfigManager || typeof serviceConfigManager.setServiceConfig !== 'function') {
+      const configManager = ensureServiceConfigManager();
+      if (!configManager || typeof configManager.setServiceConfig !== 'function') {
         throw new Error('Service configuration manager not initialized or setServiceConfig method not available');
       }
       
-      serviceConfigManager.setServiceConfig(serviceName, 'manual', url);
+      configManager.setServiceConfig(serviceName, 'manual', url);
       log.info(`Service ${serviceName} configured with manual URL: ${url}`);
       
       return { success: true };
@@ -2859,11 +1192,12 @@ function registerServiceConfigurationHandlers() {
   // Test manual service connectivity
   ipcMain.handle('service-config:test-manual-service', async (event, serviceName, url, healthEndpoint = '/') => {
     try {
-      if (!serviceConfigManager || typeof serviceConfigManager.testManualService !== 'function') {
+      const configManager = ensureServiceConfigManager();
+      if (!configManager || typeof configManager.testManualService !== 'function') {
         throw new Error('Service configuration manager not initialized or testManualService method not available');
       }
       
-      const result = await serviceConfigManager.testManualService(serviceName, url, healthEndpoint);
+      const result = await configManager.testManualService(serviceName, url, healthEndpoint);
       return result;
     } catch (error) {
       log.error(`Error testing manual service ${serviceName}:`, error);
@@ -2878,11 +1212,12 @@ function registerServiceConfigurationHandlers() {
   // Get supported deployment modes for a service
   ipcMain.handle('service-config:get-supported-modes', async (event, serviceName) => {
     try {
-      if (!serviceConfigManager || typeof serviceConfigManager.getSupportedModes !== 'function') {
+      const configManager = ensureServiceConfigManager();
+      if (!configManager || typeof configManager.getSupportedModes !== 'function') {
         return ['docker']; // Default fallback
       }
       
-      return serviceConfigManager.getSupportedModes(serviceName);
+      return configManager.getSupportedModes(serviceName);
     } catch (error) {
       log.error(`Error getting supported modes for ${serviceName}:`, error);
       return ['docker'];
@@ -2892,11 +1227,12 @@ function registerServiceConfigurationHandlers() {
   // Reset service configuration to defaults
   ipcMain.handle('service-config:reset-config', async (event, serviceName) => {
     try {
-      if (!serviceConfigManager || typeof serviceConfigManager.removeServiceConfig !== 'function') {
+      const configManager = ensureServiceConfigManager();
+      if (!configManager || typeof configManager.removeServiceConfig !== 'function') {
         throw new Error('Service configuration manager not initialized or removeServiceConfig method not available');
       }
       
-      serviceConfigManager.removeServiceConfig(serviceName);
+      configManager.removeServiceConfig(serviceName);
       log.info(`Service ${serviceName} configuration reset to defaults`);
       
       return { success: true };
@@ -2914,9 +1250,72 @@ function registerServiceConfigurationHandlers() {
         log.warn('⚠️  Central service manager not available, returning empty status');
         return {};
       }
-      
+
       const status = centralServiceManager.getServicesStatus();
-      
+
+      // Check health of remote/manual services and update their state
+      const http = require('http');
+      const https = require('https');
+
+      // Define service-specific health endpoints
+      const healthEndpoints = {
+        'comfyui': '/',           // ComfyUI uses root endpoint
+        'n8n': '/healthz',        // N8N uses /healthz
+        'python-backend': '/health', // Python backend uses /health
+        'claracore': '/health',   // ClaraCore uses /health
+        'mcp': '/health'          // MCP uses /health
+      };
+
+      for (const [serviceName, serviceStatus] of Object.entries(status)) {
+        if ((serviceStatus.deploymentMode === 'remote' || serviceStatus.deploymentMode === 'manual') && serviceStatus.serviceUrl) {
+          try {
+            // Get service-specific health endpoint
+            const healthPath = healthEndpoints[serviceName] || '/health';
+            const url = new URL(serviceStatus.serviceUrl);
+            const protocol = url.protocol === 'https:' ? https : http;
+
+            // Build health endpoint URL
+            const baseUrl = serviceStatus.serviceUrl.replace(/\/$/, ''); // Remove trailing slash
+            const healthEndpoint = `${baseUrl}${healthPath}`;
+
+            const isHealthy = await new Promise((resolve) => {
+              const req = protocol.get(healthEndpoint, { timeout: 3000 }, (res) => {
+                // Accept 200-299 status codes as healthy
+                resolve(res.statusCode >= 200 && res.statusCode < 300);
+              });
+              req.on('error', (err) => {
+                // Only log non-connection errors
+                if (err.code !== 'ECONNREFUSED' && err.code !== 'ETIMEDOUT') {
+                  log.debug(`Health check error for ${serviceName}:`, err.message);
+                }
+                resolve(false);
+              });
+              req.on('timeout', () => {
+                req.destroy();
+                resolve(false);
+              });
+            });
+
+            // Update state based on health check
+            if (isHealthy) {
+              centralServiceManager.setState(serviceName, centralServiceManager.states.RUNNING);
+              status[serviceName].state = 'running';
+              status[serviceName].lastHealthCheck = Date.now();
+            } else {
+              centralServiceManager.setState(serviceName, centralServiceManager.states.STOPPED);
+              status[serviceName].state = 'stopped';
+            }
+          } catch (error) {
+            // If health check fails, mark as stopped
+            if (error.code !== 'ECONNREFUSED' && error.code !== 'ETIMEDOUT') {
+              log.debug(`Health check exception for ${serviceName}:`, error.message);
+            }
+            centralServiceManager.setState(serviceName, centralServiceManager.states.STOPPED);
+            status[serviceName].state = 'stopped';
+          }
+        }
+      }
+
       // Only log if meaningful status has changed (exclude dynamic fields like uptime, lastHealthCheck)
       const stableStatus = {};
       for (const [serviceName, serviceStatus] of Object.entries(status)) {
@@ -2931,13 +1330,13 @@ function registerServiceConfigurationHandlers() {
           lastError: serviceStatus.lastError
         };
       }
-      
+
       const stableStatusString = JSON.stringify(stableStatus);
       if (stableStatusString !== lastLoggedServiceStatus) {
         log.info('📊 Enhanced service status changed:', stableStatus);
         lastLoggedServiceStatus = stableStatusString;
       }
-      
+
       return status;
     } catch (error) {
       log.error('Error getting enhanced service status:', error);
@@ -3160,16 +1559,16 @@ function registerN8NHandlers() {
       if (serviceConfigManager && typeof serviceConfigManager.getServiceMode === 'function') {
         try {
           const n8nMode = serviceConfigManager.getServiceMode('n8n');
-          if (n8nMode === 'manual' && typeof serviceConfigManager.getServiceUrl === 'function') {
+          if ((n8nMode === 'manual' || n8nMode === 'remote') && typeof serviceConfigManager.getServiceUrl === 'function') {
             const n8nUrl = serviceConfigManager.getServiceUrl('n8n');
             if (n8nUrl) {
               serviceUrl = n8nUrl;
               try {
                 const { createManualHealthCheck } = require('./serviceDefinitions.cjs');
-                const healthCheck = createManualHealthCheck(n8nUrl, '/');
+                const healthCheck = createManualHealthCheck(n8nUrl, '/healthz');
                 n8nRunning = await healthCheck();
               } catch (error) {
-                log.debug(`N8N manual health check failed: ${error.message}`);
+                log.debug(`N8N ${n8nMode} health check failed: ${error.message}`);
                 n8nRunning = false;
               }
             }
@@ -3309,7 +1708,7 @@ function registerComfyUIHandlers() {
       if (serviceConfigManager && typeof serviceConfigManager.getServiceMode === 'function') {
         try {
           const comfyuiMode = serviceConfigManager.getServiceMode('comfyui');
-          if (comfyuiMode === 'manual' && typeof serviceConfigManager.getServiceUrl === 'function') {
+          if ((comfyuiMode === 'manual' || comfyuiMode === 'remote') && typeof serviceConfigManager.getServiceUrl === 'function') {
             const comfyuiUrl = serviceConfigManager.getServiceUrl('comfyui');
             if (comfyuiUrl) {
               serviceUrl = comfyuiUrl;
@@ -3318,7 +1717,7 @@ function registerComfyUIHandlers() {
                 const healthCheck = createManualHealthCheck(comfyuiUrl, '/');
                 comfyuiRunning = await healthCheck();
               } catch (error) {
-                log.debug(`ComfyUI manual health check failed: ${error.message}`);
+                log.debug(`ComfyUI ${comfyuiMode} health check failed: ${error.message}`);
                 comfyuiRunning = false;
               }
             }
@@ -3429,6 +1828,29 @@ function registerComfyUIHandlers() {
 
 // Register Python Backend specific IPC handlers
 function registerPythonBackendHandlers() {
+  // Helper function to ensure Service Config Manager is initialized
+  function ensureServiceConfigManager() {
+    if (!serviceConfigManager) {
+      log.info('Service config manager not initialized, creating new instance...');
+      try {
+        serviceConfigManager = new ServiceConfigurationManager();
+        if (!centralServiceManager) {
+          centralServiceManager = new CentralServiceManager(serviceConfigManager);
+          
+          const { SERVICE_DEFINITIONS } = require('./serviceDefinitions.cjs');
+          Object.keys(SERVICE_DEFINITIONS).forEach(serviceName => {
+            const serviceDefinition = SERVICE_DEFINITIONS[serviceName];
+            centralServiceManager.registerService(serviceName, serviceDefinition);
+          });
+        }
+      } catch (error) {
+        log.warn('Failed to initialize service config manager:', error);
+        return null;
+      }
+    }
+    return serviceConfigManager;
+  }
+
   // Check Docker status
   ipcMain.handle('check-docker-status', async () => {
     try {
@@ -3444,53 +1866,103 @@ function registerPythonBackendHandlers() {
     }
   });
 
-  // Check Python backend service status
+  // Check Python backend service status (using unified service manager)
   ipcMain.handle('check-python-status', async () => {
     try {
-      if (!dockerSetup) {
-        return { isHealthy: false, serviceUrl: null, mode: 'docker', error: 'Docker setup not initialized' };
-      }
+      // First check CentralServiceManager for current status
+      if (centralServiceManager) {
+        const serviceStatus = centralServiceManager.getServicesStatus()['python-backend'];
+        if (serviceStatus) {
+          const mode = serviceStatus.deploymentMode || 'docker';
+          const serviceUrl = serviceStatus.serviceUrl;
+          const stateIsRunning = serviceStatus.state === 'running';
 
-      // Get service configuration to determine mode (with fallback if service config manager is not available)
-      let config = null;
-      let mode = 'docker'; // Default mode
-      
-      if (serviceConfigManager && typeof serviceConfigManager.getServiceConfig === 'function') {
-        try {
-          config = await serviceConfigManager.getServiceConfig('notebooks');
-          mode = config?.deploymentMode || 'docker';
-        } catch (configError) {
-          log.warn('Error getting service config, using default mode:', configError.message);
-        }
-      } else {
-        log.warn('Service config manager not available or getServiceConfig method not found, using default mode');
-      }
-      
-      let serviceUrl = null;
+          log.info(`📊 Python Backend Status from CentralServiceManager: mode=${mode}, state=${serviceStatus.state}, url=${serviceUrl}`);
 
-      if (mode === 'docker') {
-        // Check if Docker is running first
-        const dockerRunning = await dockerSetup.isDockerRunning();
-        if (dockerRunning) {
-          const healthResult = await dockerSetup.isPythonRunning();
-          if (dockerSetup.ports && dockerSetup.ports.python) {
-            serviceUrl = `http://localhost:${dockerSetup.ports.python}`;
+          // CRITICAL FIX: Don't trust the state alone - actually verify health!
+          // The state might say 'running' but the container could be stopped/crashed
+          let actualHealthy = false;
+          
+          if (stateIsRunning) {
+            // Verify actual health based on mode
+            if (mode === 'docker') {
+              // Check Docker container health
+              actualHealthy = dockerSetup ? await dockerSetup.isPythonRunning() : false;
+              log.info(`🔍 Docker health check result: ${actualHealthy}`);
+            } else if (mode === 'remote' || mode === 'manual') {
+              // Check remote/manual endpoint health
+              try {
+                const { createManualHealthCheck } = require('./serviceDefinitions.cjs');
+                const healthCheck = createManualHealthCheck(serviceUrl, '/health');
+                actualHealthy = await healthCheck();
+                log.info(`🔍 ${mode} health check result: ${actualHealthy}`);
+              } catch (err) {
+                log.warn(`Health check failed for ${mode} mode:`, err);
+                actualHealthy = false;
+              }
+            }
           }
-          return { isHealthy: healthResult, serviceUrl, mode };
-        } else {
-          return { isHealthy: false, serviceUrl: null, mode, error: 'Docker is not running' };
+
+          // Return different messages based on deployment mode and ACTUAL health
+          if (mode === 'docker') {
+            if (!actualHealthy) {
+              // Check if Docker is available to provide better error message
+              const dockerRunning = dockerSetup ? await dockerSetup.isDockerRunning() : false;
+              if (!dockerRunning) {
+                return {
+                  isHealthy: false,
+                  serviceUrl: null,
+                  mode,
+                  error: 'Docker is not running. Please start Docker Desktop.'
+                };
+              }
+              return {
+                isHealthy: false,
+                serviceUrl: null,
+                mode,
+                error: 'Python Backend Docker container is not running'
+              };
+            }
+            return { isHealthy: true, serviceUrl: serviceUrl || 'http://localhost:5001', mode };
+          } else if (mode === 'remote') {
+            if (!actualHealthy) {
+              return {
+                isHealthy: false,
+                serviceUrl,
+                mode,
+                error: `Remote server at ${serviceUrl || 'unknown'} is unreachable. Would you like to start the Docker container instead?`
+              };
+            }
+            return { isHealthy: true, serviceUrl, mode };
+          } else if (mode === 'manual') {
+            if (!actualHealthy) {
+              return {
+                isHealthy: false,
+                serviceUrl,
+                mode,
+                error: `Manual server at ${serviceUrl || 'unknown'} is unreachable. Would you like to start the Docker container instead?`
+              };
+            }
+            return { isHealthy: true, serviceUrl, mode };
+          }
         }
+      }
+
+      // Fallback to legacy check if CentralServiceManager is not available
+      if (!dockerSetup) {
+        return { isHealthy: false, serviceUrl: null, mode: 'docker', error: 'Service manager not initialized' };
+      }
+
+      // Legacy Docker check
+      const dockerRunning = await dockerSetup.isDockerRunning();
+      if (dockerRunning) {
+        const healthResult = await dockerSetup.isPythonRunning();
+        const serviceUrl = dockerSetup.ports && dockerSetup.ports.python
+          ? `http://localhost:${dockerSetup.ports.python}`
+          : 'http://localhost:5001';
+        return { isHealthy: healthResult, serviceUrl, mode: 'docker' };
       } else {
-        // Manual mode - check configured URL
-        const manualUrl = config?.manualUrl;
-        if (manualUrl) {
-          serviceUrl = manualUrl;
-          // For manual mode, we can try to ping the URL
-          const healthResult = await dockerSetup.isPythonRunning();
-          return { isHealthy: healthResult, serviceUrl, mode };
-        } else {
-          return { isHealthy: false, serviceUrl: null, mode, error: 'No manual URL configured' };
-        }
+        return { isHealthy: false, serviceUrl: null, mode: 'docker', error: 'Docker is not running' };
       }
     } catch (error) {
       log.error('Error checking Python backend status:', error);
@@ -3498,7 +1970,105 @@ function registerPythonBackendHandlers() {
     }
   });
 
+  // Check Python Backend service status (unified pattern like N8N/ComfyUI)
+  ipcMain.handle('python-backend:check-service-status', async () => {
+    try {
+      if (!dockerSetup) {
+        return { running: false, error: 'Docker setup not initialized' };
+      }
+
+      // Check service configuration mode
+      let pythonRunning = false;
+      let serviceUrl = 'http://localhost:5001';
+
+      if (serviceConfigManager && typeof serviceConfigManager.getServiceMode === 'function') {
+        try {
+          const pythonMode = serviceConfigManager.getServiceMode('python-backend');
+          if (pythonMode === 'manual' && typeof serviceConfigManager.getServiceUrl === 'function') {
+            const pythonUrl = serviceConfigManager.getServiceUrl('python-backend');
+            if (pythonUrl) {
+              serviceUrl = pythonUrl;
+              try {
+                const { createManualHealthCheck } = require('./serviceDefinitions.cjs');
+                const healthCheck = createManualHealthCheck(pythonUrl, '/health');
+                pythonRunning = await healthCheck();
+              } catch (error) {
+                log.error('Error checking manual Python Backend health:', error);
+                pythonRunning = false;
+              }
+            }
+          } else if (pythonMode === 'remote' && typeof serviceConfigManager.getServiceUrl === 'function') {
+            const pythonUrl = serviceConfigManager.getServiceUrl('python-backend');
+            if (pythonUrl) {
+              serviceUrl = pythonUrl;
+              try {
+                const { createManualHealthCheck } = require('./serviceDefinitions.cjs');
+                const healthCheck = createManualHealthCheck(pythonUrl, '/health');
+                pythonRunning = await healthCheck();
+              } catch (error) {
+                log.error('Error checking remote Python Backend health:', error);
+                pythonRunning = false;
+              }
+            }
+          } else {
+            // Docker mode
+            pythonRunning = await dockerSetup.isPythonRunning();
+            if (dockerSetup.ports && dockerSetup.ports.python) {
+              serviceUrl = `http://localhost:${dockerSetup.ports.python}`;
+            }
+          }
+        } catch (error) {
+          log.warn('Error checking service config, falling back to Docker check:', error);
+          pythonRunning = await dockerSetup.isPythonRunning();
+        }
+      } else {
+        // Fallback to Docker check if service config manager not available
+        pythonRunning = await dockerSetup.isPythonRunning();
+      }
+
+      return { running: pythonRunning, serviceUrl };
+    } catch (error) {
+      log.error('Error checking Python Backend status:', error);
+      return { running: false, serviceUrl: 'http://localhost:5001', error: error.message };
+    }
+  });
+
+  // Get Python Backend URL (for frontend services to use)
+  ipcMain.handle('python-backend:get-url', async () => {
+    try {
+      // Default URL
+      let serviceUrl = 'http://localhost:5001';
+
+      if (serviceConfigManager && typeof serviceConfigManager.getServiceMode === 'function') {
+        try {
+          const pythonMode = serviceConfigManager.getServiceMode('python-backend');
+          if ((pythonMode === 'manual' || pythonMode === 'remote') && typeof serviceConfigManager.getServiceUrl === 'function') {
+            const pythonUrl = serviceConfigManager.getServiceUrl('python-backend');
+            if (pythonUrl) {
+              serviceUrl = pythonUrl;
+            }
+          } else if (pythonMode === 'docker') {
+            // Docker mode - check if container is running and get actual port
+            if (dockerSetup && dockerSetup.ports && dockerSetup.ports.python) {
+              serviceUrl = `http://localhost:${dockerSetup.ports.python}`;
+            }
+          }
+        } catch (error) {
+          log.warn('Error getting Python Backend URL from config, using default:', error);
+        }
+      }
+
+      return { success: true, url: serviceUrl };
+    } catch (error) {
+      log.error('Error getting Python Backend URL:', error);
+      return { success: false, url: 'http://localhost:5001', error: error.message };
+    }
+  });
+
   // Start Python backend container
+  // Returns: { success: boolean, status?: ServiceStatus, error?: string }
+  // Where ServiceStatus = { isHealthy: boolean, serviceUrl: string, mode: 'docker' | 'remote' | 'manual' }
+  // The status object is returned directly to avoid race conditions with check-python-status
   ipcMain.handle('start-python-container', async () => {
     try {
       if (!dockerSetup) {
@@ -3558,7 +2128,27 @@ function registerPythonBackendHandlers() {
             });
           }
           log.info('Python backend container started and is healthy');
-          return { success: true };
+
+          // Update CentralServiceManager state
+          const serviceUrl = dockerSetup.ports && dockerSetup.ports.python
+            ? `http://localhost:${dockerSetup.ports.python}`
+            : 'http://localhost:5001';
+            
+          if (centralServiceManager) {
+            centralServiceManager.setServiceUrl('python-backend', serviceUrl);
+            centralServiceManager.setState('python-backend', centralServiceManager.states.RUNNING);
+            log.info('✅ Updated CentralServiceManager: python-backend is running');
+          }
+
+          // Return the status directly to avoid race condition with check-python-status
+          return { 
+            success: true,
+            status: {
+              isHealthy: true,
+              serviceUrl: serviceUrl,
+              mode: 'docker'
+            }
+          };
         }
         
         attempts++;
@@ -3574,18 +2164,418 @@ function registerPythonBackendHandlers() {
   log.info('Python Backend IPC handlers registered');
 }
 
+// Register isolated startup settings IPC handlers
+function registerStartupSettingsHandlers() {
+  // Initialize startup settings manager
+  const manager = ensureStartupSettingsManager();
+  log.info('🔒 Isolated startup settings manager initialized');
+
+  // Get startup settings (read-only for other services)
+  ipcMain.handle('startup-settings:get', async () => {
+    try {
+      const settings = manager.getSettingsWithSync();
+      log.info('📄 Startup settings requested:', Object.keys(settings));
+      return { success: true, settings };
+    } catch (error) {
+      log.error('Error getting startup settings:', error);
+      return { success: false, error: error.message, settings: startupSettingsManager.defaultSettings };
+    }
+  });
+
+  // Update startup settings (requires explicit consent through this handler only)
+  ipcMain.handle('startup-settings:update', async (event, newSettings, userConsent = false) => {
+    try {
+      if (!userConsent) {
+        log.warn('⚠️ Startup settings update attempted without user consent');
+        return { success: false, error: 'User consent required for startup settings changes' };
+      }
+
+      log.info('🔒 Startup settings update with user consent:', Object.keys(newSettings));
+      
+      const updatedSettings = manager.updateSettings(newSettings);
+
+      // Apply auto-start behaviour when relevant settings change
+      const shouldUpdateLoginItem =
+        newSettings.autoStart !== undefined || newSettings.startMinimized !== undefined;
+
+      if (shouldUpdateLoginItem && (process.platform === 'darwin' || process.platform === 'win32')) {
+        const openAtLogin = !updatedSettings.isDevelopment && !!updatedSettings.autoStart;
+        const openAsHidden = !!updatedSettings.startMinimized;
+
+        if (!openAtLogin) {
+          log.info('Disabling login item for ClaraVerse');
+          app.setLoginItemSettings({
+            openAtLogin: false,
+            openAsHidden: false
+          });
+        } else {
+          log.info('Updating login item preferences for ClaraVerse');
+          app.setLoginItemSettings({
+            openAtLogin,
+            openAsHidden,
+            path: process.execPath,
+            args: []
+          });
+        }
+      }
+
+      return { success: true, settings: updatedSettings };
+    } catch (error) {
+      log.error('Error updating startup settings:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Validate settings integrity
+  ipcMain.handle('startup-settings:validate', async (event, frontendChecksum) => {
+    try {
+      const settings = manager.getSettingsWithSync();
+      const isValid = settings.checksum === frontendChecksum;
+      
+      if (!isValid) {
+        log.warn('⚠️ Startup settings checksum mismatch detected!');
+        log.warn('Backend checksum:', settings.checksum);
+        log.warn('Frontend checksum:', frontendChecksum);
+      }
+
+      return { 
+        success: true, 
+        isValid, 
+        settings: isValid ? null : settings // Only send settings if mismatch
+      };
+    } catch (error) {
+      log.error('Error validating startup settings:', error);
+      return { success: false, error: error.message, isValid: false };
+    }
+  });
+
+  // Reset to defaults (requires explicit confirmation)
+  ipcMain.handle('startup-settings:reset', async (event, confirmed = false) => {
+    try {
+      if (!confirmed) {
+        return { success: false, error: 'Reset confirmation required' };
+      }
+
+      log.info('🔄 Resetting startup settings to defaults');
+      const defaultSettings = { ...manager.defaultSettings };
+      manager.writeSettings(defaultSettings);
+
+      return { success: true, settings: defaultSettings };
+    } catch (error) {
+      log.error('Error resetting startup settings:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Get file status (for debugging)
+  ipcMain.handle('startup-settings:get-file-status', async () => {
+    try {
+      const stats = {
+        mainFileExists: fs.existsSync(manager.settingsFile),
+        backupFileExists: fs.existsSync(manager.backupFile),
+        lockFileExists: fs.existsSync(manager.lockFile),
+        filePath: manager.settingsFile
+      };
+
+      if (stats.mainFileExists) {
+        const fileStats = fs.statSync(manager.settingsFile);
+        stats.lastModified = fileStats.mtime;
+        stats.fileSize = fileStats.size;
+      }
+
+      return { success: true, stats };
+    } catch (error) {
+      log.error('Error getting startup settings file status:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  log.info('🔒 Isolated startup settings IPC handlers registered');
+}
+
+// Dedicated startup settings manager - isolated from other services
+class StartupSettingsManager {
+  constructor() {
+    this.settingsFile = path.join(app.getPath('userData'), 'clara-startup-settings.json');
+    this.lockFile = this.settingsFile + '.lock';
+    this.backupFile = this.settingsFile + '.backup';
+    this.defaultSettings = {
+      startFullscreen: false,
+      startMinimized: false,
+      autoStart: false,
+      checkUpdates: true,
+      restoreLastSession: true,
+      autoStartMCP: true,
+      isDevelopment: process.env.NODE_ENV === 'development' || !app.isPackaged,
+      version: 1,
+      lastModified: Date.now()
+    };
+  }
+
+  // Check if file is locked by another operation
+  isLocked() {
+    return fs.existsSync(this.lockFile);
+  }
+
+  // Create lock file to prevent concurrent access
+  createLock() {
+    fs.writeFileSync(this.lockFile, JSON.stringify({ pid: process.pid, timestamp: Date.now() }));
+  }
+
+  // Remove lock file
+  removeLock() {
+    try {
+      if (fs.existsSync(this.lockFile)) {
+        fs.unlinkSync(this.lockFile);
+      }
+    } catch (error) {
+      log.warn('Failed to remove startup settings lock:', error);
+    }
+  }
+
+  // Read startup settings with backup recovery
+  readSettings() {
+    try {
+      let settings = null;
+      
+      // Try main file first
+      if (fs.existsSync(this.settingsFile)) {
+        try {
+          const data = fs.readFileSync(this.settingsFile, 'utf8');
+          settings = JSON.parse(data);
+          log.info('📄 Startup settings loaded from main file');
+        } catch (parseError) {
+          log.warn('Main startup settings file corrupted, trying backup...', parseError);
+          
+          // Try backup file
+          if (fs.existsSync(this.backupFile)) {
+            try {
+              const backupData = fs.readFileSync(this.backupFile, 'utf8');
+              settings = JSON.parse(backupData);
+              log.info('📄 Startup settings recovered from backup file');
+              
+              // Restore main file from backup
+              fs.writeFileSync(this.settingsFile, backupData);
+              log.info('📄 Main startup settings file restored from backup');
+            } catch (backupError) {
+              log.error('Backup startup settings file also corrupted:', backupError);
+            }
+          }
+        }
+      }
+
+      // If no valid settings found, use defaults
+      if (!settings || typeof settings !== 'object') {
+        log.info('📄 Using default startup settings');
+        settings = { ...this.defaultSettings };
+        this.writeSettings(settings); // Create initial file
+      }
+
+      // Merge with defaults for any missing properties
+      return { ...this.defaultSettings, ...settings };
+    } catch (error) {
+      log.error('Error reading startup settings:', error);
+      return { ...this.defaultSettings };
+    }
+  }
+
+  // Write startup settings with atomic operation and backup
+  writeSettings(settings) {
+    if (this.isLocked()) {
+      throw new Error('Startup settings are locked by another operation');
+    }
+
+    try {
+      this.createLock();
+
+      // Create backup of current file
+      if (fs.existsSync(this.settingsFile)) {
+        fs.copyFileSync(this.settingsFile, this.backupFile);
+      }
+
+      // Add metadata
+      const settingsWithMeta = {
+        ...settings,
+        version: this.defaultSettings.version,
+        lastModified: Date.now(),
+        isDevelopment: process.env.NODE_ENV === 'development' || !app.isPackaged
+      };
+
+      // Write to temporary file first (atomic operation)
+      const tempFile = this.settingsFile + '.tmp';
+      fs.writeFileSync(tempFile, JSON.stringify(settingsWithMeta, null, 2));
+
+      // Verify write was successful
+      const verifyData = fs.readFileSync(tempFile, 'utf8');
+      const verifySettings = JSON.parse(verifyData);
+      
+      if (!verifySettings || typeof verifySettings !== 'object') {
+        throw new Error('Settings verification failed - corrupted data');
+      }
+
+      // Atomic rename (replaces main file)
+      fs.renameSync(tempFile, this.settingsFile);
+
+      log.info('📄 Startup settings saved successfully:', {
+        startFullscreen: settingsWithMeta.startFullscreen,
+        startMinimized: settingsWithMeta.startMinimized,
+        autoStart: settingsWithMeta.autoStart,
+        checkUpdates: settingsWithMeta.checkUpdates,
+        restoreLastSession: settingsWithMeta.restoreLastSession,
+        autoStartMCP: settingsWithMeta.autoStartMCP,
+        isDevelopment: settingsWithMeta.isDevelopment
+      });
+
+      return { success: true };
+    } catch (error) {
+      log.error('Error writing startup settings:', error);
+      
+      // Clean up temp file if it exists
+      const tempFile = this.settingsFile + '.tmp';
+      if (fs.existsSync(tempFile)) {
+        try {
+          fs.unlinkSync(tempFile);
+        } catch (cleanupError) {
+          log.warn('Failed to cleanup temp file:', cleanupError);
+        }
+      }
+
+      throw error;
+    } finally {
+      this.removeLock();
+    }
+  }
+
+  // Update specific startup settings
+  updateSettings(newSettings) {
+    const currentSettings = this.readSettings();
+    const updatedSettings = { ...currentSettings, ...newSettings };
+    this.writeSettings(updatedSettings);
+    return updatedSettings;
+  }
+
+  // Get settings with frontend sync validation
+  getSettingsWithSync() {
+    const settings = this.readSettings();
+    
+    // Add checksum for frontend validation
+    const settingsString = JSON.stringify({
+      startFullscreen: settings.startFullscreen,
+      startMinimized: settings.startMinimized,
+      autoStart: settings.autoStart,
+      checkUpdates: settings.checkUpdates,
+      restoreLastSession: settings.restoreLastSession,
+      autoStartMCP: settings.autoStartMCP
+    });
+    
+    const crypto = require('crypto');
+    const checksum = crypto.createHash('md5').update(settingsString).digest('hex');
+    
+    return {
+      ...settings,
+      checksum
+    };
+  }
+}
+
+// Global startup settings manager instance (initialized in app ready event)
+let startupSettingsManager;
+
+function ensureStartupSettingsManager() {
+  if (!startupSettingsManager) {
+    startupSettingsManager = new StartupSettingsManager();
+  }
+  return startupSettingsManager;
+}
+
+function loadLegacyStartupPreferences() {
+  try {
+    const legacyPath = path.join(app.getPath('userData'), 'clara-settings.json');
+    if (!fs.existsSync(legacyPath)) {
+      return null;
+    }
+
+    const legacyContent = JSON.parse(fs.readFileSync(legacyPath, 'utf8'));
+    const legacyStartup = legacyContent.startup || {};
+
+    return {
+      startFullscreen:
+        typeof legacyStartup.startFullscreen === 'boolean'
+          ? legacyStartup.startFullscreen
+          : typeof legacyContent.fullscreen_startup === 'boolean'
+            ? legacyContent.fullscreen_startup
+            : undefined,
+      startMinimized:
+        typeof legacyStartup.startMinimized === 'boolean'
+          ? legacyStartup.startMinimized
+          : undefined,
+      autoStartMCP:
+        typeof legacyStartup.autoStartMCP === 'boolean'
+          ? legacyStartup.autoStartMCP
+          : undefined
+    };
+  } catch (error) {
+    log.warn('Failed to read legacy startup settings:', error);
+    return null;
+  }
+}
+
+function getStartupPreferences() {
+  let settings;
+  try {
+    const manager = ensureStartupSettingsManager();
+    settings = manager.readSettings();
+  } catch (error) {
+    log.error('Error loading startup settings, using defaults:', error);
+    settings = {
+      startFullscreen: false,
+      startMinimized: false,
+      autoStart: false,
+      checkUpdates: true,
+      restoreLastSession: true,
+      autoStartMCP: true,
+      isDevelopment: process.env.NODE_ENV === 'development' || !app.isPackaged
+    };
+  }
+
+  const legacy = loadLegacyStartupPreferences();
+  if (legacy) {
+    if (typeof settings.startFullscreen !== 'boolean' && typeof legacy.startFullscreen === 'boolean') {
+      settings.startFullscreen = legacy.startFullscreen;
+    }
+    if (typeof settings.startMinimized !== 'boolean' && typeof legacy.startMinimized === 'boolean') {
+      settings.startMinimized = legacy.startMinimized;
+    }
+    if (typeof settings.autoStartMCP !== 'boolean' && typeof legacy.autoStartMCP === 'boolean') {
+      settings.autoStartMCP = legacy.autoStartMCP;
+    }
+  }
+
+  return {
+    settings,
+    startFullscreen: !!settings.startFullscreen,
+    startMinimized: !!settings.startMinimized,
+    autoStartMCP: settings.autoStartMCP !== false,
+    isDevelopment: !!settings.isDevelopment
+  };
+}
+
 // Register handlers for various app functions
 function registerHandlers() {
   console.log('[main] Registering IPC handlers...');
-  registerLlamaSwapHandlers();
+  
+  // Setup activity tracking for adaptive health checks (MUST BE FIRST)
+  const { setupActivityTracking } = require('./activityTracking.cjs');
+  setupActivityTracking();
+  
   registerDockerContainerHandlers();
-  registerModelManagerHandlers();
   registerMCPHandlers();
   registerServiceConfigurationHandlers(); // NEW: Add service configuration handlers
   registerWidgetServiceHandlers(); // NEW: Add widget service handlers
   registerN8NHandlers(); // NEW: Add N8N specific handlers
   registerComfyUIHandlers(); // NEW: Add ComfyUI specific handlers
   registerPythonBackendHandlers(); // NEW: Add Python Backend specific handlers
+  registerStartupSettingsHandlers(); // NEW: Add isolated startup settings handlers
   
   // Add new chat handler
   ipcMain.handle('new-chat', async () => {
@@ -3656,7 +2646,6 @@ function registerHandlers() {
       systemConfig: global.systemConfig || null,
       dockerAvailable: dockerSetup ? await dockerSetup.isDockerRunning() : false,
       servicesStatus: {
-        llamaSwap: llamaSwapService ? llamaSwapService.isRunning : false,
         mcp: mcpService ? true : false,
         docker: dockerSetup ? true : false,
         watchdog: watchdogService ? watchdogService.isRunning : false
@@ -3695,11 +2684,6 @@ function registerHandlers() {
           });
           break;
           
-        case 'llamaSwap':
-          if (!llamaSwapService) llamaSwapService = new LlamaSwapService(ipcLogger);
-          await llamaSwapService.start();
-          break;
-          
         case 'mcp':
           if (!mcpService) mcpService = new MCPService();
           await mcpService.startAllEnabledServers();
@@ -3707,7 +2691,7 @@ function registerHandlers() {
           
         case 'watchdog':
           if (!watchdogService && dockerSetup?.docker) {
-            watchdogService = new WatchdogService(dockerSetup, llamaSwapService, mcpService);
+            watchdogService = new WatchdogService(dockerSetup, mcpService);
             watchdogService.start();
           }
           break;
@@ -3727,14 +2711,6 @@ function registerHandlers() {
 
   ipcMain.handle('get-update-info', () => {
     return getUpdateInfo();
-  });
-
-  ipcMain.handle('check-llamacpp-updates', () => {
-    return checkLlamacppUpdates();
-  });
-
-  ipcMain.handle('update-llamacpp-binaries', () => {
-    return updateLlamacppBinaries();
   });
 
   // Enhanced update handlers for in-app downloading
@@ -4096,12 +3072,245 @@ function registerHandlers() {
       if (!dockerSetup) {
         throw new Error('Docker not initialized');
       }
-      
+
       log.info('Manual ComfyUI optimization requested');
       await dockerSetup.optimizeComfyUIContainer();
       return { success: true, message: 'ComfyUI optimization completed' };
     } catch (error) {
       log.error('Error optimizing ComfyUI:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // ClaraCore Service IPC Handlers
+  ipcMain.handle('claracore-start', async () => {
+    try {
+      log.info('Starting ClaraCore service...');
+
+      // Check if service manager has claracore service
+      if (centralServiceManager && centralServiceManager.services.has('claracore')) {
+        await centralServiceManager.startService('claracore');
+        return { success: true, message: 'ClaraCore service started successfully' };
+      }
+
+      return { success: false, error: 'ClaraCore service not registered' };
+    } catch (error) {
+      log.error('Error starting ClaraCore:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('claracore-stop', async () => {
+    try {
+      log.info('Stopping ClaraCore service...');
+
+      if (centralServiceManager && centralServiceManager.services.has('claracore')) {
+        await centralServiceManager.stopService('claracore');
+        return { success: true, message: 'ClaraCore service stopped successfully' };
+      }
+
+      return { success: false, error: 'ClaraCore service not registered' };
+    } catch (error) {
+      log.error('Error stopping ClaraCore:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('claracore-restart', async () => {
+    try {
+      log.info('Restarting ClaraCore service...');
+
+      if (centralServiceManager && centralServiceManager.services.has('claracore')) {
+        await centralServiceManager.restartService('claracore');
+        return { success: true, message: 'ClaraCore service restarted successfully' };
+      }
+
+      return { success: false, error: 'ClaraCore service not registered' };
+    } catch (error) {
+      log.error('Error restarting ClaraCore:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('claracore-status', async () => {
+    try {
+      if (centralServiceManager && centralServiceManager.services.has('claracore')) {
+        const service = centralServiceManager.services.get('claracore');
+        const status = {
+          isRunning: service.state === 'running',
+          state: service.state,
+          pid: service.instance?.process?.pid || null,
+          uptime: service.instance?.startTime ? Date.now() - service.instance.startTime : 0,
+          restartAttempts: service.restartAttempts || 0,
+          url: 'http://localhost:8091'
+        };
+        return { success: true, status };
+      }
+
+      return { success: false, error: 'ClaraCore service not registered' };
+    } catch (error) {
+      log.error('Error getting ClaraCore status:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // ClaraCore Docker mode handlers
+  let claraCoreDockerService = null;
+  const getClaraCoreDockerService = () => {
+    if (!claraCoreDockerService) {
+      const ClaraCoreDockerService = require('./claraCoreDockerService.cjs');
+      claraCoreDockerService = new ClaraCoreDockerService();
+    }
+    return claraCoreDockerService;
+  };
+
+  ipcMain.handle('claracore-docker-start', async (event, options = {}) => {
+    try {
+      log.info('Starting ClaraCore in Docker mode...');
+      const service = getClaraCoreDockerService();
+      const result = await service.start(options);
+
+      // Update central service manager state
+      if (centralServiceManager) {
+        const claraCoreService = centralServiceManager.services.get('claracore');
+        if (claraCoreService) {
+          centralServiceManager.setState('claracore', centralServiceManager.states.RUNNING);
+          claraCoreService.deploymentMode = 'docker';
+          claraCoreService.serviceUrl = 'http://localhost:8091';
+          claraCoreService.instance = service;
+          log.info('✅ Updated CentralServiceManager: ClaraCore is now RUNNING in Docker mode');
+        }
+      }
+
+      // Save deployment mode preference to configuration
+      if (serviceConfigManager) {
+        try {
+          serviceConfigManager.setServiceConfig('claracore', 'docker', null);
+          log.info('✅ Saved ClaraCore deployment mode preference: docker');
+        } catch (error) {
+          log.warn('Failed to save deployment mode preference:', error);
+        }
+      }
+
+      return { success: true, ...result };
+    } catch (error) {
+      log.error('Error starting ClaraCore Docker:', error);
+
+      // Update central service manager state on error
+      if (centralServiceManager) {
+        const claraCoreService = centralServiceManager.services.get('claracore');
+        if (claraCoreService) {
+          centralServiceManager.setState('claracore', centralServiceManager.states.ERROR);
+          claraCoreService.lastError = error;
+        }
+      }
+
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('claracore-docker-stop', async () => {
+    try {
+      log.info('Stopping ClaraCore Docker container...');
+      const service = getClaraCoreDockerService();
+      const result = await service.stop();
+
+      // Update central service manager state
+      if (centralServiceManager) {
+        const claraCoreService = centralServiceManager.services.get('claracore');
+        if (claraCoreService) {
+          centralServiceManager.setState('claracore', centralServiceManager.states.STOPPED);
+          claraCoreService.deploymentMode = null;
+          claraCoreService.serviceUrl = null;
+          claraCoreService.instance = null;
+          log.info('✅ Updated CentralServiceManager: ClaraCore is now STOPPED');
+        }
+      }
+
+      return { success: true, ...result };
+    } catch (error) {
+      log.error('Error stopping ClaraCore Docker:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('claracore-docker-restart', async () => {
+    try {
+      log.info('Restarting ClaraCore Docker container...');
+      const service = getClaraCoreDockerService();
+      const result = await service.restart();
+
+      // Update central service manager state
+      if (centralServiceManager) {
+        const claraCoreService = centralServiceManager.services.get('claracore');
+        if (claraCoreService) {
+          centralServiceManager.setState('claracore', centralServiceManager.states.RUNNING);
+          claraCoreService.deploymentMode = 'docker';
+          claraCoreService.serviceUrl = 'http://localhost:8091';
+          claraCoreService.instance = service;
+          log.info('✅ Updated CentralServiceManager: ClaraCore restarted in Docker mode');
+        }
+      }
+
+      return { success: true, ...result };
+    } catch (error) {
+      log.error('Error restarting ClaraCore Docker:', error);
+
+      // Update central service manager state on error
+      if (centralServiceManager) {
+        const claraCoreService = centralServiceManager.services.get('claracore');
+        if (claraCoreService) {
+          centralServiceManager.setState('claracore', centralServiceManager.states.ERROR);
+          claraCoreService.lastError = error;
+        }
+      }
+
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('claracore-docker-status', async () => {
+    try {
+      const service = getClaraCoreDockerService();
+      const status = await service.getStatus();
+      return { success: true, status };
+    } catch (error) {
+      log.error('Error getting ClaraCore Docker status:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('claracore-docker-detect-gpu', async () => {
+    try {
+      log.info('Detecting GPU for ClaraCore Docker...');
+      const service = getClaraCoreDockerService();
+      const gpuInfo = await service.detectGPU();
+      return { success: true, gpuInfo };
+    } catch (error) {
+      log.error('Error detecting GPU:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('claracore-docker-remove', async () => {
+    try {
+      log.info('Removing ClaraCore Docker container...');
+      const service = getClaraCoreDockerService();
+      const result = await service.remove();
+      return { success: true, ...result };
+    } catch (error) {
+      log.error('Error removing ClaraCore Docker container:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('claracore-docker-logs', async (event, options = {}) => {
+    try {
+      const service = getClaraCoreDockerService();
+      const logs = await service.getLogs(options);
+      return { success: true, logs };
+    } catch (error) {
+      log.error('Error getting ClaraCore Docker logs:', error);
       return { success: false, error: error.message };
     }
   });
@@ -4126,59 +3335,6 @@ function registerHandlers() {
     }
   });
 
-  // System resource configuration handlers
-  ipcMain.handle('get-system-config', async () => {
-    try {
-      if (global.systemConfig) {
-        log.info('✅ Returning cached system configuration');
-        return global.systemConfig;
-      }
-      
-      // If no cached config, try to load from platform manager
-      const platformManager = new PlatformManager(path.join(__dirname, 'llamacpp-binaries'));
-      const config = await platformManager.getSystemConfiguration();
-      
-      // Cache it globally
-      global.systemConfig = config;
-      
-      return config;
-    } catch (error) {
-      log.error('❌ Error getting system configuration:', error);
-      return { error: error.message };
-    }
-  });
-
-  ipcMain.handle('refresh-system-config', async () => {
-    try {
-      log.info('🔄 Refreshing system configuration...');
-      
-      const platformManager = new PlatformManager(path.join(__dirname, 'llamacpp-binaries'));
-      const config = await platformManager.getSystemConfiguration(true); // Force refresh
-      
-      // Update global cache
-      global.systemConfig = config;
-      
-      log.info('✅ System configuration refreshed successfully');
-      return config;
-    } catch (error) {
-      log.error('❌ Error refreshing system configuration:', error);
-      return { error: error.message };
-    }
-  });
-
-  ipcMain.handle('check-feature-requirements', async (event, featureName) => {
-    try {
-      const platformManager = new PlatformManager(path.join(__dirname, 'llamacpp-binaries'));
-      const requirements = await platformManager.checkFeatureRequirements(featureName);
-      
-      log.info(`🔍 Feature requirements check for '${featureName}':`, requirements);
-      return requirements;
-    } catch (error) {
-      log.error(`❌ Error checking requirements for feature '${featureName}':`, error);
-      return { supported: false, reason: error.message };
-    }
-  });
-
   ipcMain.handle('get-performance-mode', async () => {
     try {
       if (global.systemConfig) {
@@ -4192,45 +3348,6 @@ function registerHandlers() {
       return { performanceMode: 'unknown', enabledFeatures: {}, resourceLimitations: {} };
     } catch (error) {
       log.error('❌ Error getting performance mode:', error);
-      return { error: error.message };
-    }
-  });
-
-  // OS Compatibility handlers
-  ipcMain.handle('get-os-compatibility', async () => {
-    try {
-      if (global.systemConfig && global.systemConfig.osCompatibility) {
-        return global.systemConfig.osCompatibility;
-      } else {
-        // If not available globally, run fresh validation
-        const platformManager = new PlatformManager(path.join(__dirname, 'llamacpp-binaries'));
-        const osCompatibility = await platformManager.validateOSCompatibility();
-        return osCompatibility;
-      }
-    } catch (error) {
-      log.error('Error getting OS compatibility info:', error);
-      return { error: error.message };
-    }
-  });
-
-  ipcMain.handle('get-detailed-os-info', async () => {
-    try {
-      const platformManager = new PlatformManager(path.join(__dirname, 'llamacpp-binaries'));
-      const osInfo = await platformManager.getDetailedOSInfo();
-      return osInfo;
-    } catch (error) {
-      log.error('Error getting detailed OS info:', error);
-      return { error: error.message };
-    }
-  });
-
-  ipcMain.handle('validate-os-compatibility', async () => {
-    try {
-      const platformManager = new PlatformManager(path.join(__dirname, 'llamacpp-binaries'));
-      const compatibility = await platformManager.validateOSCompatibility();
-      return compatibility;
-    } catch (error) {
-      log.error('Error validating OS compatibility:', error);
       return { error: error.message };
     }
   });
@@ -4439,6 +3556,57 @@ function registerHandlers() {
     }
   });
 
+  // Watchdog service handlers
+  ipcMain.handle('watchdog-get-services-status', async () => {
+    try {
+      if (!watchdogService) {
+        return { success: false, error: 'Watchdog service not initialized' };
+      }
+      
+      return {
+        success: true,
+        services: watchdogService.getServicesStatus(),
+        overallHealth: watchdogService.getOverallHealth()
+      };
+    } catch (error) {
+      log.error('Error getting watchdog services status:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('watchdog-get-overall-health', async () => {
+    try {
+      if (!watchdogService) {
+        return { success: false, error: 'Watchdog service not initialized' };
+      }
+      
+      return {
+        success: true,
+        health: watchdogService.getOverallHealth()
+      };
+    } catch (error) {
+      log.error('Error getting watchdog overall health:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('watchdog-perform-manual-health-check', async () => {
+    try {
+      if (!watchdogService) {
+        return { success: false, error: 'Watchdog service not initialized' };
+      }
+      
+      const services = await watchdogService.performManualHealthCheck();
+      return {
+        success: true,
+        services: services
+      };
+    } catch (error) {
+      log.error('Error performing manual health check:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
   // Update containers
   ipcMain.handle('docker-update-containers', async (event, containerNames) => {
     try {
@@ -4566,18 +3734,15 @@ function registerHandlers() {
       try {
         log.info('React app ready - checking MCP auto-start setting...');
         
-        // Check startup settings for MCP auto-start
+        // Check startup settings for MCP auto-start using isolated startup settings
         let shouldAutoStartMCP = true; // Default to true for backward compatibility
-        
+
         try {
-          const settingsPath = path.join(app.getPath('userData'), 'clara-settings.json');
-          if (fs.existsSync(settingsPath)) {
-            const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-            const startupSettings = settings.startup || {};
-            shouldAutoStartMCP = startupSettings.autoStartMCP !== false; // Default to true if not set
-          }
+          const { autoStartMCP } = getStartupPreferences();
+          shouldAutoStartMCP = autoStartMCP;
+          log.info('🔒 Using isolated startup settings for MCP auto-start:', shouldAutoStartMCP);
         } catch (settingsError) {
-          log.warn('Error reading startup settings for MCP auto-start:', settingsError);
+          log.warn('Error reading isolated startup settings for MCP auto-start:', settingsError);
           // Default to true on error to maintain existing behavior
         }
 
@@ -4599,14 +3764,44 @@ function registerHandlers() {
       } catch (error) {
         log.error('Error auto-restoring MCP servers on app ready:', error);
       }
+
+      // Start MCP HTTP Proxy service for browser support
+      try {
+        log.info('🚀 Starting MCP HTTP proxy for browser support...');
+        const MCPProxyService = require('./mcpProxyService.cjs');
+        const mcpProxyService = new MCPProxyService(mcpService);
+        await mcpProxyService.start(8092);
+        log.info('✅ MCP HTTP proxy service started successfully on port 8092');
+      } catch (proxyError) {
+        log.error('❌ Error starting MCP HTTP proxy:', proxyError);
+      }
     }
   });
 
   // Handle app close request
-  ipcMain.on('app-close', async () => {
+  ipcMain.on('app-close', async (event) => {
     log.info('App close requested from renderer');
-    isQuitting = true;
-    app.quit();
+
+    try {
+      // Set quitting flag first
+      isQuitting = true;
+
+      // Close the main window gracefully if it exists
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.removeAllListeners('close'); // Remove close handler to allow closing
+        mainWindow.close();
+      }
+
+      // Give a small delay for the IPC response to be sent back
+      // before actually quitting the app
+      setTimeout(() => {
+        app.quit();
+      }, 100);
+    } catch (error) {
+      log.error('Error during app close:', error);
+      // Force quit if there's an error
+      app.quit();
+    }
   });
 
   // Add IPC handler for tray control
@@ -4623,6 +3818,15 @@ function registerHandlers() {
       }
       mainWindow.show();
       mainWindow.focus();
+      
+      // CRITICAL FIX: Force webContents focus when showing from tray
+      if (mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+        setTimeout(() => {
+          if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+            mainWindow.webContents.focus();
+          }
+        }, 100);
+      }
     } else {
       createMainWindow();
     }
@@ -4630,35 +3834,14 @@ function registerHandlers() {
 
   // Window management handlers
   ipcMain.handle('get-fullscreen-startup-preference', async () => {
-    try {
-      const userDataPath = app.getPath('userData');
-      const settingsPath = path.join(userDataPath, 'settings.json');
-      
-      if (fs.existsSync(settingsPath)) {
-        const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-        return settings.fullscreen_startup !== false; // Default to true if not set
-      }
-      return true; // Default to fullscreen
-    } catch (error) {
-      log.error('Error reading fullscreen startup preference:', error);
-      return true; // Default to fullscreen on error
-    }
+    const { startFullscreen } = getStartupPreferences();
+    return startFullscreen;
   });
 
   ipcMain.handle('set-fullscreen-startup-preference', async (event, enabled) => {
     try {
-      const userDataPath = app.getPath('userData');
-      const settingsPath = path.join(userDataPath, 'settings.json');
-      
-      let settings = {};
-      if (fs.existsSync(settingsPath)) {
-        settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-      }
-      
-      settings.fullscreen_startup = enabled;
-      fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
-      
-      log.info(`Fullscreen startup preference set to: ${enabled}`);
+      const updated = ensureStartupSettingsManager().updateSettings({ startFullscreen: !!enabled });
+      log.info(`Fullscreen startup preference set to: ${!!updated.startFullscreen}`);
       return true;
     } catch (error) {
       log.error('Error saving fullscreen startup preference:', error);
@@ -4794,6 +3977,219 @@ function registerHandlers() {
     } catch (error) {
       log.error(`Error restarting ${serviceName} service:`, error);
       return { success: false, error: error.message };
+    }
+  });
+
+  // Remote Docker connection IPC handlers
+  ipcMain.handle('docker-get-connection-info', async () => {
+    try {
+      if (!dockerSetup) {
+        return { mode: 'local', config: null, activeTunnels: [], isRemote: false };
+      }
+      return dockerSetup.getConnectionInfo();
+    } catch (error) {
+      log.error('Error getting Docker connection info:', error);
+      return { error: error.message };
+    }
+  });
+
+  ipcMain.handle('docker-test-remote-connection', async (event, config) => {
+    try {
+      if (!dockerSetup) {
+        throw new Error('Docker setup not initialized');
+      }
+      return await dockerSetup.testRemoteConnection(config);
+    } catch (error) {
+      log.error('Error testing remote Docker connection:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('docker-switch-connection', async (event, config) => {
+    try {
+      if (!dockerSetup) {
+        throw new Error('Docker setup not initialized');
+      }
+      const result = await dockerSetup.switchConnection(config);
+
+      // If switching to remote and successful, set up SSH tunnels for services
+      if (result.success && config.mode === 'remote') {
+        // Create tunnels for each service that will be used
+        const services = [
+          { name: 'python', localPort: 5001, remotePort: 5001 },
+          { name: 'n8n', localPort: 5678, remotePort: 5678 },
+          { name: 'comfyui', localPort: 8188, remotePort: 8188 }
+        ];
+
+        for (const service of services) {
+          try {
+            await dockerSetup.createSSHTunnel(service.localPort, service.remotePort, service.name);
+          } catch (tunnelError) {
+            log.warn(`Failed to create SSH tunnel for ${service.name}:`, tunnelError);
+          }
+        }
+      }
+
+      return result;
+    } catch (error) {
+      log.error('Error switching Docker connection:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('docker-create-ssh-tunnel', async (event, { localPort, remotePort, serviceName }) => {
+    try {
+      if (!dockerSetup) {
+        throw new Error('Docker setup not initialized');
+      }
+      await dockerSetup.createSSHTunnel(localPort, remotePort, serviceName);
+      return { success: true };
+    } catch (error) {
+      log.error(`Error creating SSH tunnel for ${serviceName}:`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // ClaraCore Remote Deployment IPC Handlers
+  ipcMain.handle('claracore-remote-test-setup', async (event, config) => {
+    try {
+      log.info('Testing ClaraCore remote setup...');
+      const service = new ClaraCoreRemoteService();
+      const result = await service.testSetup(config);
+      return result;
+    } catch (error) {
+      log.error('ClaraCore remote test error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('claracore-remote-deploy', async (event, config) => {
+    try {
+      log.info('Deploying ClaraCore to remote server...');
+      
+      // Show confirmation dialog for sudo operations
+      const { dialog } = require('electron');
+      const deploymentMethod = config.hardwareType === 'cuda' ? 'Docker' : 'Native Installation';
+      const methodDetails = config.hardwareType === 'cuda'
+        ? 'The deployment will install Docker and NVIDIA Container Toolkit on the remote server.'
+        : 'The deployment will install ClaraCore natively using the official installation script.';
+
+      const { response } = await dialog.showMessageBox({
+        type: 'warning',
+        title: 'Sudo Password Confirmation',
+        message: 'ClaraCore deployment requires sudo privileges',
+        detail: `Deployment Method: ${deploymentMethod}\n${methodDetails}\n\nServer: ${config.host}\n\nYour SSH password will be used for sudo commands. Continue?`,
+        buttons: ['Continue', 'Cancel'],
+        defaultId: 0,
+        cancelId: 1,
+        icon: null
+      });
+      
+      if (response === 1) {
+        log.info('User cancelled deployment');
+        return { success: false, error: 'Deployment cancelled by user' };
+      }
+      
+      // Stop local ClaraCore services before deploying to remote
+      log.info('🛑 Stopping local ClaraCore services before remote deployment...');
+      const stopResult = await stopAllLocalServices('claracore');
+      
+      if (stopResult.stopped.length > 0) {
+        log.info(`✅ Stopped: ${stopResult.stopped.join(', ')}`);
+      }
+      if (stopResult.errors.length > 0) {
+        log.warn(`⚠️ Some services had errors during stop (continuing): ${JSON.stringify(stopResult.errors)}`);
+      }
+      
+      const service = new ClaraCoreRemoteService();
+      const result = await service.deploy(config);
+      
+      if (result.success) {
+        log.info('✅ Successfully deployed ClaraCore to remote server');
+        result.localServicesStopped = stopResult.stopped;
+
+        // Automatically switch ClaraCore service to remote mode
+        try {
+          log.info('🔄 Auto-configuring ClaraCore service to use remote deployment...');
+
+          // Set service to remote mode with the deployed URL
+          if (serviceConfigManager) {
+            await serviceConfigManager.setServiceConfig('claracore', 'remote', result.url);
+            log.info(`✅ ClaraCore service configured: mode=remote, url=${result.url}`);
+          }
+
+          // Update CentralServiceManager state
+          if (centralServiceManager) {
+            // Get the service to update its deployment mode from config
+            const service = centralServiceManager.services.get('claracore');
+            if (service) {
+              service.deploymentMode = 'remote';
+            }
+
+            centralServiceManager.setServiceUrl('claracore', result.url);
+            centralServiceManager.setState('claracore', centralServiceManager.states.RUNNING);
+            log.info('✅ CentralServiceManager updated: ClaraCore is now RUNNING in remote mode');
+          }
+
+          // Notify frontend to update Clara's Core provider
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.webContents.send('claracore:remote-deployed', {
+              url: result.url,
+              hardwareType: config.hardwareType
+            });
+            log.info('✅ Notified frontend to update Clara\'s Core provider');
+          }
+
+          result.autoConfigured = true;
+        } catch (configError) {
+          log.error('Failed to auto-configure service (deployment still successful):', configError);
+          result.autoConfigured = false;
+          result.configError = configError.message;
+        }
+      }
+
+      return result;
+    } catch (error) {
+      log.error('ClaraCore remote deployment error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  // Monitor remote ClaraCore services
+  ipcMain.handle('claracore-remote:monitor', async (event, config) => {
+    try {
+      log.info('Monitoring remote ClaraCore services...');
+      const service = new ClaraCoreRemoteService();
+      const result = await service.monitorRemoteServices(config);
+      return result;
+    } catch (error) {
+      log.error('Remote monitoring error:', error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('docker-close-ssh-tunnel', async (event, serviceName) => {
+    try {
+      if (!dockerSetup) {
+        throw new Error('Docker setup not initialized');
+      }
+      await dockerSetup.closeSSHTunnel(serviceName);
+      return { success: true };
+    } catch (error) {
+      log.error(`Error closing SSH tunnel for ${serviceName}:`, error);
+      return { success: false, error: error.message };
+    }
+  });
+
+  ipcMain.handle('docker-get-active-tunnels', async () => {
+    try {
+      if (!dockerSetup) {
+        return [];
+      }
+      return dockerSetup.getActiveTunnels();
+    } catch (error) {
+      log.error('Error getting active SSH tunnels:', error);
+      return [];
     }
   });
 
@@ -5381,7 +4777,7 @@ async function initializeInBackground(selectedFeatures) {
         log.error('🚨 Critical OS compatibility issue detected');
         systemConfig.performanceMode = 'core-only';
         systemConfig.enabledFeatures = {
-          claraCore: true,
+          claraCore: false,
           dockerServices: false,
           comfyUI: false,
           advancedFeatures: false
@@ -5409,10 +4805,40 @@ async function initializeInBackground(selectedFeatures) {
         const serviceDefinition = SERVICE_DEFINITIONS[serviceName];
         centralServiceManager.registerService(serviceName, serviceDefinition);
       });
+
+      // Auto-start critical core services (ClaraCore) regardless of user settings
+      // ClaraCore is essential and should always run
+      try {
+        sendStatusUpdate('starting-claracore', { message: 'Starting Clara Core AI Engine...' });
+        
+        // Check which mode Clara Core was last used in
+        const claraCoreMode = serviceConfigManager.getServiceMode('claracore') || 'local';
+        log.info(`🔍 Clara Core deployment mode: ${claraCoreMode}`);
+        
+        if (claraCoreMode === 'docker') {
+          // Start in Docker mode
+          log.info('Starting Clara Core in Docker mode...');
+          const ClaraCoreDockerService = require('./claraCoreDockerService.cjs');
+          const dockerService = new ClaraCoreDockerService();
+          await dockerService.start();
+          log.info('✅ Clara Core AI Engine started in Docker mode');
+        } else if (claraCoreMode === 'remote') {
+          // Remote mode - don't start, just log
+          log.info('Clara Core is configured in Remote mode, skipping local startup');
+        } else {
+          // Start in Local binary mode (default)
+          log.info('Starting Clara Core in Local binary mode...');
+          await centralServiceManager.startService('claracore');
+          log.info('✅ Clara Core AI Engine started in Local mode');
+        }
+      } catch (claraCoreError) {
+        log.error('❌ Failed to start Clara Core AI Engine:', claraCoreError);
+        // Continue with app startup even if ClaraCore fails
+      }
     } catch (error) {
       log.warn('Service configuration managers initialization failed:', error);
     }
-    
+
     // Check Docker availability
     sendStatusUpdate('checking-docker', { message: 'Checking Docker availability...' });
     dockerSetup = new DockerSetup();
@@ -5424,24 +4850,7 @@ async function initializeInBackground(selectedFeatures) {
     
     // Always ensure core binaries are available (regardless of consent status)
     // This is essential for Clara Core to function properly
-    sendStatusUpdate('downloading-binaries', { message: 'Ensuring core binaries are available...' });
-    try {
-      // Initialize LlamaSwap service just for binary validation/download
-      if (!llamaSwapService) {
-        llamaSwapService = new LlamaSwapService(ipcLogger);
-      }
-      
-      // Validate binaries (this will auto-download if missing)
-      await llamaSwapService.validateBinaries();
-      sendStatusUpdate('binaries-ready', { message: 'Core binaries ready' });
-      console.log('✅ Core binaries validated and ready');
-    } catch (binaryError) {
-      log.error('❌ Failed to ensure core binaries:', binaryError);
-      sendStatusUpdate('binaries-error', { 
-        message: 'Failed to download core binaries - some features may not work',
-        error: binaryError.message 
-      });
-    }
+    sendStatusUpdate('ensuring-binaries', { message: 'Ensuring core binaries are available...' });
     
     // Only initialize services if user has completed onboarding and given consent
     const hasUserConsent = !global.needsFeatureSelection;
@@ -5525,7 +4934,6 @@ async function initializeInBackground(selectedFeatures) {
 async function initializeServicesWithDocker(selectedFeatures, sendStatusUpdate) {
   try {
     // Initialize core services
-    llamaSwapService = new LlamaSwapService(ipcLogger);
     updateService = platformUpdateService;
     
     if (selectedFeatures.ragAndTts) {
@@ -5543,7 +4951,7 @@ async function initializeServicesWithDocker(selectedFeatures, sendStatusUpdate) 
     await initializeServicesInBackground();
     
     // Initialize watchdog
-    watchdogService = new WatchdogService(dockerSetup, llamaSwapService, mcpService);
+    watchdogService = new WatchdogService(dockerSetup, mcpService);
     watchdogService.start();
     
   } catch (error) {
@@ -5558,7 +4966,6 @@ async function initializeServicesWithDocker(selectedFeatures, sendStatusUpdate) 
 async function initializeServicesWithoutDocker(selectedFeatures, sendStatusUpdate) {
   try {
     // Initialize only essential services
-    llamaSwapService = new LlamaSwapService(ipcLogger);
     updateService = platformUpdateService;
     
     if (selectedFeatures.ragAndTts) {
@@ -5588,7 +4995,7 @@ async function initializeWithDocker() {
       comfyUI: false,  // Conservative default - only start if explicitly selected
       n8n: false,      // Conservative default - only start if explicitly selected
       ragAndTts: false, // Conservative default - prevent unwanted Python backend downloads
-      claraCore: true  // Always enable core functionality
+      claraCore: false  // Always enable core functionality
     };
     const systemConfig = global.systemConfig;
     
@@ -5598,10 +5005,6 @@ async function initializeWithDocker() {
       return await initializeWithoutDocker();
     }
     
-    // Initialize core services (always enabled)
-    llamaSwapService = new LlamaSwapService(ipcLogger);
-    updateService = platformUpdateService;
-    
     // Initialize MCP service only if RAG & TTS is selected
     if (selectedFeatures && selectedFeatures.ragAndTts) {
       log.info('🧠 Initializing MCP service (RAG & TTS enabled)');
@@ -5610,11 +5013,6 @@ async function initializeWithDocker() {
       log.info('🧠 MCP service disabled (RAG & TTS not selected)');
     }
     
-    // Apply system resource limitations to LlamaSwap service
-    if (systemConfig && systemConfig.resourceLimitations) {
-      llamaSwapService.applyResourceLimitations(systemConfig.resourceLimitations);
-      log.info('🎯 Applied system resource limitations to LlamaSwap service:', systemConfig.resourceLimitations);
-    }
     
     // Only initialize ComfyUI if selected by user AND system supports it
     if (selectedFeatures && selectedFeatures.comfyUI && 
@@ -5633,11 +5031,7 @@ async function initializeWithDocker() {
       }
     }
     
-    // Load custom model path from file-based storage
-    await loadCustomModelPath();
     
-    // Set up progress callback to forward to renderer
-    setupLlamaSwapProgressCallback(llamaSwapService);
     
     // Setup Docker services with progress updates to splash screen
     loadingScreen.setStatus('Setting up Docker environment...', 'info');
@@ -5686,17 +5080,9 @@ async function initializeWithoutDocker() {
     }
     
     // Initialize essential services only
-    llamaSwapService = new LlamaSwapService(ipcLogger);
     mcpService = new MCPService();
     updateService = platformUpdateService;
     
-    // Load custom model path from file-based storage
-    await loadCustomModelPath();
-    
-    // Set up progress callback to forward to renderer
-    setupLlamaSwapProgressCallback(llamaSwapService);
-    
-    loadingScreen.setStatus('Initializing core services...', 'info');
     
     // Create the main window immediately for fast startup
     loadingScreen.setStatus('Starting main application...', 'success');
@@ -5715,26 +5101,6 @@ async function initializeWithoutDocker() {
   }
 }
 
-async function loadCustomModelPath() {
-  try {
-    const settingsPath = path.join(app.getPath('userData'), 'clara-settings.json');
-    
-    if (fsSync.existsSync(settingsPath)) {
-      const settingsData = JSON.parse(fsSync.readFileSync(settingsPath, 'utf8'));
-      const customModelPath = settingsData.customModelPath;
-      
-      if (customModelPath && fsSync.existsSync(customModelPath)) {
-        log.info('Loading custom model path from settings:', customModelPath);
-        llamaSwapService.setCustomModelPaths([customModelPath]);
-      } else if (customModelPath) {
-        log.warn('Custom model path from settings no longer exists:', customModelPath);
-      }
-    }
-  } catch (error) {
-    log.warn('Could not load custom model path during initialization:', error.message);
-    // Continue without custom path - it can be set later by the frontend
-  }
-}
 
 async function continueNormalInitialization() {
   // This function is deprecated - replaced by the new two-type startup flow
@@ -5758,19 +5124,7 @@ async function initializeLightweightServicesInBackground() {
       log.info(`[Lightweight] ${service}: ${status}`);
     };
 
-    // Initialize LlamaSwap service
-    sendStatus('LLM', 'Initializing LLM service...', 'info');
-    try {
-      const llamaSwapSuccess = await llamaSwapService.start();
-      if (llamaSwapSuccess) {
-        sendStatus('LLM', 'LLM service started successfully', 'success');
-      } else {
-        sendStatus('LLM', 'LLM service failed to start (available for manual start)', 'warning');
-      }
-    } catch (llamaSwapError) {
-      log.error('Error initializing llama-swap service:', llamaSwapError);
-      sendStatus('LLM', 'LLM service initialization failed (available for manual start)', 'warning');
-    }
+
 
     // Initialize MCP service
     sendStatus('MCP', 'Initializing MCP service...', 'info');
@@ -5782,12 +5136,8 @@ async function initializeLightweightServicesInBackground() {
       let shouldAutoStartMCP = true; // Default to true for backward compatibility
       
       try {
-        const settingsPath = path.join(app.getPath('userData'), 'clara-settings.json');
-        if (fs.existsSync(settingsPath)) {
-          const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-          const startupSettings = settings.startup || {};
-          shouldAutoStartMCP = startupSettings.autoStartMCP !== false; // Default to true if not set
-        }
+        const { autoStartMCP } = getStartupPreferences();
+        shouldAutoStartMCP = autoStartMCP;
       } catch (settingsError) {
         log.warn('Error reading startup settings for MCP auto-start:', settingsError);
         // Default to true on error to maintain existing behavior
@@ -5821,10 +5171,28 @@ async function initializeLightweightServicesInBackground() {
       sendStatus('MCP', 'MCP service initialization failed', 'warning');
     }
 
+    // Initialize MCP HTTP Proxy service for browser support
+    sendStatus('MCP Proxy', 'Starting MCP HTTP proxy...', 'info');
+    try {
+      if (mcpService) {
+        const MCPProxyService = require('./mcpProxyService.cjs');
+        const mcpProxyService = new MCPProxyService(mcpService);
+        await mcpProxyService.start(8092);
+        sendStatus('MCP Proxy', 'MCP HTTP proxy started on port 8092', 'success');
+        log.info('✅ MCP HTTP proxy service started successfully');
+      } else {
+        log.warn('⚠️ MCP service not available, skipping proxy start');
+        sendStatus('MCP Proxy', 'Skipped (MCP service not available)', 'warning');
+      }
+    } catch (proxyError) {
+      log.error('Error starting MCP HTTP proxy:', proxyError);
+      sendStatus('MCP Proxy', 'MCP proxy failed to start', 'warning');
+    }
+
     // Initialize Watchdog service (lightweight mode)
     sendStatus('Watchdog', 'Initializing Watchdog service...', 'info');
     try {
-      watchdogService = new WatchdogService(null, llamaSwapService, mcpService, ipcLogger); // No Docker in lightweight mode
+      watchdogService = new WatchdogService(null, mcpService, ipcLogger); // No Docker in lightweight mode
     
       // Set up event listeners for watchdog events
       watchdogService.on('serviceRestored', (serviceKey, service) => {
@@ -5888,19 +5256,6 @@ async function initializeServicesInBackground() {
       log.info(`[Docker Mode] ${service}: ${status}`);
     };
 
-    // Initialize LlamaSwap service in background
-    sendStatus('LLM', 'Initializing LLM service...', 'info');
-    try {
-      const llamaSwapSuccess = await llamaSwapService.start();
-      if (llamaSwapSuccess) {
-        sendStatus('LLM', 'LLM service started successfully', 'success');
-      } else {
-        sendStatus('LLM', 'LLM service failed to start (available for manual start)', 'warning');
-      }
-    } catch (llamaSwapError) {
-      log.error('Error initializing llama-swap service:', llamaSwapError);
-      sendStatus('LLM', 'LLM service initialization failed (available for manual start)', 'warning');
-    }
 
     // Initialize MCP service in background
     sendStatus('MCP', 'Initializing MCP service...', 'info');
@@ -5913,21 +5268,8 @@ async function initializeServicesInBackground() {
       
       // Auto-start previously running servers based on startup settings
       try {
-        const settingsPath = path.join(app.getPath('userData'), 'clara-settings.json');
-        let startupSettings = {};
-        try {
-          if (fs.existsSync(settingsPath)) {
-            const settingsContent = fs.readFileSync(settingsPath, 'utf8');
-            const allSettings = JSON.parse(settingsContent);
-            startupSettings = allSettings.startup || {};
-          }
-        } catch (settingsError) {
-          log.warn('Error reading startup settings, using defaults:', settingsError);
-        }
-        
-        // Default to true for backward compatibility
-        const autoStartMCP = startupSettings.autoStartMCP !== false;
-        
+        const { autoStartMCP } = getStartupPreferences();
+
         if (autoStartMCP) {
           sendStatus('MCP', 'Restoring MCP servers...', 'info');
           const restoreResults = await mcpService.startPreviouslyRunningServers();
@@ -5954,10 +5296,28 @@ async function initializeServicesInBackground() {
       sendStatus('MCP', 'MCP service initialization failed', 'warning');
     }
 
+    // Initialize MCP HTTP Proxy service for browser support
+    sendStatus('MCP Proxy', 'Starting MCP HTTP proxy...', 'info');
+    try {
+      if (mcpService) {
+        const MCPProxyService = require('./mcpProxyService.cjs');
+        const mcpProxyService = new MCPProxyService(mcpService);
+        await mcpProxyService.start(8092);
+        sendStatus('MCP Proxy', 'MCP HTTP proxy started on port 8092', 'success');
+        log.info('✅ MCP HTTP proxy service started successfully');
+      } else {
+        log.warn('⚠️ MCP service not available, skipping proxy start');
+        sendStatus('MCP Proxy', 'Skipped (MCP service not available)', 'warning');
+      }
+    } catch (proxyError) {
+      log.error('Error starting MCP HTTP proxy:', proxyError);
+      sendStatus('MCP Proxy', 'MCP proxy failed to start', 'warning');
+    }
+
     // Initialize Watchdog service in background (with Docker support)
     sendStatus('Watchdog', 'Initializing Watchdog service...', 'info');
     try {
-      watchdogService = new WatchdogService(dockerSetup, llamaSwapService, mcpService, ipcLogger);
+      watchdogService = new WatchdogService(dockerSetup, mcpService, ipcLogger);
     
       // Set up event listeners for watchdog events
       watchdogService.on('serviceRestored', (serviceKey, service) => {
@@ -6011,28 +5371,20 @@ async function initializeServicesInBackground() {
 async function createMainWindow() {
   if (mainWindow) return;
   
-  // Check fullscreen startup preference
-  let shouldStartFullscreen = false;
-  let shouldStartMinimized = false;
-  
-  try {
-    const settingsPath = path.join(app.getPath('userData'), 'clara-settings.json');
-    if (fs.existsSync(settingsPath)) {
-      const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-      // Check both startup.fullscreen and fullscreen_startup for backward compatibility
-      shouldStartFullscreen = settings.startup?.startFullscreen ?? settings.fullscreen_startup ?? false;
-      shouldStartMinimized = settings.startup?.startMinimized ?? false;
-    }
-  } catch (error) {
-    log.error('Error reading startup preferences:', error);
-    shouldStartFullscreen = false; // Default to not fullscreen on error
-    shouldStartMinimized = false; // Default to not minimized on error
-  }
+  const startupPreferences = getStartupPreferences();
+  let shouldStartFullscreen = startupPreferences.startFullscreen;
+  let shouldStartMinimized = startupPreferences.startMinimized;
   
   log.info(`Creating main window with fullscreen: ${shouldStartFullscreen}, minimized: ${shouldStartMinimized}`);
+
+  const loginItemSettings = typeof app.getLoginItemSettings === 'function'
+    ? app.getLoginItemSettings()
+    : null;
+  const launchedAtLogin = !!(loginItemSettings && (loginItemSettings.wasOpenedAtLogin || loginItemSettings.wasOpenedAsHidden));
   
   mainWindow = new BrowserWindow({
     fullscreen: shouldStartFullscreen,
+    fullscreenable: true,
     width: shouldStartFullscreen ? undefined : 1200,
     height: shouldStartFullscreen ? undefined : 800,
     webPreferences: {
@@ -6049,9 +5401,17 @@ async function createMainWindow() {
     frame: true
   });
 
+  if (typeof mainWindow.setFullScreenable === 'function') {
+    mainWindow.setFullScreenable(true);
+  }
+
   // Apply minimized state if needed
   if (shouldStartMinimized) {
-    mainWindow.minimize();
+    if (process.platform === 'darwin') {
+      mainWindow.hide();
+    } else {
+      mainWindow.minimize();
+    }
   }
 
   // Handle window minimize to tray
@@ -6100,34 +5460,149 @@ async function createMainWindow() {
   // Create and set the application menu
   createAppMenu(mainWindow);
 
+  // Setup remote server IPC handlers with stopAllLocalServices callback
+  setupRemoteServerIPC(mainWindow, stopAllLocalServices);
+  log.info('Remote server IPC handlers registered');
+
   // Set security policies for webview, using the dynamic n8n port
   mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
     const url = webContents.getURL();
     const n8nPort = dockerSetup?.ports?.n8n; // Get the determined n8n port
-    
-    // Allow ALL permissions for the main Clara application (development and production)
-    if (url.startsWith('http://localhost:5173') || url.startsWith('file://')) {
-      log.info(`Granted '${permission}' permission for Clara app URL: ${url}`);
-      callback(true);
-      return;
+
+    try {
+      const parsedUrl = new URL(url);
+      const hostname = parsedUrl.hostname;
+      
+      // Allow ALL permissions for Clara app on localhost/127.0.0.1
+      if ((hostname === 'localhost' || hostname === '127.0.0.1') && !url.includes('/n8n')) {
+        log.info(`Granted '${permission}' permission for Clara app URL: ${url}`);
+        callback(true);
+        return;
+      }
+      
+      // Allow permissions for n8n service
+      if (n8nPort && (hostname === 'localhost' || hostname === '127.0.0.1') && 
+          url.startsWith(`http://${hostname}:${n8nPort}`)) {
+        log.info(`Granted '${permission}' permission for n8n URL: ${url}`);
+        callback(true);
+        return;
+      }
+    } catch (error) {
+      // Fallback for file:// URLs or parsing errors
+      if (url.startsWith('file://')) {
+        log.info(`Granted '${permission}' permission for file:// URL`);
+        callback(true);
+        return;
+      }
     }
     
-    // Allow all permissions for n8n service as well
-    if (n8nPort && url.startsWith(`http://localhost:${n8nPort}`)) { 
-      log.info(`Granted '${permission}' permission for n8n URL: ${url}`);
-      callback(true);
-    } else {
-      log.warn(`Blocked permission request '${permission}' for URL: ${url} (n8n port: ${n8nPort})`);
-      callback(false);
+    log.warn(`Blocked permission request '${permission}' for URL: ${url}`);
+    callback(false);
+  });
+
+  // CRITICAL FIX: Register ALL event listeners BEFORE loading the URL
+  // This prevents race conditions where the event fires before the listener is attached
+  // Wait for DOM content to be fully loaded before showing
+  mainWindow.webContents.once('dom-ready', () => {
+    log.info('Main window DOM ready, showing immediately (fast startup mode)');
+
+    // Show window immediately for fast startup (unless user requested start minimized)
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (!shouldStartMinimized) {
+        if (process.platform === 'darwin' && app.dock && typeof app.dock.show === 'function') {
+          app.dock.show();
+        }
+        log.info('Showing main window (fast startup)');
+        mainWindow.show();
+        mainWindow.focus();
+
+        // CRITICAL FIX: Force webContents to regain focus for input elements
+        // This prevents the input box click issue where window is focused but inputs don't work
+        if (mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+          mainWindow.webContents.focus();
+        }
+      } else {
+        log.info('Skipping initial show because startMinimized is enabled');
+      }
+    }
+
+    // Initialize auto-updater when window is ready
+    setupAutoUpdater(mainWindow);
+  });
+
+  if (launchedAtLogin && !shouldStartMinimized) {
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
+        log.info('Forcing window visible after login launch');
+        mainWindow.show();
+        mainWindow.focus();
+
+        // CRITICAL FIX: Force webContents focus after login launch
+        if (mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+          setTimeout(() => {
+            if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+              mainWindow.webContents.focus();
+            }
+          }, 100);
+        }
+      }
+    }, 750);
+  }
+
+  // Fallback: Show window when ready (in case dom-ready doesn't fire)
+  mainWindow.once('ready-to-show', () => {
+    log.info('Main window ready-to-show event fired');
+    // Only show if not already shown by dom-ready handler
+    if (mainWindow && !mainWindow.isVisible() && !shouldStartMinimized) {
+      setTimeout(() => {
+        if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible() && !shouldStartMinimized) {
+          log.info('Fallback: Showing main window via ready-to-show');
+          mainWindow.show();
+
+          if (loadingScreen) {
+            loadingScreen.close();
+            loadingScreen = null;
+          }
+        }
+      }, 3000);
     }
   });
 
+  // ADDITIONAL FIX: Handle window focus events to ensure webContents stays in sync
+  mainWindow.on('focus', () => {
+    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+      // Force webContents to focus when window gains focus
+      // This solves input box click issues after minimize/restore or DevTools toggle
+      setTimeout(() => {
+        if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+          mainWindow.webContents.focus();
+        }
+      }, 100);
+    }
+  });
+
+  // ADDITIONAL FIX: Handle window restore (from minimize) to ensure inputs work
+  mainWindow.on('restore', () => {
+    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+      setTimeout(() => {
+        if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+          mainWindow.webContents.focus();
+        }
+      }, 100);
+    }
+  });
+
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+  });
+
+  // NOW load the URL after all event listeners are registered
   // Development mode with hot reload
   if (process.env.NODE_ENV === 'development') {
     if (process.env.ELECTRON_HOT_RELOAD === 'true') {
       // Hot reload mode
       const devServerUrl = process.env.ELECTRON_START_URL || 'http://localhost:5173';
-      
+
       log.info('Loading development server with hot reload:', devServerUrl);
       mainWindow.loadURL(devServerUrl).catch(err => {
         log.error('Failed to load dev server:', err);
@@ -6151,74 +5626,95 @@ async function createMainWindow() {
     // Open DevTools in both development modes
     mainWindow.webContents.openDevTools();
   } else {
-    // Production mode - load built files
-    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+    // Production mode - serve via loopback server so COOP/COEP headers are present
+    try {
+      const port = await ensureStaticServer();
+      const prodUrl = `http://${STATIC_SERVER_HOST}:${port}/index.html`;
+      log.info(`Loading production build from ${prodUrl}`);
+      await mainWindow.loadURL(prodUrl);
+    } catch (error) {
+      log.error('Falling back to file:// load after static server failure:', error);
+      await mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+    }
   }
-
-  // Wait for DOM content to be fully loaded before showing
-  mainWindow.webContents.once('dom-ready', () => {
-    log.info('Main window DOM ready, showing immediately (fast startup mode)');
-    
-    // Show window immediately for fast startup
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      log.info('Showing main window (fast startup)');
-      mainWindow.show();
-    }
-    
-    // Initialize auto-updater when window is ready
-    setupAutoUpdater(mainWindow);
-  });
-
-  // Fallback: Show window when ready (in case dom-ready doesn't fire)
-  mainWindow.once('ready-to-show', () => {
-    log.info('Main window ready-to-show event fired');
-    // Only show if not already shown by dom-ready handler
-    if (mainWindow && !mainWindow.isVisible()) {
-      setTimeout(() => {
-        if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.isVisible()) {
-          log.info('Fallback: Showing main window via ready-to-show');
-          mainWindow.show();
-          
-          if (loadingScreen) {
-            loadingScreen.close();
-            loadingScreen = null;
-          }
-        }
-      }, 3000);
-    }
-  });
-
-  mainWindow.on('closed', () => {
-    mainWindow = null;
-  });
 }
 
 // Initialize app when ready
 app.whenReady().then(async () => {
+  // Request single instance lock to prevent multiple instances
+  // This prevents port conflicts and data corruption
+  const gotTheLock = app.requestSingleInstanceLock();
+
+  if (!gotTheLock) {
+    log.warn('Another instance is already running. Quitting this instance.');
+    app.quit();
+    return;
+  }
+
+  // If someone tries to run a second instance, focus our window
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+      
+      // CRITICAL FIX: Force webContents focus on second instance
+      if (mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+        setTimeout(() => {
+          if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+            mainWindow.webContents.focus();
+          }
+        }, 100);
+      }
+    }
+  });
+
+  // Initialize isolated startup settings manager first
+  ensureStartupSettingsManager();
+  log.info('🔒 Isolated startup settings manager initialized on app ready');
+
+  // SECURITY: Clean up any stored passwords from previous versions
+  await cleanupStoredPasswords();
+
   await initialize();
-  
+
   // Create system tray
   createTray();
-  
+
   // Register global shortcuts after app is ready
   registerGlobalShortcuts();
-  
-  log.info('Application initialization complete with global shortcuts registered');
+
+  log.info('Application initialization complete with isolated startup settings and global shortcuts registered');
 });
 
 // Quit when all windows are closed
 app.on('window-all-closed', async () => {
   // If the app is quitting intentionally, proceed with cleanup
   if (isQuitting) {
-    // Clean up tray
-    if (tray) {
-      tray.destroy();
-      tray = null;
+    try {
+      // Clean up tray
+      if (tray && !tray.isDestroyed()) {
+        tray.destroy();
+        tray = null;
+      }
+
+      // Unregister global shortcuts when app is quitting
+      globalShortcut.unregisterAll();
+    } catch (error) {
+      log.error('Error during window-all-closed cleanup:', error);
     }
-    
-    // Unregister global shortcuts when app is quitting
-    globalShortcut.unregisterAll();
-    
+
+    if (staticServer) {
+      try {
+        staticServer.close();
+        log.info('Loopback static server stopped');
+      } catch (error) {
+        log.warn('Error shutting down loopback static server:', error);
+      } finally {
+        staticServer = null;
+        staticServerPort = null;
+      }
+    }
+
     // Stop watchdog service first
     if (watchdogService) {
       try {
@@ -6258,16 +5754,7 @@ app.on('window-all-closed', async () => {
         log.error('Error saving MCP server running state:', error);
       }
     }
-    
-    // Stop llama-swap service
-    if (llamaSwapService) {
-      try {
-        log.info('Stopping llama-swap service...');
-        await llamaSwapService.stop();
-      } catch (error) {
-        log.error('Error stopping llama-swap service:', error);
-      }
-    }
+
     
     // Stop all MCP servers
     if (mcpService) {
@@ -6278,12 +5765,28 @@ app.on('window-all-closed', async () => {
         log.error('Error stopping MCP servers:', error);
       }
     }
-    
+
+    // Stop ClaraCore service
+    if (centralServiceManager && centralServiceManager.services.has('claracore')) {
+      try {
+        log.info('Stopping ClaraCore service...');
+        await centralServiceManager.stopService('claracore');
+        log.info('✅ ClaraCore service stopped successfully');
+      } catch (error) {
+        log.error('❌ Error stopping ClaraCore service:', error);
+      }
+    }
+
     // Stop Docker containers
     if (dockerSetup) {
       await dockerSetup.stop();
     }
-    
+
+    // Note: On macOS, we don't call app.quit() here because:
+    // 1. If quit was initiated from the exit button, app.quit() was already called in app-close handler
+    // 2. If quit was initiated from menu (Cmd+Q), app.quit() was already called
+    // 3. This prevents double-quit issues
+    // On Windows/Linux, we need to explicitly quit because the behavior is different
     if (process.platform !== 'darwin') {
       app.quit();
     }
@@ -6299,65 +5802,98 @@ app.on('window-all-closed', async () => {
   }
 });
 
+// Handle app quit - ensure services are stopped
+app.on('before-quit', async (event) => {
+  if (!isQuitting) {
+    log.info('App is quitting, setting isQuitting flag...');
+    isQuitting = true;
+  }
+});
+
+// Additional cleanup on will-quit
+let willQuitHandled = false; // Flag to prevent infinite loop
+app.on('will-quit', async (event) => {
+  log.info('App will quit, ensuring all services are stopped...');
+
+  // Stop ClaraCore service explicitly (only once)
+  if (!willQuitHandled && centralServiceManager && centralServiceManager.services.has('claracore')) {
+    willQuitHandled = true; // Set flag to prevent re-entry
+
+    try {
+      event.preventDefault(); // Prevent quit until cleanup is done
+      log.info('Stopping ClaraCore service on quit...');
+      await centralServiceManager.stopService('claracore');
+      log.info('✅ ClaraCore service stopped successfully');
+
+      // Now actually quit
+      setTimeout(() => app.quit(), 500);
+    } catch (error) {
+      log.error('❌ Error stopping ClaraCore service on quit:', error);
+      // Still quit even if cleanup fails
+      setTimeout(() => app.quit(), 500);
+    }
+  }
+});
+
 app.on('activate', async () => {
-  if (BrowserWindow.getAllWindows().length === 0) {
+  if (!mainWindow || mainWindow.isDestroyed()) {
     await createMainWindow();
+    return;
+  }
+
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+
+  if (!mainWindow.isVisible()) {
+    mainWindow.show();
+  }
+
+  mainWindow.focus();
+  
+  // CRITICAL FIX: Force webContents focus on app activate (macOS dock click)
+  if (mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+        mainWindow.webContents.focus();
+      }
+    }, 100);
   }
 });
 
 // Register startup settings handler
 ipcMain.handle('set-startup-settings', async (event, settings) => {
+  // DEPRECATED: Redirect to isolated startup settings system
+  log.warn('⚠️ DEPRECATED: set-startup-settings called. Use startup-settings:update instead.');
+  
   try {
-    const userDataPath = app.getPath('userData');
-    const settingsPath = path.join(userDataPath, 'clara-settings.json');
+    const manager = ensureStartupSettingsManager();
     
-    // Read current settings
-    let currentSettings = {};
-    if (fs.existsSync(settingsPath)) {
-      const settingsData = fs.readFileSync(settingsPath, 'utf8');
-      currentSettings = JSON.parse(settingsData);
-    }
+    // Update using isolated system with implicit consent for backward compatibility
+    const result = await manager.updateSettings(settings);
     
-    // Update startup settings
-    currentSettings.startup = {
-      ...currentSettings.startup,
-      ...settings
-    };
-    
-    // For backward compatibility, also set fullscreen_startup
-    if (settings.startFullscreen !== undefined) {
-      currentSettings.fullscreen_startup = settings.startFullscreen;
-    }
-    
-    // Save updated settings
-    fs.writeFileSync(settingsPath, JSON.stringify(currentSettings, null, 2));
-    
-    // Apply auto-start setting immediately if provided
-    if (settings.autoStart !== undefined) {
-      // Check if we're in development mode
-      const isDevelopment = process.env.NODE_ENV === 'development' || !app.isPackaged;
-      
-      if (isDevelopment) {
-        // In development mode, disable auto-start to prevent issues
-        // with the Electron development executable
-        log.warn('Auto-start disabled in development mode to prevent startup issues');
+    const shouldUpdateLoginItem =
+      settings.autoStart !== undefined || settings.startMinimized !== undefined;
+    if (shouldUpdateLoginItem && (process.platform === 'darwin' || process.platform === 'win32')) {
+      const openAtLogin = !result.isDevelopment && !!result.autoStart;
+      const openAsHidden = !!result.startMinimized;
+
+      if (!openAtLogin) {
         app.setLoginItemSettings({
           openAtLogin: false,
           openAsHidden: false
         });
       } else {
-        // In production, use the built executable
         app.setLoginItemSettings({
-          openAtLogin: settings.autoStart,
-          openAsHidden: settings.startMinimized || false,
-          // Explicitly specify the path to avoid issues with electron templates
+          openAtLogin,
+          openAsHidden,
           path: process.execPath,
           args: []
         });
       }
     }
     
-    log.info('Startup settings updated successfully:', settings);
+    log.info('🔒 Startup settings updated via deprecated handler:', settings);
     return { success: true };
   } catch (error) {
     log.error('Error updating startup settings:', error);
@@ -6366,24 +5902,25 @@ ipcMain.handle('set-startup-settings', async (event, settings) => {
 });
 
 ipcMain.handle('get-startup-settings', async () => {
+  // DEPRECATED: Redirect to isolated startup settings system
+  log.warn('⚠️ DEPRECATED: get-startup-settings called. Use startup-settings:get instead.');
+  
   try {
-    const settingsPath = path.join(app.getPath('userData'), 'clara-settings.json');
-    const isDevelopment = process.env.NODE_ENV === 'development' || !app.isPackaged;
+    const settings = ensureStartupSettingsManager().readSettings();
+    log.info('🔒 Startup settings retrieved via deprecated handler');
     
-    let startupSettings = {};
-    if (fs.existsSync(settingsPath)) {
-      const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-      startupSettings = settings.startup || {};
-    }
-    
-    // Add development mode flag
-    return {
-      ...startupSettings,
-      isDevelopment
-    };
+    return settings;
   } catch (error) {
-    log.error('Error reading startup settings:', error);
-    return { isDevelopment: false };
+    log.error('Error reading isolated startup settings:', error);
+    return { 
+      isDevelopment: process.env.NODE_ENV === 'development' || !app.isPackaged,
+      startFullscreen: false,
+      startMinimized: false,
+      autoStart: false,
+      checkUpdates: true,
+      restoreLastSession: true,
+      autoStartMCP: true
+    };
   }
 });
 
@@ -6474,6 +6011,122 @@ ipcMain.handle('reset-feature-config', async () => {
     return false;
   } catch (error) {
     log.error('Error resetting feature configuration:', error);
+    return false;
+  }
+});
+
+// Initialize electron-store for persistent configuration (using dynamic import for ES module)
+let store = null;
+let storeInitPromise = null;
+
+// Lazy initialize store when needed
+async function getStore() {
+  if (store) return store;
+  if (storeInitPromise) return storeInitPromise;
+
+  storeInitPromise = (async () => {
+    try {
+      const StoreModule = await import('electron-store');
+      const Store = StoreModule.default;
+      store = new Store();
+      log.info('📦 [Store] Initialized successfully');
+      return store;
+    } catch (error) {
+      log.error('📦 [Store] Failed to initialize:', error);
+      throw error;
+    }
+  })();
+
+  return storeInitPromise;
+}
+
+/**
+ * SECURITY: Clean up any passwords that may have been stored in previous versions
+ * This runs on app startup to ensure no passwords are persisted
+ */
+async function cleanupStoredPasswords() {
+  try {
+    const store = await getStore();
+
+    // Check and clean remoteServer config
+    const remoteServer = store.get('remoteServer');
+    if (remoteServer && remoteServer.password) {
+      log.warn('🔒 [Security] Found password in remoteServer config - removing it');
+      delete remoteServer.password;
+      store.set('remoteServer', remoteServer);
+      log.info('✅ [Security] Password removed from remoteServer config');
+    }
+
+    // Check and clean claraCoreRemote config (shouldn't have password but check anyway)
+    const claraCoreRemote = store.get('claraCoreRemote');
+    if (claraCoreRemote && claraCoreRemote.password) {
+      log.warn('🔒 [Security] Found password in claraCoreRemote config - removing it');
+      delete claraCoreRemote.password;
+      store.set('claraCoreRemote', claraCoreRemote);
+      log.info('✅ [Security] Password removed from claraCoreRemote config');
+    }
+
+    log.info('✅ [Security] Password cleanup complete');
+  } catch (error) {
+    log.error('❌ [Security] Failed to cleanup stored passwords:', error);
+  }
+}
+
+// electron-store IPC handlers for configuration persistence
+ipcMain.handle('store:get', async (event, key) => {
+  try {
+    const store = await getStore();
+    const value = store.get(key);
+    log.info(`📦 [Store] GET ${key}:`, value);
+    return value;
+  } catch (error) {
+    log.error(`Error getting store key ${key}:`, error);
+    return null;
+  }
+});
+
+ipcMain.handle('store:set', async (event, key, value) => {
+  try {
+    const store = await getStore();
+    store.set(key, value);
+    log.info(`📦 [Store] SET ${key}:`, value);
+    return true;
+  } catch (error) {
+    log.error(`Error setting store key ${key}:`, error);
+    return false;
+  }
+});
+
+ipcMain.handle('store:delete', async (event, key) => {
+  try {
+    const store = await getStore();
+    store.delete(key);
+    log.info(`📦 [Store] DELETE ${key}`);
+    return true;
+  } catch (error) {
+    log.error(`Error deleting store key ${key}:`, error);
+    return false;
+  }
+});
+
+ipcMain.handle('store:has', async (event, key) => {
+  try {
+    const store = await getStore();
+    return store.has(key);
+  } catch (error) {
+    log.error(`Error checking store key ${key}:`, error);
+    return false;
+  }
+});
+
+ipcMain.handle('store:clear', async () => {
+  try {
+    const store = await getStore();
+    store.clear();
+    log.info('📦 [Store] CLEARED');
+    return true;
+  } catch (error) {
+    log.error('Error clearing store:', error);
     return false;
   }
 });
@@ -7575,6 +7228,40 @@ ipcMain.handle('comfyui-local:get-storage-info', async () => {
   }
 });
 
+// ============================================================================
+// Netlify OAuth IPC Handlers
+// ============================================================================
+
+let netlifyOAuthHandler = null;
+
+ipcMain.handle('netlify-oauth:authenticate', async (event, authUrl) => {
+  try {
+    if (!netlifyOAuthHandler) {
+      netlifyOAuthHandler = new NetlifyOAuthHandler();
+    }
+
+    const accessToken = await netlifyOAuthHandler.authenticate(authUrl);
+    return { success: true, accessToken };
+  } catch (error) {
+    log.error('Netlify OAuth error:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+ipcMain.handle('netlify-oauth:cancel', async () => {
+  try {
+    if (netlifyOAuthHandler) {
+      netlifyOAuthHandler.cancel();
+    }
+    return { success: true };
+  } catch (error) {
+    log.error('Error canceling Netlify OAuth:', error);
+    return { success: false, error: error.message };
+  }
+});
+
+// ============================================================================
+
 // Find the initializeServicesInBackground function and add central service manager integration
 async function initializeServicesInBackground() {
   try {
@@ -7609,35 +7296,6 @@ async function initializeServicesInBackground() {
       }
     }
 
-    // Initialize LlamaSwap service in background
-    sendStatus('LLM', 'Initializing LLM service...', 'info');
-    try {
-      const llamaSwapSuccess = await llamaSwapService.start();
-      if (llamaSwapSuccess) {
-        sendStatus('LLM', 'LLM service started successfully', 'success');
-        
-        // Update central service manager with llamaswap status
-        if (centralServiceManager) {
-          updateServiceStateInCentralManager('llamaswap', 'running', {
-            type: 'native',
-            startTime: Date.now(),
-            healthCheck: () => llamaSwapService.isRunning()
-          });
-        }
-      } else {
-        sendStatus('LLM', 'LLM service failed to start (available for manual start)', 'warning');
-        if (centralServiceManager) {
-          updateServiceStateInCentralManager('llamaswap', 'error', null);
-        }
-      }
-    } catch (llamaSwapError) {
-      log.error('Error initializing llama-swap service:', llamaSwapError);
-      sendStatus('LLM', 'LLM service initialization failed (available for manual start)', 'warning');
-      if (centralServiceManager) {
-        updateServiceStateInCentralManager('llamaswap', 'error', null);
-      }
-    }
-
     // Initialize MCP service in background
     sendStatus('MCP', 'Initializing MCP service...', 'info');
     try {
@@ -7661,12 +7319,8 @@ async function initializeServicesInBackground() {
       let shouldAutoStartMCP = true; // Default to true for backward compatibility
       
       try {
-        const settingsPath = path.join(app.getPath('userData'), 'clara-settings.json');
-        if (fs.existsSync(settingsPath)) {
-          const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-          const startupSettings = settings.startup || {};
-          shouldAutoStartMCP = startupSettings.autoStartMCP !== false; // Default to true if not set
-        }
+        const { autoStartMCP } = getStartupPreferences();
+        shouldAutoStartMCP = autoStartMCP;
       } catch (settingsError) {
         log.warn('Error reading startup settings for MCP auto-start:', settingsError);
         // Default to true on error to maintain existing behavior
@@ -7703,10 +7357,28 @@ async function initializeServicesInBackground() {
       }
     }
 
+    // Initialize MCP HTTP Proxy service for browser support
+    sendStatus('MCP Proxy', 'Starting MCP HTTP proxy...', 'info');
+    try {
+      if (mcpService) {
+        const MCPProxyService = require('./mcpProxyService.cjs');
+        const mcpProxyService = new MCPProxyService(mcpService);
+        await mcpProxyService.start(8092);
+        sendStatus('MCP Proxy', 'MCP HTTP proxy started on port 8092', 'success');
+        log.info('✅ MCP HTTP proxy service started successfully');
+      } else {
+        log.warn('⚠️ MCP service not available, skipping proxy start');
+        sendStatus('MCP Proxy', 'Skipped (MCP service not available)', 'warning');
+      }
+    } catch (proxyError) {
+      log.error('Error starting MCP HTTP proxy:', proxyError);
+      sendStatus('MCP Proxy', 'MCP proxy failed to start', 'warning');
+    }
+
     // Initialize Watchdog service in background (with Docker support)
     sendStatus('Watchdog', 'Initializing Watchdog service...', 'info');
     try {
-      watchdogService = new WatchdogService(dockerSetup, llamaSwapService, mcpService, ipcLogger);
+      watchdogService = new WatchdogService(dockerSetup,mcpService, ipcLogger);
     
       // Set up event listeners for watchdog events
       watchdogService.on('serviceRestored', (serviceKey, service) => {
@@ -8055,22 +7727,39 @@ function createTray() {
       {
         label: 'Show ClaraVerse',
         click: () => {
-          if (mainWindow) {
-            if (mainWindow.isMinimized()) {
-              mainWindow.restore();
+          try {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              if (mainWindow.isMinimized()) {
+                mainWindow.restore();
+              }
+              mainWindow.show();
+              mainWindow.focus();
+              
+              // CRITICAL FIX: Force webContents focus when showing from tray menu
+              if (mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+                setTimeout(() => {
+                  if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+                    mainWindow.webContents.focus();
+                  }
+                }, 100);
+              }
+            } else if (!isQuitting) {
+              createMainWindow();
             }
-            mainWindow.show();
-            mainWindow.focus();
-          } else {
-            createMainWindow();
+          } catch (error) {
+            log.error('Error showing window from tray:', error);
           }
         }
       },
       {
         label: 'Hide ClaraVerse',
         click: () => {
-          if (mainWindow) {
-            mainWindow.hide();
+          try {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+              mainWindow.hide();
+            }
+          } catch (error) {
+            log.error('Error hiding window from tray:', error);
           }
         }
       },
@@ -8078,8 +7767,13 @@ function createTray() {
       {
         label: 'Quit',
         click: () => {
-          isQuitting = true;
-          app.quit();
+          try {
+            isQuitting = true;
+            app.quit();
+          } catch (error) {
+            log.error('Error quitting from tray:', error);
+            process.exit(0); // Force exit as last resort
+          }
         }
       }
     ]);
@@ -8088,31 +7782,57 @@ function createTray() {
     
     // Handle tray click
     tray.on('click', () => {
-      if (mainWindow) {
-        if (mainWindow.isVisible()) {
-          mainWindow.hide();
-        } else {
+      try {
+        if (mainWindow && !mainWindow.isDestroyed()) {
+          if (mainWindow.isVisible()) {
+            mainWindow.hide();
+          } else {
+            if (mainWindow.isMinimized()) {
+              mainWindow.restore();
+            }
+            mainWindow.show();
+            mainWindow.focus();
+            
+            // CRITICAL FIX: Force webContents focus on tray click
+            if (mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+              setTimeout(() => {
+                if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+                  mainWindow.webContents.focus();
+                }
+              }, 100);
+            }
+          }
+        } else if (!isQuitting) {
+          createMainWindow();
+        }
+      } catch (error) {
+        log.error('Error handling tray click:', error);
+      }
+    });
+
+    // Handle double-click on tray (Windows/Linux)
+    tray.on('double-click', () => {
+      try {
+        if (mainWindow && !mainWindow.isDestroyed()) {
           if (mainWindow.isMinimized()) {
             mainWindow.restore();
           }
           mainWindow.show();
           mainWindow.focus();
+          
+          // CRITICAL FIX: Force webContents focus on tray double-click
+          if (mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+            setTimeout(() => {
+              if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+                mainWindow.webContents.focus();
+              }
+            }, 100);
+          }
+        } else if (!isQuitting) {
+          createMainWindow();
         }
-      } else {
-        createMainWindow();
-      }
-    });
-    
-    // Handle double-click on tray (Windows/Linux)
-    tray.on('double-click', () => {
-      if (mainWindow) {
-        if (mainWindow.isMinimized()) {
-          mainWindow.restore();
-        }
-        mainWindow.show();
-        mainWindow.focus();
-      } else {
-        createMainWindow();
+      } catch (error) {
+        log.error('Error handling tray double-click:', error);
       }
     });
     

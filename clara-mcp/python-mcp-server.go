@@ -29,7 +29,8 @@ const (
 	SearXNGURL      = "http://localhost:8080"
 	HealthCheckPath = "/healthz"
 	SearchPath      = "/search"
-	ConfigPath      = "./searxng-config"
+	ConfigDirName   = "searxng-config"
+	ConfigEnvVar    = "CLARA_SEARXNG_CONFIG_DIR"
 )
 
 // Web content and search types
@@ -68,6 +69,7 @@ type WebContent struct {
 type SearXNGManager struct {
 	containerID string
 	isRunning   bool
+	configDir   string
 }
 
 type WebContentFetcher struct {
@@ -75,6 +77,7 @@ type WebContentFetcher struct {
 	jsEngine          *JSEngine          // Self-contained JavaScript engine
 	smartMode         bool               // Enable smart dynamic content detection
 	playwrightManager *PlaywrightManager // Progressive Playwright integration
+	chromedpManager   *ChromeDPManager   // Fast chromedp integration
 }
 
 // Self-contained JavaScript engine for basic DOM simulation
@@ -128,32 +131,50 @@ type PythonMCPServer struct {
 // NewPythonMCPServer creates server with dedicated workspace and venv
 func NewPythonMCPServer() *PythonMCPServer {
 	// Create workspace directory with absolute path
-	cwd, err := os.Getwd()
-	if err != nil {
-		cwd = "."
+	// Priority order: CLARA_MCP_WORKSPACE env var -> user home -> /tmp
+	// NEVER use current working directory as it may be read-only in packaged apps
+	
+	var workspace string
+	var workspaceSource string
+	
+	// 1. Try environment variable (set by Electron to writable location)
+	workspace = os.Getenv("CLARA_MCP_WORKSPACE")
+	if workspace != "" {
+		workspaceSource = "CLARA_MCP_WORKSPACE environment variable"
+		if err := os.MkdirAll(workspace, 0755); err == nil {
+			log.Printf("Using workspace from %s: %s", workspaceSource, workspace)
+		} else {
+			log.Printf("Warning: Failed to create workspace from %s (%s): %v", workspaceSource, workspace, err)
+			workspace = "" // Clear to try next option
+		}
 	}
-
-	workspace := filepath.Join(cwd, "mcp_workspace")
-	if err := os.MkdirAll(workspace, 0755); err != nil {
-		log.Printf("Warning: Failed to create workspace: %v", err)
-		// Fallback to a safe directory - avoid root directory
-		if cwd == "/" || cwd == "" {
-			// Use user's home directory as fallback
-			if homeDir, err := os.UserHomeDir(); err == nil {
-				workspace = filepath.Join(homeDir, "clara_mcp_workspace")
+	
+	// 2. Fallback to user home directory
+	if workspace == "" {
+		if homeDir, err := os.UserHomeDir(); err == nil {
+			workspace = filepath.Join(homeDir, ".clara", "mcp_workspace")
+			workspaceSource = "user home directory"
+			if err := os.MkdirAll(workspace, 0755); err == nil {
+				log.Printf("Using workspace from %s: %s", workspaceSource, workspace)
 			} else {
-				// Last resort: use /tmp
-				workspace = filepath.Join("/tmp", "clara_mcp_workspace")
+				log.Printf("Warning: Failed to create workspace in %s (%s): %v", workspaceSource, workspace, err)
+				workspace = "" // Clear to try next option
 			}
 		} else {
-			workspace = cwd
+			log.Printf("Warning: Could not determine user home directory: %v", err)
 		}
-		// Try to create the fallback workspace
+	}
+	
+	// 3. Last resort: use /tmp (always writable on Unix-like systems)
+	if workspace == "" {
+		workspace = filepath.Join(os.TempDir(), "clara_mcp_workspace")
+		workspaceSource = "temporary directory"
 		if err := os.MkdirAll(workspace, 0755); err != nil {
-			log.Printf("ERROR: Failed to create fallback workspace: %v", err)
-			// This is a critical error - we can't proceed
-			panic(fmt.Sprintf("Cannot create workspace directory: %v", err))
+			// This is critical - if we can't even create in /tmp, something is very wrong
+			log.Printf("ERROR: Failed to create workspace in %s (%s): %v", workspaceSource, workspace, err)
+			panic(fmt.Sprintf("Cannot create workspace directory in any location (tried env var, home, and temp): %v", err))
 		}
+		log.Printf("Using workspace from %s: %s", workspaceSource, workspace)
 	}
 
 	server := &PythonMCPServer{
@@ -178,7 +199,7 @@ func NewPythonMCPServer() *PythonMCPServer {
 	log.Printf("Virtual env: %s", server.venvPath)
 	log.Printf("Active Python: %s", server.pythonPath)
 	log.Printf("Workspace: %s", server.workspaceDir)
-	
+
 	// Verify workspace is writable
 	if err := os.MkdirAll(filepath.Join(server.workspaceDir, "test"), 0755); err != nil {
 		log.Printf("WARNING: Workspace directory is not writable: %v", err)
@@ -435,6 +456,11 @@ func (s *PythonMCPServer) getTools() []Tool {
 						"type":        "string",
 						"description": "Complete file content to save. Can be Python code, JSON data, CSV content, configuration text, or any text-based format. Use proper formatting and newlines as needed.",
 					},
+					"auto_open": map[string]interface{}{
+						"type":        "boolean",
+						"description": "Whether to automatically open the file after saving (default: true). Set to false when uploading files to workspace to avoid unnecessary file opening.",
+						"default":     true,
+					},
 				},
 				"required": []string{"name", "text"},
 			},
@@ -586,6 +612,16 @@ func (s *PythonMCPServer) py(params map[string]interface{}) string {
 		}
 	}
 
+	// Get list of files before execution
+	filesBefore := make(map[string]bool)
+	if files, err := ioutil.ReadDir(s.workspaceDir); err == nil {
+		for _, f := range files {
+			if !f.IsDir() && f.Name() != ".venv" {
+				filesBefore[f.Name()] = true
+			}
+		}
+	}
+
 	// Execute Python directly with -c flag using venv Python
 	cmd := exec.Command(s.pythonPath, "-c", code)
 	cmd.Dir = s.workspaceDir
@@ -619,6 +655,29 @@ func (s *PythonMCPServer) py(params map[string]interface{}) string {
 	if result == "" {
 		result = "OK (no output)"
 	}
+
+	// Check for newly created files and auto-open them
+	if files, err := ioutil.ReadDir(s.workspaceDir); err == nil {
+		var newFiles []string
+		for _, f := range files {
+			if !f.IsDir() && f.Name() != ".venv" && !filesBefore[f.Name()] {
+				if shouldAutoOpenFile(f.Name()) {
+					newFiles = append(newFiles, f.Name())
+				}
+			}
+		}
+
+		// Auto-open new files
+		if len(newFiles) > 0 {
+			for _, fileName := range newFiles {
+				filePath := filepath.Join(s.workspaceDir, fileName)
+				if err := s.openFile(filePath); err == nil {
+					result += fmt.Sprintf("\n✓ Opened %s", fileName)
+				}
+			}
+		}
+	}
+
 	return result
 }
 
@@ -721,7 +780,7 @@ func (s *PythonMCPServer) save(params map[string]interface{}) string {
 
 	// Force save to workspace
 	fullPath := filepath.Join(s.workspaceDir, filepath.Base(name))
-	
+
 	// Security check: ensure the file is within workspace directory
 	workspaceAbs, _ := filepath.Abs(s.workspaceDir)
 	fullPathAbs, _ := filepath.Abs(fullPath)
@@ -733,7 +792,22 @@ func (s *PythonMCPServer) save(params map[string]interface{}) string {
 		return fmt.Sprintf("ERROR: %v", err)
 	}
 
-	return fmt.Sprintf("Saved %s (%d bytes)", filepath.Base(name), len(text))
+	// Auto-open file if it's a viewable type (unless explicitly disabled)
+	result := fmt.Sprintf("Saved %s (%d bytes)", filepath.Base(name), len(text))
+
+	// Check if auto_open parameter is provided (defaults to true for backwards compatibility)
+	autoOpen := true
+	if autoOpenParam, ok := params["auto_open"].(bool); ok {
+		autoOpen = autoOpenParam
+	}
+
+	if autoOpen && shouldAutoOpenFile(name) {
+		if err := s.openFile(fullPath); err == nil {
+			result += fmt.Sprintf("\n✓ Opened %s", filepath.Base(name))
+		}
+	}
+
+	return result
 }
 
 func (s *PythonMCPServer) load(params map[string]interface{}) string {
@@ -828,11 +902,163 @@ func (s *PythonMCPServer) open(params map[string]interface{}) string {
 	return fmt.Sprintf("Opened workspace folder: %s", s.workspaceDir)
 }
 
+// openFile opens a specific file with the default system application
+func (s *PythonMCPServer) openFile(filePath string) error {
+	var cmd *exec.Cmd
+
+	switch runtime.GOOS {
+	case "windows":
+		// Use 'start' command to open file with default application
+		cmd = exec.Command("cmd", "/c", "start", "", filePath)
+	case "darwin":
+		cmd = exec.Command("open", filePath)
+	case "linux":
+		if _, err := exec.LookPath("xdg-open"); err == nil {
+			cmd = exec.Command("xdg-open", filePath)
+		} else {
+			return fmt.Errorf("no file opener found")
+		}
+	default:
+		return fmt.Errorf("unsupported OS")
+	}
+
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	go func() {
+		cmd.Wait()
+	}()
+
+	return nil
+}
+
+// shouldAutoOpenFile determines if a file should be auto-opened based on extension
+func shouldAutoOpenFile(filename string) bool {
+	ext := strings.ToLower(filepath.Ext(filename))
+	autoOpenExts := []string{
+		".pdf", ".csv", ".xlsx", ".xls",
+		".png", ".jpg", ".jpeg", ".gif", ".bmp", ".svg",
+		".html", ".htm",
+		".txt", ".md",
+	}
+
+	for _, e := range autoOpenExts {
+		if ext == e {
+			return true
+		}
+	}
+	return false
+}
+
 // Embedded SearXNG and Web Content functionality
 
 // NewSearXNGManager creates a new SearXNG manager
 func NewSearXNGManager() *SearXNGManager {
 	return &SearXNGManager{}
+}
+
+func (sm *SearXNGManager) getConfigDir() (string, error) {
+	if sm.configDir != "" {
+		return sm.configDir, nil
+	}
+
+	dir, err := resolveSearXNGConfigDir()
+	if err != nil {
+		return "", err
+	}
+
+	sm.configDir = dir
+	return sm.configDir, nil
+}
+
+func resolveSearXNGConfigDir() (string, error) {
+	var (
+		errorsList []string
+		tried      = make(map[string]struct{})
+		successDir string
+	)
+
+	tryPath := func(path string) bool {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			return false
+		}
+		if _, seen := tried[path]; seen {
+			return false
+		}
+		tried[path] = struct{}{}
+
+		abs, err := filepath.Abs(filepath.Clean(path))
+		if err != nil {
+			errorsList = append(errorsList, fmt.Sprintf("%s (abs: %v)", path, err))
+			return false
+		}
+
+		if err := os.MkdirAll(abs, 0755); err != nil {
+			errorsList = append(errorsList, fmt.Sprintf("%s (%v)", abs, err))
+			return false
+		}
+
+		successDir = abs
+		return true
+	}
+
+	// 1. User override via environment variable
+	if envDir := os.Getenv(ConfigEnvVar); tryPath(envDir) {
+		return successDir, nil
+	}
+
+	// 2. Legacy current working directory path (for development setups)
+	if cwd, err := os.Getwd(); err == nil {
+		tryPath(filepath.Join(cwd, ConfigDirName))
+		if successDir != "" {
+			return successDir, nil
+		}
+	}
+
+	// 3. Platform-specific config locations
+	if homeDir, err := os.UserHomeDir(); err == nil && homeDir != "" {
+		switch runtime.GOOS {
+		case "darwin":
+			if tryPath(filepath.Join(homeDir, "Library", "Application Support", "ClaraVerse", ConfigDirName)) {
+				return successDir, nil
+			}
+		case "windows":
+			if localAppData := os.Getenv("LOCALAPPDATA"); strings.TrimSpace(localAppData) != "" {
+				if tryPath(filepath.Join(localAppData, "ClaraVerse", ConfigDirName)) {
+					return successDir, nil
+				}
+			}
+			if tryPath(filepath.Join(homeDir, "AppData", "Local", "ClaraVerse", ConfigDirName)) {
+				return successDir, nil
+			}
+		default:
+			if xdgConfig := os.Getenv("XDG_CONFIG_HOME"); strings.TrimSpace(xdgConfig) != "" {
+				if tryPath(filepath.Join(xdgConfig, "claraverse", ConfigDirName)) {
+					return successDir, nil
+				}
+			}
+			if tryPath(filepath.Join(homeDir, ".config", "claraverse", ConfigDirName)) {
+				return successDir, nil
+			}
+		}
+
+		if tryPath(filepath.Join(homeDir, ".claraverse", ConfigDirName)) {
+			return successDir, nil
+		}
+	}
+
+	// 4. System temporary directory fallback
+	if tryPath(filepath.Join(os.TempDir(), "claraverse", ConfigDirName)) {
+		return successDir, nil
+	}
+
+	if len(errorsList) == 0 {
+		return "", fmt.Errorf("unable to determine SearXNG config directory: no valid locations")
+	}
+
+	return "", fmt.Errorf("unable to create SearXNG config directory (tried: %s)", strings.Join(errorsList, "; "))
 }
 
 // NewWebContentFetcher creates a new web content fetcher with smart dynamic detection
@@ -855,6 +1081,7 @@ func NewWebContentFetcher() *WebContentFetcher {
 		},
 		smartMode:         true,
 		playwrightManager: NewPlaywrightManager(),
+		chromedpManager:   NewChromeDPManager(),
 	}
 }
 
@@ -889,7 +1116,11 @@ func (sm *SearXNGManager) CheckContainerRunning() bool {
 
 // CreateSearXNGConfig creates a proper SearXNG configuration
 func (sm *SearXNGManager) CreateSearXNGConfig() error {
-	configDir := "searxng-config"
+	configDir, err := sm.getConfigDir()
+	if err != nil {
+		return fmt.Errorf("failed to resolve config directory: %v", err)
+	}
+
 	if err := os.MkdirAll(configDir, 0755); err != nil {
 		return fmt.Errorf("failed to create config directory: %v", err)
 	}
@@ -1016,12 +1247,14 @@ func (sm *SearXNGManager) StartContainer() error {
 		return fmt.Errorf("failed to pull SearXNG image: %v", err)
 	}
 
-	// Get absolute path to config
-	cwd, err := os.Getwd()
+	configDir, err := sm.getConfigDir()
 	if err != nil {
-		return fmt.Errorf("failed to get working directory: %v", err)
+		return fmt.Errorf("failed to resolve config directory: %v", err)
 	}
-	configAbsPath := filepath.Join(cwd, "searxng-config")
+
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return fmt.Errorf("failed to prepare config directory: %v", err)
+	}
 
 	// Check if container exists but is stopped
 	if sm.CheckContainerExists() {
@@ -1036,7 +1269,7 @@ func (sm *SearXNGManager) StartContainer() error {
 		cmd := exec.Command("docker", "run", "-d",
 			"--name", ContainerName,
 			"-p", fmt.Sprintf("%s:8080", SearXNGPort),
-			"-v", fmt.Sprintf("%s:/etc/searxng", configAbsPath),
+			"-v", fmt.Sprintf("%s:/etc/searxng", configDir),
 			"-e", "SEARXNG_BASE_URL=http://localhost:8080/",
 			"-e", "SEARXNG_SECRET=clara-secret-key-for-searxng",
 			"--add-host=host.docker.internal:host-gateway", // For localhost access
@@ -1146,11 +1379,11 @@ func (sm *SearXNGManager) SearchSearXNG(query string, numResults int) (*SearchRe
 	return &searchResp, nil
 }
 
-// FetchContent fetches and extracts content from a URL using Playwright as the default standard
+// FetchContent fetches and extracts content from a URL using chromedp for dynamic content
 func (wf *WebContentFetcher) FetchContent(targetURL string) *WebContent {
 	result := &WebContent{
 		URL:             targetURL,
-		LoadingStrategy: "playwright",
+		LoadingStrategy: "chromedp",
 	}
 	startTime := time.Now()
 
@@ -1167,67 +1400,24 @@ func (wf *WebContentFetcher) FetchContent(targetURL string) *WebContent {
 		result.URL = targetURL
 	}
 
-	// PLAYWRIGHT-FIRST APPROACH: Always ensure Playwright is available
-	log.Printf("Ensuring Playwright is available for %s", targetURL)
+	// Use chromedp for fast dynamic content fetching
+	log.Printf("Fetching content using chromedp for %s", targetURL)
 
-	// If Playwright is not available, force synchronous download
-	if !wf.playwrightManager.IsAvailable() {
-		log.Printf("Playwright not available, forcing synchronous download...")
-
-		// Start download if not already downloading
-		if !wf.playwrightManager.IsDownloading() {
-			go wf.playwrightManager.EnsureAvailable()
-		}
-
-		// Wait for Playwright to become available (up to 120 seconds for reliable installation)
-		maxWait := 120 * time.Second
-		checkInterval := 1 * time.Second
-		waited := time.Duration(0)
-
-		log.Printf("Waiting for Playwright installation to complete...")
-		for waited < maxWait && !wf.playwrightManager.IsAvailable() {
-			if !wf.playwrightManager.IsDownloading() {
-				downloadErr := wf.playwrightManager.GetDownloadError()
-				if downloadErr != nil {
-					result.Error = fmt.Sprintf("Playwright installation failed: %v", downloadErr)
-					return result
-				}
-				// Download completed but not available - retry
-				go wf.playwrightManager.EnsureAvailable()
-			}
-			time.Sleep(checkInterval)
-			waited += checkInterval
-			if waited%10*time.Second == 0 { // Log every 10 seconds
-				log.Printf("Still waiting for Playwright... (%v/%v)", waited, maxWait)
-			}
-		}
-
-		if !wf.playwrightManager.IsAvailable() {
-			result.Error = "Playwright installation timed out. Please check your internet connection and try again."
-			return result
-		}
-
-		log.Printf("Playwright installation completed successfully!")
-	}
-
-	// Use Playwright to fetch content
-	playwrightResult, err := wf.playwrightManager.FetchContent(targetURL, nil)
+	chromedpResult, err := wf.chromedpManager.FetchContent(targetURL, 10*time.Second)
 	if err != nil {
-		result.Error = fmt.Sprintf("Playwright content extraction failed: %v", err)
-		return result
-	}
-
-	if playwrightResult == nil {
-		result.Error = "Playwright returned no content"
+		// Fallback to static fetch if chromedp fails
+		log.Printf("ChromeDP failed, falling back to HTTP: %v", err)
+		result = wf.fetchStatic(targetURL)
+		result.LoadTime = time.Since(startTime)
+		result.LoadingStrategy = "http-fallback"
 		return result
 	}
 
 	// Update timing and return successful result
-	playwrightResult.LoadTime = time.Since(startTime)
-	playwrightResult.LoadingStrategy = "playwright"
-	log.Printf("Successfully extracted content using Playwright for %s", targetURL)
+	chromedpResult.LoadTime = time.Since(startTime)
+	log.Printf("Successfully extracted content using chromedp for %s (took %v)", targetURL, chromedpResult.LoadTime)
 
-	return playwrightResult
+	return chromedpResult
 }
 
 // fetchStatic performs standard static HTML fetching
@@ -2145,7 +2335,7 @@ except Exception as e:
 	if runtime.GOOS == "windows" {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("VIRTUAL_ENV=%s", s.venvPath))
 	}
-	
+
 	// Ensure working directory is set correctly
 	if cmd.Dir == "" || cmd.Dir == "/" {
 		cmd.Dir = s.workspaceDir
@@ -2271,7 +2461,7 @@ func (s *PythonMCPServer) createPDF(params map[string]interface{}) string {
 
 	// Create full path in workspace - ensure it's within workspace
 	fullPath := filepath.Join(s.workspaceDir, filepath.Base(filename))
-	
+
 	// Security check: ensure the file is within workspace directory
 	workspaceAbs, _ := filepath.Abs(s.workspaceDir)
 	fullPathAbs, _ := filepath.Abs(fullPath)
@@ -2279,11 +2469,14 @@ func (s *PythonMCPServer) createPDF(params map[string]interface{}) string {
 		return "ERROR: Invalid file path - outside workspace directory"
 	}
 
-	// Create PDF
+	// Create PDF with UTF-8 support
 	pdf := gofpdf.New("P", "mm", "A4", "")
+
+	// Enable UTF-8 support for proper bullet point rendering
+	tr := pdf.UnicodeTranslatorFromDescriptor("")
 	pdf.SetCreator("Clara MCP", true)
-	pdf.SetAuthor(author, true)
-	pdf.SetTitle(title, true)
+	pdf.SetAuthor(tr(author), true)
+	pdf.SetTitle(tr(title), true)
 	pdf.SetSubject("Document created by Clara MCP", true)
 
 	// Add page
@@ -2295,7 +2488,7 @@ func (s *PythonMCPServer) createPDF(params map[string]interface{}) string {
 	// Add title if provided
 	if title != "" {
 		pdf.SetFont("Arial", "B", 16)
-		pdf.Cell(0, 10, title)
+		pdf.Cell(0, 10, tr(title))
 		pdf.Ln(15)
 		pdf.SetFont("Arial", "", 12)
 	}
@@ -2315,37 +2508,37 @@ func (s *PythonMCPServer) createPDF(params map[string]interface{}) string {
 		if strings.HasPrefix(line, "# ") {
 			pdf.Ln(5)
 			pdf.SetFont("Arial", "B", 14)
-			pdf.Cell(0, 8, strings.TrimPrefix(line, "# "))
+			pdf.Cell(0, 8, tr(strings.TrimPrefix(line, "# ")))
 			pdf.Ln(10)
 			pdf.SetFont("Arial", "", 12)
 		} else if strings.HasPrefix(line, "## ") {
 			pdf.Ln(3)
 			pdf.SetFont("Arial", "B", 13)
-			pdf.Cell(0, 8, strings.TrimPrefix(line, "## "))
+			pdf.Cell(0, 8, tr(strings.TrimPrefix(line, "## ")))
 			pdf.Ln(8)
 			pdf.SetFont("Arial", "", 12)
 		} else if strings.HasPrefix(line, "### ") {
 			pdf.Ln(2)
 			pdf.SetFont("Arial", "B", 12)
-			pdf.Cell(0, 7, strings.TrimPrefix(line, "### "))
+			pdf.Cell(0, 7, tr(strings.TrimPrefix(line, "### ")))
 			pdf.Ln(7)
 			pdf.SetFont("Arial", "", 12)
 		} else if strings.HasPrefix(line, "- ") || strings.HasPrefix(line, "* ") {
-			// Bullet points
-			pdf.Cell(10, 6, "•")
-			s.addTextWithFormatting(pdf, strings.TrimPrefix(strings.TrimPrefix(line, "- "), "* "))
+			// Bullet points with proper UTF-8 encoding
+			pdf.Cell(10, 6, tr("• "))
+			s.addTextWithFormatting(pdf, tr, strings.TrimPrefix(strings.TrimPrefix(line, "- "), "* "))
 			pdf.Ln(6)
 		} else if regexp.MustCompile(`^\d+\.\s`).MatchString(line) {
 			// Numbered lists
 			parts := regexp.MustCompile(`^(\d+\.\s)(.*)`).FindStringSubmatch(line)
 			if len(parts) == 3 {
 				pdf.Cell(10, 6, parts[1])
-				s.addTextWithFormatting(pdf, parts[2])
+				s.addTextWithFormatting(pdf, tr, parts[2])
 				pdf.Ln(6)
 			}
 		} else {
 			// Regular paragraph
-			s.addTextWithFormatting(pdf, line)
+			s.addTextWithFormatting(pdf, tr, line)
 			pdf.Ln(6)
 		}
 	}
@@ -2371,6 +2564,11 @@ func (s *PythonMCPServer) createPDF(params map[string]interface{}) string {
 		fileURL = "file://" + fullPath
 	}
 
+	// Auto-open the PDF file
+	if err := s.openFile(fullPath); err != nil {
+		log.Printf("Warning: Failed to auto-open PDF: %v", err)
+	}
+
 	// Format result
 	var output strings.Builder
 	output.WriteString("📄 PDF CREATED SUCCESSFULLY\n")
@@ -2382,13 +2580,13 @@ func (s *PythonMCPServer) createPDF(params map[string]interface{}) string {
 	output.WriteString(fmt.Sprintf("📝 Title: %s\n", title))
 	output.WriteString(fmt.Sprintf("👤 Author: %s\n", author))
 	output.WriteString(fmt.Sprintf("📅 Created: %s\n", fileInfo.ModTime().Format("2006-01-02 15:04:05")))
-	output.WriteString("\nThe PDF has been saved to your workspace and can be opened by clicking the file URL above.")
+	output.WriteString("\n✓ PDF opened automatically in your default viewer")
 
 	return output.String()
 }
 
-// addTextWithFormatting adds text to PDF with basic markdown formatting
-func (s *PythonMCPServer) addTextWithFormatting(pdf *gofpdf.Fpdf, text string) {
+// addTextWithFormatting adds text to PDF with basic markdown formatting and UTF-8 support
+func (s *PythonMCPServer) addTextWithFormatting(pdf *gofpdf.Fpdf, tr func(string) string, text string) {
 	// Handle bold **text**
 	boldRegex := regexp.MustCompile(`\*\*(.*?)\*\*`)
 	// Handle italic *text*
@@ -2411,11 +2609,11 @@ func (s *PythonMCPServer) addTextWithFormatting(pdf *gofpdf.Fpdf, text string) {
 		}
 		testLine += word
 
-		// Check if line fits
-		lineWidth := pdf.GetStringWidth(testLine)
+		// Check if line fits (using translated text for width calculation)
+		lineWidth := pdf.GetStringWidth(tr(testLine))
 		if lineWidth > maxWidth && currentLine != "" {
-			// Output current line and start new one
-			pdf.Cell(0, 6, currentLine)
+			// Output current line and start new one (with UTF-8 encoding)
+			pdf.Cell(0, 6, tr(currentLine))
 			pdf.Ln(6)
 			currentLine = word
 		} else {
@@ -2423,9 +2621,9 @@ func (s *PythonMCPServer) addTextWithFormatting(pdf *gofpdf.Fpdf, text string) {
 		}
 	}
 
-	// Output remaining text
+	// Output remaining text (with UTF-8 encoding)
 	if currentLine != "" {
-		pdf.Cell(0, 6, currentLine)
+		pdf.Cell(0, 6, tr(currentLine))
 	}
 }
 

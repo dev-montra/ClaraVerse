@@ -86,7 +86,11 @@ function webContainerHeaders(): PluginOption {
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [react(), copyPdfWorker(), webContainerHeaders()],
+  plugins: [
+    react(),
+    copyPdfWorker(),
+    webContainerHeaders()
+  ],
   optimizeDeps: {
     exclude: ['lucide-react'],
   },

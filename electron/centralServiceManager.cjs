@@ -1,5 +1,6 @@
 const { EventEmitter } = require('events');
 const log = require('electron-log');
+const { getAdaptiveHealthCheckManager } = require('./adaptiveHealthCheckManager.cjs');
 
 /**
  * Central Service Manager
@@ -10,6 +11,9 @@ const log = require('electron-log');
 class CentralServiceManager extends EventEmitter {
   constructor(configManager = null) {
     super();
+    
+    // Get adaptive health check manager
+    this.adaptiveHealthManager = getAdaptiveHealthCheckManager();
     
     // Service registry - single source of truth
     this.services = new Map();
@@ -29,13 +33,14 @@ class CentralServiceManager extends EventEmitter {
       RESTARTING: 'restarting'
     };
     
-    // Global configuration
+    // Global configuration (now with adaptive health checks)
     this.config = {
       startupTimeout: 30000,
       shutdownTimeout: 15000,
-      healthCheckInterval: 30000,
+      baseHealthCheckInterval: 30000, // Base interval when active
       maxRestartAttempts: 3,
-      restartDelay: 5000
+      restartDelay: 5000,
+      useAdaptiveChecks: true // Enable adaptive health checking
     };
     
     this.isShuttingDown = false;
@@ -105,6 +110,12 @@ class CentralServiceManager extends EventEmitter {
         }
       }
       
+      // Start adaptive health monitoring
+      if (this.config.useAdaptiveChecks) {
+        this.adaptiveHealthManager.startMonitoring();
+        log.info('🔋 Adaptive health monitoring enabled', this.adaptiveHealthManager.getStatus());
+      }
+      
       // Start health monitoring
       this.startHealthMonitoring();
       
@@ -142,9 +153,10 @@ class CentralServiceManager extends EventEmitter {
       log.info(`🔄 Starting service: ${serviceName} (mode: ${deploymentMode})`);
       
       // Start service based on deployment mode
-      if (deploymentMode === 'manual') {
+      if (deploymentMode === 'manual' || deploymentMode === 'remote') {
         service.instance = await this.startManualService(serviceName, service);
-      } else if (deploymentMode === 'native') {
+      } else if (deploymentMode === 'local' || deploymentMode === 'native') {
+        // Local binary service
         service.instance = await this.startNativeService(serviceName, service);
       } else {
         // Default to Docker mode (backward compatibility)
@@ -179,6 +191,17 @@ class CentralServiceManager extends EventEmitter {
    */
   async stopAllServices() {
     this.isShuttingDown = true;
+    
+    // Stop adaptive monitoring
+    if (this.adaptiveHealthManager) {
+      this.adaptiveHealthManager.stopMonitoring();
+    }
+    
+    // Clear health check timer
+    if (this.healthCheckTimer) {
+      clearTimeout(this.healthCheckTimer);
+      this.healthCheckTimer = null;
+    }
     
     try {
       log.info('🛑 Stopping all ClaraVerse services...');
@@ -279,14 +302,14 @@ class CentralServiceManager extends EventEmitter {
     // Define service dependencies
     const dependencies = {
       'docker': [],
-      'llamaswap': ['docker'],
+      'claracore': [], // No dependencies - runs independently
       'python-backend': ['docker'],
       'comfyui': ['docker', 'python-backend'],
       'n8n': ['docker'],
-      'mcp': ['llamaswap'],
-      'watchdog': ['docker', 'llamaswap', 'python-backend']
+      'mcp': ['python-backend', 'claracore'],
+      'watchdog': ['docker', 'python-backend', 'claracore']
     };
-    
+
     // Topological sort to determine startup order
     return this.topologicalSort(dependencies);
   }
@@ -339,17 +362,30 @@ class CentralServiceManager extends EventEmitter {
   setState(serviceName, state) {
     const previousState = this.serviceStates.get(serviceName);
     this.serviceStates.set(serviceName, state);
-    
+
     const service = this.services.get(serviceName);
     if (service) {
       service.state = state;
     }
-    
+
     this.emit('service-state-changed', {
       name: serviceName,
       previousState,
       currentState: state
     });
+  }
+
+  /**
+   * Set service URL (for remote/manual deployments)
+   */
+  setServiceUrl(serviceName, url) {
+    const service = this.services.get(serviceName);
+    if (service) {
+      service.serviceUrl = url;
+      log.info(`✅ Set ${serviceName} URL to: ${url}`);
+    } else {
+      log.warn(`⚠️ Service ${serviceName} not found when setting URL`);
+    }
   }
 
   /**
@@ -368,9 +404,9 @@ class CentralServiceManager extends EventEmitter {
       // Get deployment mode and URL info
       const deploymentMode = service.deploymentMode || this.getDeploymentMode(name);
       let serviceUrl = null;
-      
-      if (deploymentMode === 'manual' && this.configManager) {
-        // Manual services get URL from config manager
+
+      if ((deploymentMode === 'manual' || deploymentMode === 'remote') && this.configManager) {
+        // Manual and remote services get URL from config manager
         serviceUrl = this.configManager.getServiceUrl(name);
       } else if (deploymentMode === 'docker' && service.serviceUrl) {
         // Docker services get URL from service state (set by main.cjs)
@@ -384,7 +420,7 @@ class CentralServiceManager extends EventEmitter {
           'n8n': 5678,
           'python-backend': 5001,
           'comfyui': 8188,
-          'llamaswap': 8091
+          'claracore': 8091
         };
         if (defaultPorts[name]) {
           serviceUrl = `http://localhost:${defaultPorts[name]}`;
@@ -400,8 +436,8 @@ class CentralServiceManager extends EventEmitter {
         uptime: uptime,
         // NEW: Deployment mode specific information
         serviceUrl: serviceUrl,
-        isManual: deploymentMode === 'manual',
-        canRestart: deploymentMode !== 'manual' && service.autoRestart,
+        isManual: deploymentMode === 'manual' || deploymentMode === 'remote',
+        canRestart: (deploymentMode !== 'manual' && deploymentMode !== 'remote') && service.autoRestart,
         // Platform compatibility info
         supportedModes: this.configManager?.getSupportedModes(name) || ['docker']
       };
@@ -411,14 +447,67 @@ class CentralServiceManager extends EventEmitter {
   }
 
   /**
-   * Health monitoring for all services (Enhanced for deployment modes)
+   * Schedule next adaptive health check
+   */
+  scheduleNextHealthCheck() {
+    if (this.isShuttingDown) return;
+
+    // Get adaptive interval
+    let nextInterval = this.config.baseHealthCheckInterval;
+    
+    if (this.config.useAdaptiveChecks && this.adaptiveHealthManager) {
+      // Use the most conservative interval (longest) from all services
+      for (const [serviceName] of this.services) {
+        const serviceInterval = this.adaptiveHealthManager.getHealthCheckInterval(
+          serviceName,
+          this.config.baseHealthCheckInterval
+        );
+        nextInterval = Math.max(nextInterval, serviceInterval);
+      }
+
+      // Log adaptive interval changes
+      const status = this.adaptiveHealthManager.getStatus();
+      if (status.mode !== 'ACTIVE') {
+        log.debug(`🔋 Adaptive health check: next in ${nextInterval / 1000}s (${status.mode} mode)`);
+      }
+    }
+
+    // Clear existing timer
+    if (this.healthCheckTimer) {
+      clearTimeout(this.healthCheckTimer);
+    }
+
+    // Schedule next check
+    this.healthCheckTimer = setTimeout(async () => {
+      await this.performHealthMonitoring();
+      this.scheduleNextHealthCheck(); // Schedule next one after this completes
+    }, nextInterval);
+  }
+
+  /**
+   * Health monitoring for all services (Enhanced for deployment modes and adaptive checking)
    */
   startHealthMonitoring() {
-    setInterval(async () => {
-      if (this.isShuttingDown) return;
+    // Start the first health check cycle
+    this.scheduleNextHealthCheck();
+  }
+
+  /**
+   * Perform health monitoring on all services
+   */
+  async performHealthMonitoring() {
+    if (this.isShuttingDown) return;
       
       for (const [serviceName, service] of this.services) {
         if (service.state === this.states.RUNNING) {
+          // Skip services during deep idle if adaptive checking is enabled
+          if (this.config.useAdaptiveChecks && 
+              this.adaptiveHealthManager && 
+              this.adaptiveHealthManager.shouldSkipHealthCheck(serviceName)) {
+            log.debug(`⏭️ Skipping ${serviceName} health check - deep idle mode`);
+            continue;
+          }
+
           try {
             // Determine health check method based on deployment mode
             let healthCheck;
@@ -438,6 +527,11 @@ class CentralServiceManager extends EventEmitter {
             }
             
             service.lastHealthCheck = Date.now();
+            
+            // Record service activity for adaptive checking when healthy
+            if (isHealthy && this.adaptiveHealthManager) {
+              this.adaptiveHealthManager.recordServiceActivity(serviceName);
+            }
             
             if (!isHealthy) {
               log.warn(`⚠️  Service ${serviceName} health check failed (${service.deploymentMode || 'docker'} mode)`);
@@ -469,7 +563,6 @@ class CentralServiceManager extends EventEmitter {
           }
         }
       }
-    }, this.config.healthCheckInterval);
   }
 
   /**
@@ -523,14 +616,29 @@ class CentralServiceManager extends EventEmitter {
    * NEW: Get deployment mode for a service
    */
   getDeploymentMode(serviceName) {
-    if (this.configManager) {
-      return this.configManager.getServiceMode(serviceName);
+    // Special case: ClaraCore always defaults to 'local' mode (native binary)
+    // Check this FIRST before config manager to ensure it always runs locally
+    if (serviceName === 'claracore') {
+      // Unless explicitly configured otherwise, always use local mode
+      if (this.configManager) {
+        const mode = this.configManager.getServiceMode(serviceName);
+        // Only allow 'local' or 'remote', never docker for claracore
+        if (mode === 'local' || mode === 'remote') {
+          return mode;
+        }
+      }
+      return 'local';
     }
-    
+
+    if (this.configManager) {
+      const mode = this.configManager.getServiceMode(serviceName);
+      if (mode) return mode;
+    }
+
     // Fallback: check if service supports manual mode
     const { getSupportedDeploymentModes } = require('./serviceDefinitions.cjs');
     const supportedModes = getSupportedDeploymentModes(serviceName, this.platformInfo.platform);
-    
+
     return supportedModes.includes('docker') ? 'docker' : supportedModes[0] || 'docker';
   }
 
@@ -576,18 +684,26 @@ class CentralServiceManager extends EventEmitter {
    */
   async startNativeService(serviceName, service) {
     log.info(`🔧 Starting native service ${serviceName}`);
-    
+
     // Use the service's custom start method if available
     if (service.customStart) {
       const instance = await service.customStart();
-      return {
-        type: 'native',
-        instance: instance,
-        startTime: Date.now(),
-        deploymentMode: 'native'
-      };
+
+      // IMPORTANT: Don't spread the instance! Methods are on the prototype and won't be copied.
+      // Store the instance directly and add metadata properties to it
+      instance.type = 'native';
+      instance.startTime = Date.now();
+      instance.deploymentMode = 'local';
+
+      // Ensure healthCheck is bound properly
+      if (instance.checkHealth && !instance.healthCheck) {
+        instance.healthCheck = instance.checkHealth.bind(instance);
+      }
+
+      // Return the instance with all its methods intact
+      return instance;
     }
-    
+
     // Fallback: generic native service startup
     throw new Error(`Native service ${serviceName} does not define a customStart method`);
   }
@@ -614,12 +730,15 @@ class CentralServiceManager extends EventEmitter {
   getStopMethod(service) {
     if (service.dockerContainer) {
       return this.stopDockerService.bind(this);
+    } else if (service.instance && service.instance.stopService) {
+      // Native service instance (like ClaraCore local binary)
+      return this.stopNativeService.bind(this);
     } else if (service.process) {
       return this.stopProcessService.bind(this);
     } else if (service.customStop) {
       return service.customStop;
     }
-    
+
     return () => Promise.resolve(); // No-op if no stop method
   }
 
@@ -653,6 +772,19 @@ class CentralServiceManager extends EventEmitter {
   async stopProcessService(service) {
     if (service.instance && service.instance.kill) {
       service.instance.kill('SIGTERM');
+    }
+  }
+
+  /**
+   * Native service stop (for ClaraCore local binary and similar)
+   */
+  async stopNativeService(service) {
+    if (service.instance && typeof service.instance.stopService === 'function') {
+      log.info(`🛑 Stopping native service instance: ${service.name}`);
+      await service.instance.stopService();
+      log.info(`✅ Native service instance stopped: ${service.name}`);
+    } else {
+      log.warn(`⚠️ Native service ${service.name} has no stopService method`);
     }
   }
 }

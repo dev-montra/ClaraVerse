@@ -1091,7 +1091,7 @@ const Community: React.FC<CommunityProps> = ({ onPageChange }) => {
             backgroundImage: `url(${wallpaperUrl})`,
             backgroundSize: 'cover',
             backgroundPosition: 'center',
-            opacity: 0.1,
+            opacity: 0.4,
             filter: 'blur(1px)',
             pointerEvents: 'none'
           }}

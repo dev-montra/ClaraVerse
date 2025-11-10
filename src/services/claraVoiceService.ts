@@ -23,6 +23,31 @@ export class ClaraVoiceService {
 
   constructor(baseUrl: string = 'http://localhost:5001') {
     this.baseUrl = baseUrl;
+    this.initializeBaseUrl(); // Dynamically get the Python Backend URL
+  }
+
+  /**
+   * Initialize baseUrl by fetching from Electron API
+   */
+  private async initializeBaseUrl(): Promise<void> {
+    try {
+      if ((window as any).electronAPI?.getPythonBackendUrl) {
+        const result = await (window as any).electronAPI.getPythonBackendUrl();
+        if (result.success && result.url) {
+          console.log(`🎤 [Voice] Using Python Backend URL: ${result.url}`);
+          this.baseUrl = result.url;
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to get Python Backend URL, using default:', error);
+    }
+  }
+
+  /**
+   * Refresh the base URL (call when service configuration changes)
+   */
+  public async refreshBaseUrl(): Promise<void> {
+    await this.initializeBaseUrl();
   }
 
   /**

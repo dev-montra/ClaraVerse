@@ -146,3 +146,15 @@ searxng-config
 .bmad-infrastructure-devops
 clara-mcp/mcp_workspace/*
 llama-swap/*
+dev_docs/*
+config.yaml
+model_folders.json
+settings.json
+/binaries/*
+downloads/*
+config.yaml.backup.*
+electron/claracore/progress_state.*
+package-lock.json
+
+# Agent deployment container testing
+test_agent_container/

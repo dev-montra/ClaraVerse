@@ -19,6 +19,12 @@ export interface NotebookCreate {
   description?: string;
   llm_provider: ProviderConfig;
   embedding_provider: ProviderConfig;
+  // Schema consistency parameters (optional)
+  entity_types?: string[];
+  language?: string;
+  // Manual embedding dimension override (for low-confidence model detection)
+  manual_embedding_dimensions?: number;
+  manual_embedding_max_tokens?: number;
 }
 
 export interface NotebookResponse {
@@ -30,6 +36,9 @@ export interface NotebookResponse {
   // Add provider information to response (optional for backward compatibility)
   llm_provider?: ProviderConfig;
   embedding_provider?: ProviderConfig;
+  // Schema consistency information
+  entity_types?: string[];
+  language?: string;
 }
 
 /**
@@ -40,7 +49,7 @@ export interface NotebookDocumentResponse {
   filename: string;
   notebook_id: string;
   uploaded_at: string;
-  status: 'processing' | 'completed' | 'failed';
+  status: 'queued' | 'pending' | 'processing' | 'completed' | 'failed';
   error?: string;
   file_path?: string; // Add file path for citation tracking
 }
@@ -102,6 +111,15 @@ export interface ChatHistoryResponse {
 }
 
 /**
+ * Notebook lock status
+ */
+export interface NotebookLockStatus {
+  notebook_id: string;
+  is_locked: boolean;
+  status: string;
+}
+
+/**
  * Query template
  */
 export interface QueryTemplate {
@@ -115,6 +133,7 @@ export interface QueryTemplate {
 
 /**
  * Enhanced query request with chat history support
+ * Uses enhanced citation mode by default for academic-style citations
  */
 export interface EnhancedNotebookQueryRequest extends NotebookQueryRequest {
   use_chat_history?: boolean;
@@ -135,6 +154,83 @@ export interface DocumentRetryResponse {
   message: string;
   document_id: string;
   status: string;
+}
+
+/**
+ * Notebook schema update request
+ */
+export interface NotebookSchemaUpdate {
+  entity_types?: string[];
+  language?: string;
+}
+
+/**
+ * Notebook configuration update response
+ */
+export interface NotebookConfigurationUpdateResponse {
+  message: string;
+  notebook: NotebookResponse;
+  reprocessing_info: {
+    total_documents: number;
+    completed_documents: number;
+    failed_documents: number;
+    needs_reprocessing: number;
+  };
+  recommendation: string;
+}
+
+/**
+ * Document reprocessing response
+ */
+export interface DocumentReprocessResponse {
+  message: string;
+  total_documents: number;
+  queued_for_reprocessing: number;
+  failed_no_content?: number;
+  note: string;
+}
+
+/**
+ * Supported file formats response
+ */
+export interface SupportedFormatsResponse {
+  supported_formats: Array<{
+    extension: string;
+    description: string;
+    category: string;
+  }>;
+  categories: {
+    [key: string]: string[];
+  };
+}
+
+/**
+ * Entity types response
+ */
+export interface EntityTypesResponse {
+  default_entity_types: string[];
+  categories: {
+    [key: string]: string[];
+  };
+  description: string;
+  usage: string;
+  specialized_sets: {
+    [key: string]: string[];
+  };
+}
+
+/**
+ * Debug information response
+ */
+export interface DebugInfoResponse {
+  notebook_id: string;
+  total_documents: number;
+  document_statuses: {
+    [key: string]: number;
+  };
+  lightrag_status: string;
+  storage_info: any;
+  recent_errors: string[];
 }
 
 export interface GraphData {
@@ -163,11 +259,41 @@ export class ClaraNotebookService {
   private isHealthy: boolean = false;
   private healthCheckInterval: NodeJS.Timeout | null = null;
   private healthCheckCallbacks: ((isHealthy: boolean) => void)[] = [];
-  private abortController: AbortController | null = null;
+  private queryAbortController: AbortController | null = null;
+  private chatAbortController: AbortController | null = null;
+  // Validation cache to reduce load on smaller machines
+  private validationCache: Map<string, { result: any, timestamp: number }> = new Map();
+  private readonly VALIDATION_CACHE_TTL = 60000; // Cache for 60 seconds
 
   constructor(baseUrl: string = 'http://localhost:5001') {
     this.baseUrl = baseUrl;
+    this.initializeBaseUrl(); // Dynamically get the Python Backend URL
     this.startHealthChecking();
+  }
+
+  /**
+   * Initialize baseUrl by fetching from Electron API
+   */
+  private async initializeBaseUrl(): Promise<void> {
+    try {
+      if ((window as any).electronAPI?.getPythonBackendUrl) {
+        const result = await (window as any).electronAPI.getPythonBackendUrl();
+        if (result.success && result.url) {
+          console.log(`📚 [Notebook] Using Python Backend URL: ${result.url}`);
+          this.baseUrl = result.url;
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to get Python Backend URL, using default:', error);
+    }
+  }
+
+  /**
+   * Refresh the base URL (call when service configuration changes)
+   */
+  public async refreshBaseUrl(): Promise<void> {
+    await this.initializeBaseUrl();
+    await this.checkHealth(); // Re-check health with new URL
   }
 
   /**
@@ -214,6 +340,26 @@ export class ClaraNotebookService {
       }
     } catch {
       this.setUnhealthy();
+    }
+  }
+
+  /**
+   * Manually set health status (for immediate updates from IPC events)
+   * This avoids race conditions when we already know the backend is healthy
+   */
+  public setHealthStatus(isHealthy: boolean, serviceUrl?: string): void {
+    const wasHealthy = this.isHealthy;
+    this.isHealthy = isHealthy;
+    
+    // Update base URL if provided
+    if (serviceUrl && serviceUrl !== this.baseUrl) {
+      console.log(`📚 Notebook Backend URL updated: ${serviceUrl}`);
+      this.baseUrl = serviceUrl;
+    }
+    
+    if (wasHealthy !== this.isHealthy) {
+      console.log(`📚 Notebook Backend health manually updated: ${this.isHealthy ? 'healthy' : 'unhealthy'}`);
+      this.notifyHealthCallbacks();
     }
   }
 
@@ -266,12 +412,195 @@ export class ClaraNotebookService {
   }
 
   /**
+   * Get current base URL
+   */
+  public getBaseUrl(): string {
+    return this.baseUrl;
+  }
+
+  /**
    * Force a health check
    */
   public async forceHealthCheck(): Promise<boolean> {
     await this.checkHealth();
     return this.isHealthy;
   }
+
+  /**
+   * Get supported file formats
+   */
+  public async getSupportedFormats(): Promise<SupportedFormatsResponse> {
+    if (!this.isHealthy) {
+      throw new Error('Notebook backend is not available');
+    }
+
+    try {
+      const response = await fetch(`${this.baseUrl}/notebooks/supported-formats`, {
+        method: 'GET',
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to get supported formats: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Get supported formats error:', error);
+      throw error;
+    }
+  }
+
+/**
+ * Get default entity types
+ */
+public async getEntityTypes(): Promise<EntityTypesResponse> {
+  if (!this.isHealthy) {
+    throw new Error('Notebook backend is not available');
+  }
+
+  try {
+    const response = await fetch(`${this.baseUrl}/notebooks/entity-types`, {
+      method: 'GET',
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to get entity types: ${response.statusText}`);
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('Get entity types error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Validate notebook models before creation
+ * Results are cached for 60 seconds to reduce load on smaller machines
+ */
+public async validateModels(config: NotebookCreate): Promise<{
+  llm_accessible: boolean;
+  llm_error: string | null;
+  embedding_accessible: boolean;
+  embedding_error: string | null;
+  overall_status: 'success' | 'partial' | 'failed' | 'error';
+}> {
+  if (!this.isHealthy) {
+    throw new Error('Notebook backend is not available');
+  }
+
+  // Create cache key from config
+  const cacheKey = JSON.stringify({
+    llm: { baseUrl: config.llm_provider.baseUrl, model: config.llm_provider.model },
+    emb: { baseUrl: config.embedding_provider.baseUrl, model: config.embedding_provider.model }
+  });
+
+  // Check cache first
+  const cached = this.validationCache.get(cacheKey);
+  const now = Date.now();
+  if (cached && (now - cached.timestamp) < this.VALIDATION_CACHE_TTL) {
+    console.log('📦 Using cached validation result');
+    return cached.result;
+  }
+
+  try {
+    // If Python backend is in Docker and needs to access services on host,
+    // translate localhost URLs to host.docker.internal for Windows/Mac
+    const configForValidation = { ...config };
+
+    // Check platform and if Python backend is in Docker
+    // Get platform from Electron API (more reliable than user agent)
+    const platform = (window as any).electronAPI?.getPlatform() || (window as any).electron?.getPlatform() || 'unknown';
+    const isLinux = platform === 'linux';
+    const isWindows = platform === 'win32';
+    const isMac = platform === 'darwin';
+
+    // On Linux, Python backend uses host network mode (port 5000)
+    // On Windows/Mac, Python backend uses bridge mode (port 5001)
+    const isPythonInDocker = this.baseUrl.includes('localhost:5001') ||
+                             this.baseUrl.includes('127.0.0.1:5001') ||
+                             this.baseUrl.includes('localhost:5000') ||
+                             this.baseUrl.includes('127.0.0.1:5000');
+
+    // Determine the host address based on platform
+    let hostAddress = '';
+    if (isPythonInDocker && !isLinux) {
+      // On Windows/Mac: Use host.docker.internal (bridge network mode)
+      hostAddress = 'host.docker.internal';
+
+      const platformName = isWindows ? 'Windows' : isMac ? 'macOS' : 'Unknown';
+      console.log(`🐧 ${platformName} detected: Using host.docker.internal for host access`);
+    } else if (isPythonInDocker && isLinux) {
+      // On Linux: Python backend uses host network mode, can access localhost directly
+      console.log('🐧 Linux detected: Python backend uses host network mode, keeping localhost URLs');
+    }
+
+    if (hostAddress && isPythonInDocker) {
+      // Translate localhost URLs for LLM provider
+      if (configForValidation.llm_provider.baseUrl) {
+        configForValidation.llm_provider = {
+          ...configForValidation.llm_provider,
+          baseUrl: configForValidation.llm_provider.baseUrl
+            .replace('http://localhost:', `http://${hostAddress}:`)
+            .replace('http://127.0.0.1:', `http://${hostAddress}:`)
+            .replace('https://localhost:', `https://${hostAddress}:`)
+            .replace('https://127.0.0.1:', `https://${hostAddress}:`)
+        };
+      }
+
+      // Translate localhost URLs for embedding provider
+      if (configForValidation.embedding_provider.baseUrl) {
+        configForValidation.embedding_provider = {
+          ...configForValidation.embedding_provider,
+          baseUrl: configForValidation.embedding_provider.baseUrl
+            .replace('http://localhost:', `http://${hostAddress}:`)
+            .replace('http://127.0.0.1:', `http://${hostAddress}:`)
+            .replace('https://localhost:', `https://${hostAddress}:`)
+            .replace('https://127.0.0.1:', `https://${hostAddress}:`)
+        };
+      }
+
+      const platformName = isWindows ? 'Windows' : isMac ? 'macOS' : isLinux ? 'Linux' : 'Unknown';
+      console.log(`🔄 Translated URLs for Docker container access (${platformName}):`, {
+        host_address: hostAddress,
+        original_llm: config.llm_provider.baseUrl,
+        translated_llm: configForValidation.llm_provider.baseUrl,
+        original_emb: config.embedding_provider.baseUrl,
+        translated_emb: configForValidation.embedding_provider.baseUrl
+      });
+    }
+
+    const response = await fetch(`${this.baseUrl}/notebooks/validate-models`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(configForValidation),
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to validate models: ${response.statusText}`);
+    }
+
+    const result = await response.json();
+
+    // Cache successful results
+    this.validationCache.set(cacheKey, { result, timestamp: now });
+
+    // Clean up old cache entries (keep cache size manageable)
+    if (this.validationCache.size > 10) {
+      const oldestKey = this.validationCache.keys().next().value;
+      if (oldestKey) {
+        this.validationCache.delete(oldestKey);
+      }
+    }
+
+    return result;
+  } catch (error) {
+    console.error('Validate models error:', error);
+    throw error;
+  }
+}
 
   /**
    * Create a new notebook
@@ -282,12 +611,74 @@ export class ClaraNotebookService {
     }
 
     try {
+      // Apply same URL translation for notebook creation
+      const notebookForCreation = { ...notebook };
+
+      // Check platform and if Python backend is in Docker
+      // Get platform from Electron API (more reliable than user agent)
+      const platform = (window as any).electronAPI?.getPlatform() || (window as any).electron?.getPlatform() || 'unknown';
+      const isLinux = platform === 'linux';
+      const isWindows = platform === 'win32';
+      const isMac = platform === 'darwin';
+
+      // On Linux, Python backend uses host network mode (port 5000)
+      // On Windows/Mac, Python backend uses bridge mode (port 5001)
+      const isPythonInDocker = this.baseUrl.includes('localhost:5001') ||
+                               this.baseUrl.includes('127.0.0.1:5001') ||
+                               this.baseUrl.includes('localhost:5000') ||
+                               this.baseUrl.includes('127.0.0.1:5000');
+
+      // Determine the host address based on platform
+      let hostAddress = '';
+      if (isPythonInDocker && !isLinux) {
+        // On Windows/Mac: Use host.docker.internal (bridge network mode)
+        hostAddress = 'host.docker.internal';
+      } else if (isPythonInDocker && isLinux) {
+        // On Linux: Python backend uses host network mode, can access localhost directly
+        console.log('🐧 Linux detected: Python backend uses host network mode, keeping localhost URLs');
+      }
+
+      if (hostAddress && isPythonInDocker) {
+        // Translate localhost URLs for LLM provider
+        if (notebookForCreation.llm_provider.baseUrl) {
+          notebookForCreation.llm_provider = {
+            ...notebookForCreation.llm_provider,
+            baseUrl: notebookForCreation.llm_provider.baseUrl
+              .replace('http://localhost:', `http://${hostAddress}:`)
+              .replace('http://127.0.0.1:', `http://${hostAddress}:`)
+              .replace('https://localhost:', `https://${hostAddress}:`)
+              .replace('https://127.0.0.1:', `https://${hostAddress}:`)
+          };
+        }
+
+        // Translate localhost URLs for embedding provider
+        if (notebookForCreation.embedding_provider.baseUrl) {
+          notebookForCreation.embedding_provider = {
+            ...notebookForCreation.embedding_provider,
+            baseUrl: notebookForCreation.embedding_provider.baseUrl
+              .replace('http://localhost:', `http://${hostAddress}:`)
+              .replace('http://127.0.0.1:', `http://${hostAddress}:`)
+              .replace('https://localhost:', `https://${hostAddress}:`)
+              .replace('https://127.0.0.1:', `https://${hostAddress}:`)
+          };
+        }
+
+        const platformName = isWindows ? 'Windows' : isMac ? 'macOS' : isLinux ? 'Linux' : 'Unknown';
+        console.log(`🔄 Translated URLs for notebook creation (${platformName}):`, {
+          host_address: hostAddress,
+          original_llm: notebook.llm_provider.baseUrl,
+          translated_llm: notebookForCreation.llm_provider.baseUrl,
+          original_emb: notebook.embedding_provider.baseUrl,
+          translated_emb: notebookForCreation.embedding_provider.baseUrl
+        });
+      }
+
       const response = await fetch(`${this.baseUrl}/notebooks`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(notebook),
+        body: JSON.stringify(notebookForCreation),
       });
 
       if (!response.ok) {
@@ -374,6 +765,161 @@ export class ClaraNotebookService {
       }
     } catch (error) {
       console.error('Delete notebook error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update notebook configuration (LLM and embedding providers)
+   */
+  public async updateNotebookConfiguration(notebookId: string, config: NotebookCreate): Promise<NotebookConfigurationUpdateResponse> {
+    if (!this.isHealthy) {
+      throw new Error('Notebook backend is not available');
+    }
+
+    try {
+      const response = await fetch(`${this.baseUrl}/notebooks/${notebookId}/configuration`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(config),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new Error(errorData.detail || `Failed to update notebook configuration: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Update notebook configuration error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update notebook schema (entity types and language)
+   */
+  public async updateNotebookSchema(notebookId: string, schema: NotebookSchemaUpdate): Promise<NotebookResponse> {
+    if (!this.isHealthy) {
+      throw new Error('Notebook backend is not available');
+    }
+
+    try {
+      const response = await fetch(`${this.baseUrl}/notebooks/${notebookId}/schema`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(schema),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new Error(errorData.detail || `Failed to update notebook schema: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Update notebook schema error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Rebuild notebook (safe operation that preserves documents)
+   */
+  public async rebuildNotebook(notebookId: string): Promise<DocumentReprocessResponse> {
+    if (!this.isHealthy) {
+      throw new Error('Notebook backend is not available');
+    }
+
+    try {
+      const response = await fetch(`${this.baseUrl}/notebooks/${notebookId}/rebuild`, {
+        method: 'POST',
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new Error(errorData.detail || `Failed to rebuild notebook: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Rebuild notebook error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Clear notebook storage (DANGER: deletes all documents from database)
+   */
+  public async clearNotebookStorage(notebookId: string): Promise<void> {
+    if (!this.isHealthy) {
+      throw new Error('Notebook backend is not available');
+    }
+
+    try {
+      const response = await fetch(`${this.baseUrl}/notebooks/${notebookId}/clear-storage`, {
+        method: 'POST',
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new Error(errorData.detail || `Failed to clear storage: ${response.statusText}`);
+      }
+    } catch (error) {
+      console.error('Clear storage error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Reprocess all documents in a notebook
+   */
+  public async reprocessDocuments(notebookId: string, force: boolean = false): Promise<DocumentReprocessResponse> {
+    if (!this.isHealthy) {
+      throw new Error('Notebook backend is not available');
+    }
+
+    try {
+      const response = await fetch(`${this.baseUrl}/notebooks/${notebookId}/reprocess-documents?force=${force}`, {
+        method: 'POST',
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+        throw new Error(errorData.detail || `Failed to reprocess documents: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Reprocess documents error:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Get debug information for a notebook
+   */
+  public async getDebugInfo(notebookId: string): Promise<DebugInfoResponse> {
+    if (!this.isHealthy) {
+      throw new Error('Notebook backend is not available');
+    }
+
+    try {
+      const response = await fetch(`${this.baseUrl}/notebooks/${notebookId}/debug`, {
+        method: 'GET',
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to get debug info: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Get debug info error:', error);
       throw error;
     }
   }
@@ -498,11 +1044,12 @@ export class ClaraNotebookService {
     }
 
     try {
-      // Cancel any previous request
-      if (this.abortController) {
-        this.abortController.abort();
+      // Cancel any previous query request (only if one exists and hasn't completed)
+      if (this.queryAbortController && !this.queryAbortController.signal.aborted) {
+        console.log('📝 Cancelling previous query request');
+        this.queryAbortController.abort();
       }
-      this.abortController = new AbortController();
+      this.queryAbortController = new AbortController();
 
       const response = await fetch(`${this.baseUrl}/notebooks/${notebookId}/query`, {
         method: 'POST',
@@ -515,7 +1062,7 @@ export class ClaraNotebookService {
           response_type: query.response_type || 'Multiple Paragraphs',
           top_k: query.top_k || 60,
         }),
-        signal: this.abortController.signal,
+        signal: this.queryAbortController.signal,
       });
 
       if (!response.ok) {
@@ -523,12 +1070,21 @@ export class ClaraNotebookService {
         throw new Error(errorData.detail || `Failed to query notebook: ${response.statusText}`);
       }
 
-      return await response.json();
+      const result = await response.json();
+
+      // Clear the controller after successful completion
+      this.queryAbortController = null;
+
+      return result;
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         throw new Error('Query was cancelled');
       }
       console.error('Query notebook error:', error);
+
+      // Clear the controller on error
+      this.queryAbortController = null;
+
       throw error;
     }
   }
@@ -605,6 +1161,33 @@ export class ClaraNotebookService {
   }
 
   /**
+   * Check notebook lock status
+   */
+  public async checkLockStatus(notebookId: string): Promise<NotebookLockStatus> {
+    if (!this.isHealthy) {
+      throw new Error('Notebook backend is not available');
+    }
+
+    try {
+      const response = await fetch(`${this.baseUrl}/notebooks/${notebookId}/lock/status`, {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to check lock status: ${response.statusText}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      console.error('Check lock status error:', error);
+      throw error;
+    }
+  }
+
+  /**
    * Send a chat message (with history context)
    */
   public async sendChatMessage(notebookId: string, query: EnhancedNotebookQueryRequest): Promise<NotebookQueryResponse> {
@@ -613,11 +1196,12 @@ export class ClaraNotebookService {
     }
 
     try {
-      // Cancel any previous request
-      if (this.abortController) {
-        this.abortController.abort();
+      // Cancel any previous chat request (only if one exists and hasn't completed)
+      if (this.chatAbortController && !this.chatAbortController.signal.aborted) {
+        console.log('📝 Cancelling previous chat request');
+        this.chatAbortController.abort();
       }
-      this.abortController = new AbortController();
+      this.chatAbortController = new AbortController();
 
       const response = await fetch(`${this.baseUrl}/notebooks/${notebookId}/chat`, {
         method: 'POST',
@@ -632,20 +1216,35 @@ export class ClaraNotebookService {
           llm_provider: query.llm_provider || null,
           use_chat_history: query.use_chat_history !== false, // Default to true
         }),
-        signal: this.abortController.signal,
+        signal: this.chatAbortController.signal,
       });
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({ detail: 'Unknown error' }));
+
+        // Special handling for HTTP 503 (notebook locked)
+        if (response.status === 503) {
+          throw new Error(`NOTEBOOK_LOCKED: ${errorData.detail || 'Notebook is currently processing documents'}`);
+        }
+
         throw new Error(errorData.detail || `Failed to send chat message: ${response.statusText}`);
       }
 
-      return await response.json();
+      const result = await response.json();
+
+      // Clear the controller after successful completion
+      this.chatAbortController = null;
+
+      return result;
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
         throw new Error('Chat message was cancelled');
       }
       console.error('Send chat message error:', error);
+
+      // Clear the controller on error
+      this.chatAbortController = null;
+
       throw error;
     }
   }
@@ -776,8 +1375,11 @@ export class ClaraNotebookService {
    * Stop current operations
    */
   public stop(): void {
-    if (this.abortController) {
-      this.abortController.abort();
+    if (this.queryAbortController) {
+      this.queryAbortController.abort();
+    }
+    if (this.chatAbortController) {
+      this.chatAbortController.abort();
     }
   }
 

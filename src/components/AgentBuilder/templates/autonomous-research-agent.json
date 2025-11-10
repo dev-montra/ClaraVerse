@@ -1,0 +1,586 @@
+{
+  "id": "autonomous-research-agent",
+  "name": "Autonomous Research Agent",
+  "description": "An autonomous AI agent that can research topics, access tools, and provide comprehensive answers with multi-step reasoning.",
+  "category": "ai",
+  "difficulty": "intermediate",
+  "tags": ["autonomous", "research", "mcp-tools", "multi-step"],
+  "author": "ClaraVerse",
+  "downloads": 850,
+  "rating": 4.9,
+  "flow": {
+    "id": "flow-1760357415691",
+    "name": "Autonomous Research Agent",
+    "description": "Autonomous agent with tool access",
+    "nodes": [
+      {
+        "id": "1760357417470-1xxsufkcn",
+        "type": "input",
+        "name": "Input",
+        "position": {
+          "x": -191.6406224775144,
+          "y": 350.8722346967545
+        },
+        "data": {
+          "label": "Input",
+          "inputs": [],
+          "outputs": [
+            {
+              "id": "output",
+              "name": "Value",
+              "type": "output",
+              "dataType": "any",
+              "description": "Input value"
+            }
+          ],
+          "value": "search about claraverse tell me about it"
+        },
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "output",
+            "name": "Value",
+            "type": "output",
+            "dataType": "any",
+            "description": "Input value"
+          }
+        ],
+        "metadata": {
+          "tags": [
+            "input",
+            "basic",
+            "source"
+          ],
+          "documentation": "Provides input values to start or feed the workflow. Supports text, numbers, and JSON objects."
+        }
+      },
+      {
+        "id": "1760357422656-q77p5j6k2",
+        "type": "agent-executor",
+        "name": "Agent Executor",
+        "position": {
+          "x": 489.9327936033661,
+          "y": -42.79173679952564
+        },
+        "data": {
+          "label": "Agent Executor",
+          "inputs": [
+            {
+              "id": "instructions",
+              "name": "Instructions",
+              "type": "input",
+              "dataType": "string",
+              "required": true,
+              "description": "Task instructions for the autonomous agent"
+            },
+            {
+              "id": "context",
+              "name": "Context",
+              "type": "input",
+              "dataType": "string",
+              "required": false,
+              "description": "Additional context for the task"
+            },
+            {
+              "id": "attachments",
+              "name": "Attachments",
+              "type": "input",
+              "dataType": "array",
+              "required": false,
+              "description": "File attachments for the task"
+            }
+          ],
+          "outputs": [
+            {
+              "id": "result",
+              "name": "Result",
+              "type": "output",
+              "dataType": "string",
+              "description": "Agent execution result"
+            },
+            {
+              "id": "toolResults",
+              "name": "Tool Results",
+              "type": "output",
+              "dataType": "array",
+              "description": "Results from MCP tools used"
+            },
+            {
+              "id": "executionLog",
+              "name": "Execution Log",
+              "type": "output",
+              "dataType": "string",
+              "description": "Detailed execution log"
+            },
+            {
+              "id": "success",
+              "name": "Success",
+              "type": "output",
+              "dataType": "boolean",
+              "description": "Whether execution was successful"
+            },
+            {
+              "id": "metadata",
+              "name": "Metadata",
+              "type": "output",
+              "dataType": "object",
+              "description": "Execution metadata (timing, tools used, etc.)"
+            }
+          ],
+          "textModel": "eb8e82fd-231a-45e8-9e02-08bf38de1394:gpt-oss-20b-20b",
+          "provider": "eb8e82fd-231a-45e8-9e02-08bf38de1394",
+          "enabledMCPServers": [
+            "python-mcp"
+          ],
+          "visionModel": "eb8e82fd-231a-45e8-9e02-08bf38de1394:gpt-oss-20b-20b",
+          "codeModel": "eb8e82fd-231a-45e8-9e02-08bf38de1394:gpt-oss-20b-20b"
+        },
+        "inputs": [
+          {
+            "id": "instructions",
+            "name": "Instructions",
+            "type": "input",
+            "dataType": "string",
+            "required": true,
+            "description": "Task instructions for the autonomous agent"
+          },
+          {
+            "id": "context",
+            "name": "Context",
+            "type": "input",
+            "dataType": "string",
+            "required": false,
+            "description": "Additional context for the task"
+          },
+          {
+            "id": "attachments",
+            "name": "Attachments",
+            "type": "input",
+            "dataType": "array",
+            "required": false,
+            "description": "File attachments for the task"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "result",
+            "name": "Result",
+            "type": "output",
+            "dataType": "string",
+            "description": "Agent execution result"
+          },
+          {
+            "id": "toolResults",
+            "name": "Tool Results",
+            "type": "output",
+            "dataType": "array",
+            "description": "Results from MCP tools used"
+          },
+          {
+            "id": "executionLog",
+            "name": "Execution Log",
+            "type": "output",
+            "dataType": "string",
+            "description": "Detailed execution log"
+          },
+          {
+            "id": "success",
+            "name": "Success",
+            "type": "output",
+            "dataType": "boolean",
+            "description": "Whether execution was successful"
+          },
+          {
+            "id": "metadata",
+            "name": "Metadata",
+            "type": "output",
+            "dataType": "object",
+            "description": "Execution metadata (timing, tools used, etc.)"
+          }
+        ],
+        "metadata": {
+          "tags": [
+            "ai",
+            "agent",
+            "autonomous",
+            "mcp",
+            "tools"
+          ],
+          "documentation": "Executes autonomous AI agents with tool access for complex multi-step tasks."
+        }
+      },
+      {
+        "id": "1760357543112-7ygwm6p6u",
+        "type": "static-text",
+        "name": "Static Text",
+        "position": {
+          "x": -237.19326510975685,
+          "y": -279.4235979289148
+        },
+        "data": {
+          "label": "Static Text",
+          "inputs": [],
+          "outputs": [
+            {
+              "id": "text",
+              "name": "Text Output",
+              "type": "output",
+              "dataType": "string",
+              "required": true,
+              "description": "The static text content"
+            }
+          ],
+          "text": "You will always try to search for the stuff user is asking using the search tool and research and fetch each one and try to summarize everything clearly,  about any topic you search online tell them"
+        },
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "text",
+            "name": "Text Output",
+            "type": "output",
+            "dataType": "string",
+            "required": true,
+            "description": "The static text content"
+          }
+        ],
+        "metadata": {
+          "examples": [
+            {
+              "name": "System Prompt",
+              "description": "Static system prompt for AI models",
+              "config": {
+                "text": "You are a helpful AI assistant. Please respond in a friendly and professional manner.",
+                "label": "System Prompt",
+                "textFormat": "plain",
+                "multiline": true
+              }
+            },
+            {
+              "name": "API Instructions",
+              "description": "Fixed instructions for API requests",
+              "config": {
+                "text": "Please analyze the following data and provide insights:\n\n",
+                "label": "API Instructions",
+                "textFormat": "template",
+                "multiline": true
+              }
+            },
+            {
+              "name": "JSON Template",
+              "description": "Static JSON structure template",
+              "config": {
+                "text": "{\"role\": \"system\", \"content\": \"You are a helpful assistant\"}",
+                "label": "JSON Template",
+                "textFormat": "json",
+                "multiline": false
+              }
+            }
+          ],
+          "tags": [
+            "text",
+            "static",
+            "prompt",
+            "template",
+            "content",
+            "fixed",
+            "constant"
+          ]
+        }
+      },
+      {
+        "id": "1760357669762-iqbgdsd1r",
+        "type": "llm",
+        "name": "LLM Chat",
+        "position": {
+          "x": 1194.7719804705382,
+          "y": 616.3857636814524
+        },
+        "data": {
+          "label": "LLM Chat",
+          "inputs": [
+            {
+              "id": "system",
+              "name": "System Message",
+              "type": "input",
+              "dataType": "string",
+              "required": false,
+              "description": "System prompt for the LLM"
+            },
+            {
+              "id": "user",
+              "name": "User Message",
+              "type": "input",
+              "dataType": "string",
+              "required": true,
+              "description": "User message/prompt"
+            },
+            {
+              "id": "context",
+              "name": "Pre-context",
+              "type": "input",
+              "dataType": "string",
+              "required": false,
+              "description": "Additional context to prepend"
+            },
+            {
+              "id": "memory",
+              "name": "Memory",
+              "type": "input",
+              "dataType": "array",
+              "required": false,
+              "description": "Conversation history array (messages with role and content)"
+            },
+            {
+              "id": "image",
+              "name": "Image",
+              "type": "input",
+              "dataType": "string",
+              "required": false,
+              "description": "Base64 encoded image data"
+            }
+          ],
+          "outputs": [
+            {
+              "id": "response",
+              "name": "Response",
+              "type": "output",
+              "dataType": "string",
+              "description": "LLM response text"
+            },
+            {
+              "id": "usage",
+              "name": "Usage Stats",
+              "type": "output",
+              "dataType": "object",
+              "description": "Token usage and cost information"
+            }
+          ],
+          "model": "gpt-oss-20b-20b",
+          "apiKey": "dasd",
+          "apiBaseUrl": "http://localhost:8091/v1",
+          "temperature": 0.7,
+          "maxTokens": 1000
+        },
+        "inputs": [
+          {
+            "id": "system",
+            "name": "System Message",
+            "type": "input",
+            "dataType": "string",
+            "required": false,
+            "description": "System prompt for the LLM"
+          },
+          {
+            "id": "user",
+            "name": "User Message",
+            "type": "input",
+            "dataType": "string",
+            "required": true,
+            "description": "User message/prompt"
+          },
+          {
+            "id": "context",
+            "name": "Pre-context",
+            "type": "input",
+            "dataType": "string",
+            "required": false,
+            "description": "Additional context to prepend"
+          },
+          {
+            "id": "memory",
+            "name": "Memory",
+            "type": "input",
+            "dataType": "array",
+            "required": false,
+            "description": "Conversation history array (messages with role and content)"
+          },
+          {
+            "id": "image",
+            "name": "Image",
+            "type": "input",
+            "dataType": "string",
+            "required": false,
+            "description": "Base64 encoded image data"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "response",
+            "name": "Response",
+            "type": "output",
+            "dataType": "string",
+            "description": "LLM response text"
+          },
+          {
+            "id": "usage",
+            "name": "Usage Stats",
+            "type": "output",
+            "dataType": "object",
+            "description": "Token usage and cost information"
+          }
+        ],
+        "metadata": {
+          "tags": [
+            "ai",
+            "llm",
+            "chat",
+            "openai"
+          ],
+          "documentation": "Interfaces with OpenAI-compatible APIs for text and vision tasks."
+        }
+      },
+      {
+        "id": "1760357711939-gd8tszbn6",
+        "type": "output",
+        "name": "Output",
+        "position": {
+          "x": 1800.6968557078958,
+          "y": 584.1877287207898
+        },
+        "data": {},
+        "inputs": [
+          {
+            "id": "input",
+            "name": "Value",
+            "type": "input",
+            "dataType": "any",
+            "required": true,
+            "description": "Value to output"
+          }
+        ],
+        "outputs": [],
+        "metadata": {
+          "tags": [
+            "output",
+            "basic",
+            "sink"
+          ],
+          "documentation": "Displays the final result with various formatting options."
+        }
+      },
+      {
+        "id": "1760358768856-3teyem52y",
+        "type": "static-text",
+        "name": "Static Text",
+        "position": {
+          "x": 492.65055689646476,
+          "y": 698.4177584494935
+        },
+        "data": {
+          "label": "Static Text",
+          "inputs": [],
+          "outputs": [
+            {
+              "id": "text",
+              "name": "Text Output",
+              "type": "output",
+              "dataType": "string",
+              "required": true,
+              "description": "The static text content"
+            }
+          ],
+          "text": "Summarize the work done in a human readable for mate for the query give by the user"
+        },
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "text",
+            "name": "Text Output",
+            "type": "output",
+            "dataType": "string",
+            "required": true,
+            "description": "The static text content"
+          }
+        ],
+        "metadata": {
+          "examples": [
+            {
+              "name": "System Prompt",
+              "description": "Static system prompt for AI models",
+              "config": {
+                "text": "You are a helpful AI assistant. Please respond in a friendly and professional manner.",
+                "label": "System Prompt",
+                "textFormat": "plain",
+                "multiline": true
+              }
+            },
+            {
+              "name": "API Instructions",
+              "description": "Fixed instructions for API requests",
+              "config": {
+                "text": "Please analyze the following data and provide insights:\n\n",
+                "label": "API Instructions",
+                "textFormat": "template",
+                "multiline": true
+              }
+            },
+            {
+              "name": "JSON Template",
+              "description": "Static JSON structure template",
+              "config": {
+                "text": "{\"role\": \"system\", \"content\": \"You are a helpful assistant\"}",
+                "label": "JSON Template",
+                "textFormat": "json",
+                "multiline": false
+              }
+            }
+          ],
+          "tags": [
+            "text",
+            "static",
+            "prompt",
+            "template",
+            "content",
+            "fixed",
+            "constant"
+          ]
+        }
+      }
+    ],
+    "connections": [
+      {
+        "id": "1760357428133-vubbgtt73",
+        "sourceNodeId": "1760357417470-1xxsufkcn",
+        "sourcePortId": "output",
+        "targetNodeId": "1760357422656-q77p5j6k2",
+        "targetPortId": "context"
+      },
+      {
+        "id": "1760357546163-gkphk8606",
+        "sourceNodeId": "1760357543112-7ygwm6p6u",
+        "sourcePortId": "text",
+        "targetNodeId": "1760357422656-q77p5j6k2",
+        "targetPortId": "instructions"
+      },
+      {
+        "id": "1760357714485-na88459fb",
+        "sourceNodeId": "1760357669762-iqbgdsd1r",
+        "sourcePortId": "response",
+        "targetNodeId": "1760357711939-gd8tszbn6",
+        "targetPortId": "input"
+      },
+      {
+        "id": "1760358771997-eepfbtbh4",
+        "sourceNodeId": "1760358768856-3teyem52y",
+        "sourcePortId": "text",
+        "targetNodeId": "1760357669762-iqbgdsd1r",
+        "targetPortId": "system"
+      },
+      {
+        "id": "1760358788008-yuovq4rh1",
+        "sourceNodeId": "1760357422656-q77p5j6k2",
+        "sourcePortId": "result",
+        "targetNodeId": "1760357669762-iqbgdsd1r",
+        "targetPortId": "user"
+      }
+    ],
+    "variables": [],
+    "settings": {
+      "name": "Autonomous Research Agent",
+      "version": "1.0.0"
+    },
+    "createdAt": "2025-10-13T12:15:17.905Z",
+    "updatedAt": "2025-10-13T12:33:26.541Z",
+    "version": "1.0.0"
+  }
+}

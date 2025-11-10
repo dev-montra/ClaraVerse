@@ -152,43 +152,48 @@ interface MemoryExtractionResponse {
 
 // ==================== CONSTANTS ====================
 
-const MIN_WORD_COUNT = 5; // Minimum words required for memory extraction
-const MAX_WORD_COUNT = 500; // Maximum words to avoid processing overly long requests
+const MIN_WORD_COUNT = 3; // Minimum words required for memory extraction
+const MAX_WORD_COUNT = 600; // Maximum words to avoid processing overly long requests
 const MIN_CONFIDENCE_THRESHOLD = 0.3;
-const EXTRACTION_TIMEOUT = 60000; // Fixed 60 seconds timeout for all memory extraction
+const EXTRACTION_TIMEOUT = 30000; // Fixed 30 seconds timeout for all memory extraction
 const RATE_LIMIT_INTERVAL = 2000; // 2 seconds between extractions (reduced from 60 seconds)
 
 // ==================== MEMORY EXTRACTION PROMPT ====================
 
-const MEMORY_EXTRACTION_SYSTEM_PROMPT = `You are a memory extraction AI that analyzes conversations to extract personal information about users.
+const MEMORY_EXTRACTION_SYSTEM_PROMPT = `You are Clara's memory system - a natural, intuitive memory extractor that helps Clara remember what matters about the people she talks to.
 
-Your task is to analyze a user's message and conversation context to extract meaningful personal information that would be helpful for future interactions.
+Your role is to notice and remember ANYTHING that seems important, meaningful, or helpful for future conversations. Don't be robotic - be like a thoughtful friend who remembers details that matter.
 
-EXTRACTION RULES:
-1. Only extract information explicitly mentioned or clearly implied by the user
-2. Do not make wild assumptions or inferences beyond reasonable confidence
-3. Focus on stable, long-term information rather than temporary states
-4. Assign confidence levels based on how explicitly the information was stated
-5. Categorize information appropriately into the provided schema
-6. If no meaningful memory data is found, return hasMemoryData: false
+WHAT TO REMEMBER:
+- Anything the person tells you about themselves (name, where they live, what they do)
+- Their interests, passions, hobbies - what makes them light up
+- How they like to communicate (casual, formal, technical, creative)
+- What they're working on, struggling with, excited about
+- Their relationships, family, friends, pets - people who matter to them
+- Technical skills, tools they use, problems they solve
+- Their values, beliefs, what's important to them
+- Goals, dreams, aspirations - where they want to go
+- Preferences - favorite things, dislikes, opinions
+- Emotional patterns - what makes them happy, stressed, motivated
+- ANY unique detail that would help Clara be more helpful and personalized
 
-CONFIDENCE LEVELS:
-- 0.9-1.0: Explicitly stated facts ("My name is John", "I work at Google")
-- 0.7-0.9: Strong implications ("I'm heading to my office" implies employed)
-- 0.5-0.7: Reasonable inferences ("I love hiking" suggests outdoor interests)
-- 0.3-0.5: Weak inferences (uncertain implications)
-- 0.0-0.3: Speculation (should generally be avoided)
+GUIDELINES (not strict rules):
+✓ Store information naturally - if they mention "I code in Python on my M2 Mac", remember both the language AND the hardware
+✓ Use your judgment - if something feels important, it probably is
+✓ Create new fields if needed - you're not limited to predefined categories
+✓ Be flexible with categorization - put information where it makes the most sense
+✓ Higher confidence (0.8-1.0) for explicit statements, lower (0.5-0.7) for implications
+✓ If nothing meaningful to remember, that's okay - return hasMemoryData: false
 
-FOCUS AREAS:
-- Personal identity (name, location, occupation)
-- Interests and hobbies
-- Communication preferences
-- Work and life context
-- Relationships and social connections
-- Values and beliefs
-- Goals and aspirations
+IMPORTANT: You can store data in ANY format that makes sense:
+- Add new properties to existing categories
+- Create nested objects for complex information
+- Use arrays for lists of related items
+- Store whatever structure feels natural for the information
 
-Respond with a structured JSON object following the MemoryExtractionResponse interface.`;
+Think like Clara would think: "What would help me understand and help this person better next time we talk?"
+
+Respond with a structured JSON object, but remember - the schema is FLEXIBLE. The categories (coreIdentity, personalCharacteristics, etc.) are suggestions, not limits.`;
 
 // ==================== MAIN COMPONENT ====================`;
 
@@ -644,8 +649,8 @@ const ClaraSweetMemory: React.FC<ClaraSweetMemoryProps> = ({
           // Personal Characteristics patterns  
           { patterns: ['characteristics', 'personality', 'traits', 'interests', 'hobbies'], target: 'personalCharacteristics' },
           
-          // Preferences patterns
-          { patterns: ['preferences', 'likes', 'favorites', 'communication'], target: 'preferences' },
+          // Preferences patterns (HIGHEST PRIORITY for preference-related keys)
+          { patterns: ['preferences', 'communicationpreferences', 'lifestylepreferences', 'likes', 'favorites'], target: 'preferences' },
           
           // Relationship patterns
           { patterns: ['relationships', 'family', 'social', 'connections'], target: 'relationship' },
@@ -659,29 +664,62 @@ const ClaraSweetMemory: React.FC<ClaraSweetMemoryProps> = ({
           // Practical patterns
           { patterns: ['practical', 'logistics', 'details', 'technology', 'goals', 'aspirations'], target: 'practical' },
           
-          // Interactions patterns
-          { patterns: ['interactions', 'communication', 'history'], target: 'interactions' }
+          // Interactions patterns (removed 'communication' to avoid conflict with communicationPreferences)
+          { patterns: ['interactions', 'interactionhistory', 'conversationhistory', 'history'], target: 'interactions' },
+
+          // Notes and additional information
+          { patterns: ['notes', 'additionalnotes', 'additional', 'misc', 'miscellaneous', 'other'], target: 'context' },
+
+          // Other common variations
+          { patterns: ['workcontext', 'work_context', 'work'], target: 'practical' },
+          { patterns: ['technology', 'tech'], target: 'practical' },
+          { patterns: ['personalidentity', 'personal_identity'], target: 'coreIdentity' },
+          { patterns: ['emotionalintel', 'emotional_intel'], target: 'emotional' },
+          { patterns: ['interactionhistory', 'interaction_history'], target: 'interactions' },
+          { patterns: ['preferencesandbehavior', 'preferences_and_behavior'], target: 'preferences' },
+          { patterns: ['relationshipcontext', 'relationship_context'], target: 'relationship' },
+          { patterns: ['practicalinfo', 'practical_info'], target: 'practical' },
+          { patterns: ['personalcharacteristics', 'personal_characteristics'], target: 'personalCharacteristics' },
+          { patterns: ['coreidentity', 'core_identity'], target: 'coreIdentity' },
+          { patterns: ['lifestylepreferences', 'lifestyle_preferences'], target: 'preferences' },
+          { patterns: ['emotionalandsocialintel', 'emotional_and_social_intel'], target: 'emotional' },
+          { patterns: ['contextualinfo', 'contextual_info'], target: 'context' }
+
         ];
         
         // Apply pattern matching to each data key
         for (const dataKey of dataKeys) {
           const lowerKey = dataKey.toLowerCase();
-          let bestMatch = { target: 'personalCharacteristics', score: 0 }; // Default fallback
+          const cleanKey = lowerKey.replace(/[^a-z]/g, ''); // Remove all non-letters
+          let bestMatch = { target: 'personalCharacteristics', score: 0, pattern: '' }; // Default fallback
+          
+          console.log(`🧠 PATTERN MATCH: Analyzing key "${dataKey}" (lowercase: "${lowerKey}", clean: "${cleanKey}")`);
           
           for (const rule of mappingRules) {
             for (const pattern of rule.patterns) {
+              const cleanPattern = pattern.replace(/[^a-z]/g, '');
+              
               // Calculate similarity score
               let score = 0;
-              if (lowerKey === pattern) {
+              let matchType = '';
+              
+              if (lowerKey === pattern || cleanKey === cleanPattern) {
                 score = 1.0; // Exact match
-              } else if (lowerKey.includes(pattern) || pattern.includes(lowerKey)) {
-                score = 0.8; // Partial match
-              } else if (lowerKey.replace(/[^a-z]/g, '').includes(pattern.replace(/[^a-z]/g, ''))) {
-                score = 0.6; // Fuzzy match
+                matchType = 'EXACT';
+              } else if (lowerKey.includes(pattern) || cleanKey.includes(cleanPattern)) {
+                score = 0.9; // Contains pattern
+                matchType = 'CONTAINS';
+              } else if (pattern.includes(lowerKey) || cleanPattern.includes(cleanKey)) {
+                score = 0.8; // Pattern contains key
+                matchType = 'PARTIAL';
+              } else if (lowerKey.startsWith(pattern) || cleanKey.startsWith(cleanPattern)) {
+                score = 0.85; // Starts with pattern
+                matchType = 'STARTSWITH';
               }
               
               if (score > bestMatch.score) {
-                bestMatch = { target: rule.target, score };
+                bestMatch = { target: rule.target, score, pattern };
+                console.log(`  - ${matchType} match with pattern "${pattern}" → "${rule.target}" (score: ${score})`);
               }
             }
           }
@@ -689,11 +727,11 @@ const ClaraSweetMemory: React.FC<ClaraSweetMemoryProps> = ({
           // Only map if we have reasonable confidence
           if (bestMatch.score > 0.5) {
             mappings[dataKey] = bestMatch.target;
-            console.log(`🧠 DYNAMIC MAP: "${dataKey}" → "${bestMatch.target}" (score: ${bestMatch.score})`);
+            console.log(`🧠 ✅ MAPPED: "${dataKey}" → "${bestMatch.target}" (score: ${bestMatch.score}, pattern: "${bestMatch.pattern}")`);
           } else {
             // Default mapping for unrecognized keys
-            mappings[dataKey] = 'personalCharacteristics';
-            console.log(`🧠 DEFAULT MAP: "${dataKey}" → "personalCharacteristics" (fallback)`);
+            mappings[dataKey] = 'context'; // Changed default from personalCharacteristics to context for misc data
+            console.log(`🧠 ⚠️ DEFAULT MAP: "${dataKey}" → "context" (fallback, score: ${bestMatch.score})`);
           }
         }
         
@@ -906,6 +944,9 @@ const ClaraSweetMemory: React.FC<ClaraSweetMemoryProps> = ({
       const reasoning = data[reasoningKey];
       
       // Compute hasMemoryData: require actual data; respect explicit false
+      // IMPORTANT: Ignore metadata fields like "confidence", "explanation" when checking for data
+      const metadataFields = ['confidence', 'explanation', 'reasoning', 'metadata', 'source'];
+      
       const hasData = Object.values(extractedMemory || {}).some(section => {
         if (!section) return false;
         if (typeof section === 'string' && section.trim() !== '' && section !== 'unknown') return true;
@@ -917,7 +958,20 @@ const ClaraSweetMemory: React.FC<ClaraSweetMemoryProps> = ({
             if (Array.isArray(value)) return value.length > 0;
             if (typeof value === 'object' && value !== null) {
               // For nested objects, check if they have any non-empty values
-              return Object.values(value).some(nestedValue => {
+              // BUT exclude metadata-only objects
+              const valueKeys = Object.keys(value);
+              const hasNonMetadataKeys = valueKeys.some(k => !metadataFields.includes(k));
+              
+              if (!hasNonMetadataKeys) {
+                // Skip if this object only has metadata fields
+                console.log('🧠 DEBUG: Skipping metadata-only nested object:', valueKeys);
+                return false;
+              }
+              
+              return Object.entries(value).some(([nestedKey, nestedValue]) => {
+                // Skip metadata fields
+                if (metadataFields.includes(nestedKey)) return false;
+                
                 if (typeof nestedValue === 'string') return nestedValue.trim() !== '' && nestedValue !== 'unknown';
                 if (typeof nestedValue === 'number') return true;
                 if (Array.isArray(nestedValue)) return nestedValue.length > 0;
@@ -934,9 +988,21 @@ const ClaraSweetMemory: React.FC<ClaraSweetMemoryProps> = ({
       
       console.log('🧠 DEBUG: Data validation result:');
       console.log('  - extractedMemory keys:', Object.keys(extractedMemory || {}));
+      console.log('  - extractedMemory full data:', JSON.stringify(extractedMemory, null, 2));
       console.log('  - hasData:', hasData);
       console.log('  - providedHasMemoryData:', providedHasMemoryData);
       console.log('  - final hasMemoryData:', hasMemoryData);
+      
+      // Debug each section to see what data exists
+      if (extractedMemory) {
+        Object.entries(extractedMemory).forEach(([section, data]) => {
+          if (data && typeof data === 'object') {
+            const dataKeys = Object.keys(data);
+            console.log(`🧠 DEBUG: Section "${section}" has ${dataKeys.length} keys:`, dataKeys);
+            console.log(`  - Data:`, JSON.stringify(data, null, 2));
+          }
+        });
+      }
       
       const result: MemoryExtractionResponse = {
         hasMemoryData,
@@ -945,11 +1011,229 @@ const ClaraSweetMemory: React.FC<ClaraSweetMemoryProps> = ({
         reasoning
       };
       
-      console.log('🧠 DEBUG: Normalized memory extraction response:', result);
+      console.log('🧠 DEBUG: Normalized memory extraction response:', JSON.stringify(result, null, 2));
       return result;
     };
     
     return normalizeMemoryData(parsedData);
+  };
+
+  /**
+   * Make a direct OpenAI-compatible structured output API call
+   * Uses JSON schema enforcement for guaranteed valid responses
+   */
+  const callStructuredMemoryExtraction = async (
+    userMessage: string,
+    conversationContext: string[],
+    currentUserInfo: Partial<UserMemoryProfile> | undefined,
+    provider: any,
+    model: string
+  ): Promise<MemoryExtractionResponse | null> => {
+    
+    // Extract actual model name (remove provider prefix if present)
+    // e.g., "eb8e82fd-231a-45e8-9e02-08bf38de1394:gemma-3-4b-it-4b" -> "gemma-3-4b-it-4b"
+    const actualModelName = model.includes(':') ? model.split(':').pop() || model : model;
+    
+    console.log('🧠 DEBUG: Model name extraction:');
+    console.log('  - Original:', model);
+    console.log('  - Extracted:', actualModelName);
+    
+    const extractionPrompt = `What should Clara remember from this conversation?
+
+USER MESSAGE: "${userMessage}"
+
+CONVERSATION CONTEXT: ${conversationContext.length > 0 ? conversationContext.join('\n') : 'No previous context'}
+
+WHAT CLARA ALREADY KNOWS: ${currentUserInfo ? JSON.stringify(currentUserInfo, null, 2) : 'This is a new person - Clara knows nothing yet'}
+
+Be thoughtful and natural. What details from this conversation would help Clara be more helpful, more personalized, and more understanding in future conversations? Store whatever feels important in whatever format makes sense.`;
+
+    // Build the JSON schema for structured output with FLEXIBLE sections
+    // Each section allows additional properties so Clara can store ANY information she finds valuable
+    const memorySchema = {
+      type: "object",
+      properties: {
+        hasMemoryData: {
+          type: "boolean",
+          description: "Whether any meaningful memory data was extracted"
+        },
+        confidence: {
+          type: "number",
+          description: "Overall confidence level of the extraction (0-1)"
+        },
+        reasoning: {
+          type: "string",
+          description: "Brief explanation of what was extracted and why Clara found it valuable"
+        },
+        extractedMemory: {
+          type: "object",
+          properties: {
+            coreIdentity: {
+              type: "object",
+              description: "Basic identity information - name, location, occupation, age, etc. Store anything that defines who the person is.",
+              properties: {
+                fullName: { type: "string" },
+                firstName: { type: "string" },
+                lastName: { type: "string" },
+                nicknames: { type: "array", items: { type: "string" } },
+                preferredName: { type: "string" },
+                email: { type: "string" },
+                phone: { type: "string" },
+                age: { type: "number" },
+                location: { type: "string" },
+                occupation: { type: "string" },
+                relationshipStatus: { type: "string" }
+              },
+              additionalProperties: true  // 🔓 FLEXIBLE: Allow any identity-related data
+            },
+            personalCharacteristics: {
+              type: "object",
+              description: "Personality, traits, interests, hobbies, values, beliefs - anything that describes their character and what makes them unique.",
+              properties: {
+                personalityTraits: { type: "array", items: { type: "string" } },
+                communicationStyle: { type: "string" },
+                humorType: { type: "array", items: { type: "string" } },
+                interests: { type: "array", items: { type: "string" } },
+                hobbies: { type: "array", items: { type: "string" } },
+                values: { type: "array", items: { type: "string" } },
+                beliefs: { type: "array", items: { type: "string" } }
+              },
+              additionalProperties: true  // 🔓 FLEXIBLE: Allow any personality-related data
+            },
+            preferences: {
+              type: "object",
+              description: "What they like, dislike, prefer - communication style, food, lifestyle, anything preference-related.",
+              properties: {
+                communicationPreferences: { type: "object", additionalProperties: true },
+                lifestylePreferences: { type: "object", additionalProperties: true }
+              },
+              additionalProperties: true  // 🔓 FLEXIBLE: Allow any preference data
+            },
+            interactions: {
+              type: "object",
+              description: "Topics discussed, expertise areas, conversation patterns, anything about how they interact.",
+              properties: {
+                conversationTopics: { type: "array", items: { type: "string" } },
+                expertiseAreas: { type: "array", items: { type: "string" } }
+              },
+              additionalProperties: true  // 🔓 FLEXIBLE: Allow any interaction data
+            },
+            context: {
+              type: "object",
+              description: "Life situation, background, professional context, current circumstances - any contextual information.",
+              properties: {
+                currentLifeSituation: { type: "array", items: { type: "string" } },
+                professionalContext: { type: "object", additionalProperties: true }
+              },
+              additionalProperties: true  // 🔓 FLEXIBLE: Allow any contextual data
+            },
+            practical: {
+              type: "object",
+              description: "Skills, tools they use, timezone, schedules, goals, plans - any practical information.",
+              properties: {
+                skills: { type: "array", items: { type: "string" } },
+                timeZone: { type: "string" }
+              },
+              additionalProperties: true  // 🔓 FLEXIBLE: Allow any practical data
+            },
+            relationship: {
+              type: "object",
+              description: "Relationships with others, family, friends, social connections, feelings about relationships.",
+              additionalProperties: true  // 🔓 FLEXIBLE: Allow any relationship data
+            },
+            emotional: {
+              type: "object",
+              description: "Emotional state, feelings, mental health, emotional patterns, coping mechanisms.",
+              additionalProperties: true  // 🔓 FLEXIBLE: Allow any emotional data
+            }
+          },
+          additionalProperties: true  // 🔓 FLEXIBLE: Allow NEW categories Clara finds valuable
+        }
+      },
+      required: ["hasMemoryData", "confidence"],
+      additionalProperties: false
+    };
+
+    const payload = {
+      model: actualModelName, // Use the extracted model name without provider prefix
+      messages: [
+        { 
+          role: 'system', 
+          content: MEMORY_EXTRACTION_SYSTEM_PROMPT 
+        },
+        { 
+          role: 'user', 
+          content: extractionPrompt 
+        }
+      ],
+      temperature: 0.1,
+      max_tokens: 4000,
+      
+      // OpenAI structured outputs with JSON schema
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "memory_extraction_response",
+          strict: true,
+          schema: memorySchema
+        }
+      }
+    };
+
+    console.log('🧠 DEBUG: Making structured output API call');
+    console.log('  - Provider:', provider.name);
+    console.log('  - Model (original):', model);
+    console.log('  - Model (extracted):', actualModelName);
+    console.log('  - Base URL:', provider.baseUrl);
+
+    // Build correct URL - baseUrl might already include /v1
+    const baseUrl = provider.baseUrl?.replace(/\/+$/, '') || ''; // Remove trailing slashes
+    const endpoint = baseUrl.endsWith('/v1') ? '/chat/completions' : '/v1/chat/completions';
+    const fullUrl = `${baseUrl}${endpoint}`;
+    
+    console.log('🧠 DEBUG: Full API URL:', fullUrl);
+
+    const response = await fetch(fullUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${provider.apiKey || ''}`
+      },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(EXTRACTION_TIMEOUT)
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('🧠 ERROR: Structured API call failed:', response.status, errorText);
+      throw new Error(`API error ${response.status}: ${errorText}`);
+    }
+
+    const result = await response.json();
+    
+    console.log('🧠 DEBUG: Structured output received:', result);
+    
+    // Response is guaranteed valid JSON matching schema
+    const content = result.choices?.[0]?.message?.content;
+    if (!content) {
+      throw new Error('No content in API response');
+    }
+    
+    const parsedContent = JSON.parse(content);
+    console.log('🧠 DEBUG: Parsed structured content:', parsedContent);
+    
+    // IMPORTANT: Run structured output through transformation to handle non-canonical keys
+    // Even though we use schema, LLMs can still return keys like "communicationPreferences" 
+    // instead of organizing them into canonical sections like "preferences"
+    const transformedResult = extractJSONFromResponse(parsedContent);
+    
+    if (!transformedResult) {
+      console.warn('🧠 WARN: Failed to transform structured output, returning raw');
+      return parsedContent as MemoryExtractionResponse;
+    }
+    
+    console.log('🧠 DEBUG: Transformed structured output:', transformedResult);
+    return transformedResult;
   };
 
   /**
@@ -967,16 +1251,60 @@ const ClaraSweetMemory: React.FC<ClaraSweetMemoryProps> = ({
     const baseDelay = 2000; // Base delay for exponential backoff
     
     try {
-      // Format extraction prompt
-      const extractionPrompt = `Please analyze this conversation and extract any personal information about the user.
+      // Get provider and model from aiConfig (passed from the assistant input)
+      if (!aiConfig?.provider || !aiConfig?.models?.text) {
+        console.error('🧠 ERROR: No provider or model specified in aiConfig');
+        return null;
+      }
+
+      // Get the provider details from the provider service
+      const { claraProviderService } = await import('../services/claraProviderService');
+      const providers = await claraProviderService.getProviders();
+      const currentProvider = providers.find(p => p.id === aiConfig.provider);
+      
+      if (!currentProvider) {
+        console.error('🧠 ERROR: Provider not found:', aiConfig.provider);
+        return null;
+      }
+
+      const currentModel = aiConfig.models.text;
+
+      console.log('🧠 DEBUG: Memory extraction config (from aiConfig):');
+      console.log('  - Provider:', currentProvider.name, `(${currentProvider.type})`);
+      console.log('  - Provider ID:', aiConfig.provider);
+      console.log('  - Model:', currentModel);
+      console.log('  - Base URL:', currentProvider.baseUrl);
+
+      // Always try structured output first (works with all OpenAI-compatible endpoints)
+      console.log('🧠 DEBUG: ✅ Attempting structured output (default for all providers)');
+      try {
+        const result = await callStructuredMemoryExtraction(
+          userMessage,
+          conversationContext,
+          currentUserInfo,
+          currentProvider,
+          currentModel
+        );
+        
+        if (result) {
+          console.log('🧠 ✅ Structured extraction successful');
+          return result;
+        }
+      } catch (structuredError) {
+        console.warn('🧠 ⚠️ Structured extraction failed, falling back to prompt-based:', structuredError);
+        // Fall through to prompt-based extraction
+      }
+
+      // Fallback: prompt-based extraction (original method)
+      const extractionPrompt = `What should Clara remember from this conversation? Be natural and thoughtful.
 
 USER MESSAGE: "${userMessage}"
 
 CONVERSATION CONTEXT: ${conversationContext.length > 0 ? conversationContext.join('\n') : 'No previous context'}
 
-CURRENT USER INFO: ${currentUserInfo ? JSON.stringify(currentUserInfo, null, 2) : 'No existing profile'}
+WHAT CLARA ALREADY KNOWS: ${currentUserInfo ? JSON.stringify(currentUserInfo, null, 2) : 'This is a new person - Clara knows nothing yet'}
 
-Extract and categorize any personal information according to the provided schema. Focus on information that would be helpful for future conversations.`;
+Store whatever feels important in whatever format makes sense. You can create new fields, nested objects, arrays - whatever captures the information naturally. Focus on what would help Clara be more helpful and personalized in future conversations.`;
 
       // Get current AI configuration dynamically or use fallback
       const currentAIConfig = aiConfig || {
@@ -1454,15 +1782,32 @@ Extract and categorize any personal information according to the provided schema
       processingRef.current.add(messageId);
       lastProcessedRef.current = Date.now();
 
+      // Get current user profile FIRST to check size
+      const currentUserId = 'current_user';
+      let existingProfile = await getUserMemoryProfile(currentUserId);
+
+      // 🗜️ CHECK MEMORY SIZE BEFORE EXTRACTION - Skip extraction if compression needed
+      if (existingProfile) {
+        const profileJson = JSON.stringify(existingProfile);
+        const sizeBytes = new Blob([profileJson]).size;
+        const sizeKB = (sizeBytes / 1024).toFixed(2);
+
+        console.log(`🗜️ Memory size check: ${sizeKB} KB (${sizeBytes} bytes)`);
+
+        // If over 5KB, skip extraction and let user compress first
+        if (sizeBytes >= 5 * 1024) {
+          console.warn('🗜️ ⚠️ Memory is too large (>5KB) - SKIPPING extraction until compression happens');
+          console.warn('🗜️ The compression dialog should appear shortly to handle this.');
+          processingRef.current.delete(messageId);
+          return;
+        }
+      }
+
       // Prepare conversation context (last 3 messages for context)
       const contextMessages = conversationHistory
         .slice(-3)
         .filter(msg => msg.role === 'user')
         .map(msg => msg.content);
-
-      // Get current user profile (using consistent user ID for single-user app)
-      const currentUserId = 'current_user';
-      let existingProfile = await getUserMemoryProfile(currentUserId);
       
       // 🔍 MIGRATION: Check if there's old data under 'anonymous' and migrate it
       if (!existingProfile) {
@@ -1519,6 +1864,8 @@ Extract and categorize any personal information according to the provided schema
       console.log('  - Confidence:', extractionResult.confidence);
       console.log('  - Has extracted memory:', !!extractionResult.extractedMemory);
       console.log('  - Reasoning:', extractionResult.reasoning);
+      console.log('  - Extracted memory sections:', Object.keys(extractionResult.extractedMemory || {}));
+      console.log('  - Full extracted memory:', JSON.stringify(extractionResult.extractedMemory, null, 2));
 
       // Check confidence threshold
       if (extractionResult.confidence < MIN_CONFIDENCE_THRESHOLD) {

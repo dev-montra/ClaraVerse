@@ -253,15 +253,35 @@ class ClaraFlowRunner {
   
   normalizeFlow(flowData) {
     // Handle different export formats from Clara Studio
+    let flow;
     if (flowData.format && flowData.flow) {
       // SDK export format
-      return flowData.flow;
+      flow = flowData.flow;
     } else if (flowData.nodes && flowData.connections) {
       // Direct flow format
-      return flowData;
+      flow = flowData;
     } else {
       throw new Error('Invalid flow format');
     }
+
+    // Normalize connections format - convert React Flow format to SDK format
+    if (flow.connections && flow.connections.length > 0) {
+      flow.connections = flow.connections.map(conn => {
+        // If already in SDK format, return as-is
+        if (conn.sourceNodeId && conn.targetNodeId) {
+          return conn;
+        }
+        // Convert React Flow format to SDK format
+        return {
+          sourceNodeId: conn.source || conn.sourceNodeId,
+          targetNodeId: conn.target || conn.targetNodeId,
+          sourcePortId: conn.sourceHandle || conn.sourcePortId || 'output',
+          targetPortId: conn.targetHandle || conn.targetPortId || 'input'
+        };
+      });
+    }
+
+    return flow;
   }
 
   registerCustomNodes(customNodes) {
@@ -468,7 +488,10 @@ class ClaraFlowRunner {
         return { output: inputs.input || Object.values(inputs)[0] };
         
       case 'static-text':
-        return { output: node.data?.text || node.data?.value || '' };
+        return {
+          output: node.data?.text || node.data?.value || '',
+          text: node.data?.text || node.data?.value || ''
+        };
         
       case 'combine-text':
         const input1 = inputs.input1 || inputs.text1 || '';
@@ -478,8 +501,24 @@ class ClaraFlowRunner {
         
       case 'json-parse':
         try {
-          const jsonText = inputs.input || inputs.json || '{}';
-          const parsed = JSON.parse(jsonText);
+          let jsonInput = inputs.input || inputs.json || '{}';
+          let parsed;
+          
+          // Handle API response format { data: {...}, status: 200, ... }
+          if (jsonInput && typeof jsonInput === 'object' && 'data' in jsonInput && 'status' in jsonInput) {
+            // Extract the actual data from API response wrapper
+            parsed = jsonInput.data;
+          } else if (typeof jsonInput === 'string') {
+            // Parse JSON string
+            parsed = JSON.parse(jsonInput);
+          } else if (typeof jsonInput === 'object') {
+            // Already an object, use as-is
+            parsed = jsonInput;
+          } else {
+            // Try to parse as string
+            parsed = JSON.parse(String(jsonInput));
+          }
+          
           const field = node.data?.field || node.data?.path;
           if (field) {
             // Support dot notation for nested fields
@@ -493,6 +532,30 @@ class ClaraFlowRunner {
           }
           return { output: null };
         }
+
+      case 'json-stringify': {
+        const jsonInput = inputs.input || inputs.json || Object.values(inputs)[0];
+        const prettyPrint = node.data?.prettyPrint ?? true;
+        const indentSetting = Number(node.data?.indent ?? 2);
+        const indent = Number.isFinite(indentSetting) ? Math.min(Math.max(Math.round(indentSetting), 0), 8) : 2;
+        const fallback = node.data?.nullFallback ?? '';
+
+        if (jsonInput === null || jsonInput === undefined) {
+          return { output: fallback };
+        }
+
+        if (typeof jsonInput === 'string') {
+          return { output: jsonInput };
+        }
+
+        try {
+          const spacing = prettyPrint ? indent : 0;
+          const output = JSON.stringify(jsonInput, null, spacing || undefined);
+          return { output: output ?? fallback };
+        } catch (error) {
+          return { output: String(jsonInput ?? fallback) };
+        }
+      }
         
       case 'if-else':
         const condition = inputs.condition !== undefined ? inputs.condition : inputs.input;
@@ -521,14 +584,18 @@ class ClaraFlowRunner {
         };
         
       case 'llm':
+      case 'llm-chat':
         return this.executeLLMNode(node, inputs);
-        
+
       case 'structured-llm':
         return this.executeStructuredLLMNode(node, inputs);
-        
+
+      case 'agent-executor':
+        return this.executeAgentExecutorNode(node, inputs);
+
       case 'api-request':
         return this.executeAPIRequestNode(node, inputs);
-        
+
       default:
         throw new Error(`Unknown node type: ${node.type}`);
     }
@@ -566,21 +633,20 @@ class ClaraFlowRunner {
 
   async executeLLMNode(node, inputs) {
     // Basic LLM node implementation
-    const apiKey = node.data?.apiKey || process.env.OPENAI_API_KEY;
+    const apiKey = node.data?.apiKey || process.env.OPENAI_API_KEY || '';
     const model = node.data?.model || 'gpt-3.5-turbo';
-    const apiBaseUrl = node.data?.apiBaseUrl || 'https://api.openai.com/v1';
-    
-    if (!apiKey) {
-      throw new Error('LLM node requires API key');
-    }
-    
+    let apiBaseUrl = (node.data?.apiBaseUrl && node.data?.apiBaseUrl.trim()) || process.env.OPENAI_API_BASE_URL || 'http://localhost:8091/v1';
+
+    // Convert localhost to host.docker.internal for Docker compatibility
+    apiBaseUrl = this.convertLocalhostForDocker(apiBaseUrl);
+
     const systemMessage = inputs.system || node.data?.systemMessage || '';
     const userMessage = inputs.user || inputs.input || inputs.message || '';
-    
+
     if (!userMessage) {
       throw new Error('LLM node requires user message');
     }
-    
+
     try {
       const messages = [];
       if (systemMessage) {
@@ -588,12 +654,19 @@ class ClaraFlowRunner {
       }
       messages.push({ role: 'user', content: userMessage });
       
+      const headers = {
+        'Content-Type': 'application/json'
+      };
+
+      if (apiKey && apiKey.trim()) {
+        headers['Authorization'] = `Bearer ${apiKey}`;
+      } else {
+        this.log('LLM node executing without API key. Ensure your API permits unauthenticated requests.', 'warn');
+      }
+
       const response = await fetch(`${apiBaseUrl}/chat/completions`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`
-        },
+        headers,
         body: JSON.stringify({
           model,
           messages,
@@ -603,6 +676,11 @@ class ClaraFlowRunner {
       });
       
       if (!response.ok) {
+        if (response.status === 401) {
+          throw new Error('Authentication failed - API key may be required or invalid');
+        } else if (response.status === 403) {
+          throw new Error('Access forbidden - check API key permissions');
+        }
         throw new Error(`LLM API error: ${response.status} ${response.statusText}`);
       }
       
@@ -643,12 +721,586 @@ class ClaraFlowRunner {
     }
   }
 
+  async executeAgentExecutorNode(node, inputs) {
+    // Agent executor node - executes autonomous agents with tool access
+    const instructions = inputs.instructions || node.data?.instructions || '';
+    const context = inputs.context || node.data?.context || '';
+    const attachments = inputs.attachments || node.data?.attachments || [];
+
+    if (!instructions) {
+      throw new Error('Agent Executor requires instructions');
+    }
+
+    // Get agent configuration
+    const provider = node.data?.provider || process.env.AGENT_PROVIDER || '';
+    const textModel = node.data?.textModel || 'gpt-4o-mini';
+    const visionModel = node.data?.visionModel || textModel;
+    const codeModel = node.data?.codeModel || textModel;
+    const enabledMCPServers = node.data?.enabledMCPServers || [];
+
+    // Construct agent execution request
+    const agentRequest = {
+      instructions,
+      context,
+      attachments,
+      config: {
+        provider,
+        textModel,
+        visionModel,
+        codeModel,
+        enabledMCPServers
+      }
+    };
+
+    // Try to execute via Clara Assistant service
+    const claraAssistantUrl = process.env.CLARA_ASSISTANT_URL || 'http://localhost:8069';
+
+    try {
+      // Try to call agent execution service
+      const response = await fetch(`${claraAssistantUrl}/api/execute-agent`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(agentRequest)
+      });
+
+      if (!response.ok) {
+        // Fallback: If agent service not available, use LLM as fallback
+        this.log('Agent service unavailable, using LLM fallback', 'warn');
+        return await this.agentExecutorFallback(instructions, context, node);
+      }
+
+      const result = await response.json();
+
+      return {
+        result: result.output || result.result || '',
+        toolResults: result.toolResults || [],
+        executionLog: result.log || '',
+        success: result.success !== false,
+        metadata: result.metadata || {}
+      };
+
+    } catch (error) {
+      // Fallback to LLM if agent service is not available
+      this.log(`Agent service error: ${error.message}, using LLM fallback`, 'warn');
+      return await this.agentExecutorFallback(instructions, context, node);
+    }
+  }
+
+  async agentExecutorFallback(instructions, context, node) {
+    // Enhanced fallback: Use LLM with MCP tool calling when agent service is not available
+    const apiKey = node.data?.apiKey || process.env.OPENAI_API_KEY || '';
+    const model = node.data?.textModel?.split(':')[1] || node.data?.textModel || 'gpt-4o-mini';
+    let apiBaseUrl = node.data?.apiBaseUrl || process.env.OPENAI_API_BASE_URL || 'http://localhost:8091/v1';
+    const enabledMCPServers = node.data?.enabledMCPServers || [];
+
+    // Convert localhost to host.docker.internal for Docker compatibility
+    apiBaseUrl = this.convertLocalhostForDocker(apiBaseUrl);
+
+    // MCP Proxy URL (convert for Docker too)
+    let mcpProxyUrl = process.env.MCP_PROXY_URL || 'http://127.0.0.1:8092';
+    mcpProxyUrl = this.convertLocalhostForDocker(mcpProxyUrl);
+
+    try {
+      // Step 1: Fetch available MCP tools from enabled servers
+      const mcpTools = await this.fetchMCPTools(mcpProxyUrl, enabledMCPServers);
+      this.log(`Fetched ${mcpTools.length} MCP tools from ${enabledMCPServers.length} enabled servers`, 'info');
+
+      // Step 2: Convert MCP tools to OpenAI function calling format
+      const openAITools = this.convertMCPToolsToOpenAIFormat(mcpTools);
+      this.log(`Converted ${openAITools.length} tools to OpenAI format`, 'info');
+
+      // Step 3: Initialize conversation with system message and user instructions
+      const messages = [
+        {
+          role: 'system',
+          content: 'You are an autonomous AI agent with access to powerful tools. Use the available tools to accomplish your tasks effectively. When a task is complete, provide a clear final answer without making additional tool calls.'
+        },
+        {
+          role: 'user',
+          content: `Instructions: ${instructions}\n\n${context ? `Context: ${context}` : ''}`
+        }
+      ];
+
+      const executionLog = [];
+      const toolResults = [];
+      let iterations = 0;
+      const maxIterations = 10; // Prevent infinite loops
+
+      // Step 4: Agentic loop - continue until LLM completes task
+      while (iterations < maxIterations) {
+        iterations++;
+        executionLog.push(`\n[Iteration ${iterations}]`);
+
+        // Make LLM call with available tools
+        const llmResponse = await this.callLLMWithTools(
+          apiBaseUrl,
+          apiKey,
+          model,
+          messages,
+          openAITools.length > 0 ? openAITools : undefined
+        );
+
+        const message = llmResponse.choices?.[0]?.message;
+        if (!message) {
+          throw new Error('No message in LLM response');
+        }
+
+        // Add assistant message to conversation
+        messages.push(message);
+
+        // Check if LLM wants to use tools
+        const toolCalls = message.tool_calls;
+
+        if (!toolCalls || toolCalls.length === 0) {
+          // No more tool calls - task complete
+          const finalResult = message.content || '';
+          executionLog.push(`Task completed after ${iterations} iterations`);
+
+          return {
+            result: finalResult,
+            toolResults,
+            executionLog: executionLog.join('\n'),
+            success: true,
+            metadata: {
+              model: llmResponse.model,
+              usage: llmResponse.usage,
+              iterations,
+              fallback: true,
+              mcpEnabled: true
+            }
+          };
+        }
+
+        // Step 5: Execute all tool calls
+        executionLog.push(`Executing ${toolCalls.length} tool call(s)...`);
+
+        for (const toolCall of toolCalls) {
+          try {
+            executionLog.push(`  - Tool: ${toolCall.function.name}`);
+
+            // Parse MCP tool call from OpenAI format
+            const mcpToolCall = this.parseOpenAIToolCallToMCP(toolCall);
+
+            // Execute MCP tool via proxy
+            const toolResult = await this.executeMCPTool(mcpProxyUrl, mcpToolCall);
+
+            // Format result for LLM
+            const resultText = this.formatMCPToolResult(toolResult);
+            executionLog.push(`    Result: ${resultText.substring(0, 100)}...`);
+
+            // Store for output
+            toolResults.push({
+              tool: toolCall.function.name,
+              arguments: mcpToolCall.arguments,
+              result: toolResult
+            });
+
+            // Add tool result to conversation
+            messages.push({
+              role: 'tool',
+              tool_call_id: toolCall.id,
+              content: resultText
+            });
+
+          } catch (toolError) {
+            executionLog.push(`    Error: ${toolError.message}`);
+
+            // Report error to LLM so it can adapt
+            messages.push({
+              role: 'tool',
+              tool_call_id: toolCall.id,
+              content: `Error executing tool: ${toolError.message}`
+            });
+          }
+        }
+      }
+
+      // Max iterations reached
+      executionLog.push(`Warning: Max iterations (${maxIterations}) reached`);
+      const lastMessage = messages[messages.length - 1];
+      const finalResult = lastMessage.role === 'assistant' ? lastMessage.content : 'Task incomplete - max iterations reached';
+
+      return {
+        result: finalResult,
+        toolResults,
+        executionLog: executionLog.join('\n'),
+        success: false,
+        metadata: {
+          model,
+          iterations,
+          fallback: true,
+          mcpEnabled: true,
+          warning: 'Max iterations reached'
+        }
+      };
+
+    } catch (error) {
+      throw new Error(`Agent execution failed: ${error.message}`);
+    }
+  }
+
+  async fetchMCPTools(mcpProxyUrl, enabledServerNames) {
+    // Fetch available MCP tools from the MCP proxy service
+    try {
+      // Get list of servers
+      const serversResponse = await fetch(`${mcpProxyUrl}/api/servers`);
+      if (!serversResponse.ok) {
+        this.log(`MCP proxy not available at ${mcpProxyUrl}, skipping tool discovery`, 'warn');
+        return [];
+      }
+
+      const serversData = await serversResponse.json();
+      const servers = serversData.servers || serversData || [];
+
+      // Filter for enabled servers that are running
+      const enabledServers = servers.filter(server =>
+        enabledServerNames.includes(server.name) &&
+        server.isRunning &&
+        server.status === 'running'
+      );
+
+      this.log(`Found ${enabledServers.length} running servers: ${enabledServers.map(s => s.name).join(', ')}`, 'info');
+
+      // Discover tools from each enabled server
+      const allTools = [];
+      for (const server of enabledServers) {
+        try {
+          // Use MCP protocol to discover tools from this server
+          const toolsResult = await this.executeMCPTool(mcpProxyUrl, {
+            name: 'tools/list',
+            arguments: {},
+            server: server.name,
+            callId: `discover_${server.name}_${Date.now()}`
+          });
+
+          if (toolsResult.success && toolsResult.content) {
+            // Parse tools from result
+            const toolsList = this.parseToolsList(toolsResult.content);
+            toolsList.forEach(tool => {
+              tool.server = server.name; // Tag with server name
+              allTools.push(tool);
+            });
+            this.log(`Discovered ${toolsList.length} tools from ${server.name}`, 'info');
+          }
+        } catch (discoverError) {
+          this.log(`Failed to discover tools from ${server.name}: ${discoverError.message}`, 'warn');
+        }
+      }
+
+      return allTools;
+    } catch (error) {
+      this.log(`Failed to fetch MCP tools: ${error.message}`, 'warn');
+      return [];
+    }
+  }
+
+  parseToolsList(content) {
+    // Parse tools list from MCP result content
+    try {
+      if (!Array.isArray(content)) {
+        return [];
+      }
+
+      // Look for JSON or text content with tools
+      const toolsContent = content.find(c => c.type === 'json' || c.type === 'text');
+      if (!toolsContent) {
+        return [];
+      }
+
+      let toolsData;
+      if (toolsContent.type === 'json' && toolsContent.data) {
+        toolsData = typeof toolsContent.data === 'string' ?
+          JSON.parse(toolsContent.data) : toolsContent.data;
+      } else if (toolsContent.type === 'text' && toolsContent.text) {
+        toolsData = JSON.parse(toolsContent.text);
+      } else {
+        return [];
+      }
+
+      // Validate tools array
+      if (!Array.isArray(toolsData)) {
+        return [];
+      }
+
+      return toolsData.filter(tool => tool && tool.name && tool.inputSchema);
+    } catch (error) {
+      this.log(`Failed to parse tools list: ${error.message}`, 'warn');
+      return [];
+    }
+  }
+
+  convertMCPToolsToOpenAIFormat(mcpTools) {
+    // Convert MCP tools to OpenAI function calling format
+    const openAITools = [];
+
+    for (const tool of mcpTools) {
+      try {
+        // Fix and validate the input schema
+        const fixedParameters = this.fixOpenAISchema(tool.inputSchema || {});
+
+        const openAITool = {
+          type: 'function',
+          function: {
+            name: `mcp_${tool.server}_${tool.name}`,
+            description: `[MCP:${tool.server}] ${tool.description || tool.name}`,
+            parameters: fixedParameters
+          }
+        };
+
+        // Validate before adding
+        if (this.isValidOpenAITool(openAITool)) {
+          openAITools.push(openAITool);
+        } else {
+          this.log(`Skipping invalid tool: ${tool.server}:${tool.name}`, 'warn');
+        }
+      } catch (error) {
+        this.log(`Failed to convert tool ${tool.server}:${tool.name}: ${error.message}`, 'warn');
+      }
+    }
+
+    return openAITools;
+  }
+
+  fixOpenAISchema(schema) {
+    // Fix schema to be OpenAI-compatible
+    if (!schema || typeof schema !== 'object') {
+      return {
+        type: 'object',
+        properties: {},
+        required: []
+      };
+    }
+
+    // Deep clone
+    const fixed = JSON.parse(JSON.stringify(schema));
+
+    // Ensure required structure
+    if (!fixed.type) fixed.type = 'object';
+    if (!fixed.properties) fixed.properties = {};
+    if (!fixed.required) fixed.required = [];
+
+    // Remove incompatible properties recursively
+    this.cleanSchemaForOpenAI(fixed);
+
+    return fixed;
+  }
+
+  cleanSchemaForOpenAI(schema) {
+    // Remove OpenAI-incompatible properties
+    if (!schema || typeof schema !== 'object') return;
+
+    // Remove at any level
+    delete schema.$schema;
+    delete schema.additionalProperties;
+    delete schema.anyOf;
+    delete schema.oneOf;
+    delete schema.allOf;
+    delete schema.not;
+    delete schema.const;
+    delete schema.enum;
+
+    // Handle properties
+    if (schema.properties) {
+      for (const propName in schema.properties) {
+        const prop = schema.properties[propName];
+
+        // Fix array properties - ensure items exist
+        if (prop && prop.type === 'array') {
+          if (!prop.items || typeof prop.items !== 'object' || !prop.items.type) {
+            prop.items = { type: 'object' };
+          }
+        }
+
+        // Recurse
+        if (prop && typeof prop === 'object') {
+          this.cleanSchemaForOpenAI(prop);
+        }
+      }
+    }
+
+    // Handle array items
+    if (schema.items) {
+      this.cleanSchemaForOpenAI(schema.items);
+    }
+  }
+
+  isValidOpenAITool(tool) {
+    // Validate OpenAI tool structure
+    try {
+      if (!tool || tool.type !== 'function' || !tool.function) {
+        return false;
+      }
+
+      const func = tool.function;
+      if (!func.name || !func.description || !func.parameters) {
+        return false;
+      }
+
+      return this.isValidParametersSchema(func.parameters);
+    } catch (error) {
+      return false;
+    }
+  }
+
+  isValidParametersSchema(schema) {
+    // Validate parameters schema
+    if (!schema || typeof schema !== 'object' || schema.type !== 'object') {
+      return false;
+    }
+
+    if (!schema.hasOwnProperty('properties') || typeof schema.properties !== 'object') {
+      return false;
+    }
+
+    // Check each property
+    for (const propName in schema.properties) {
+      const prop = schema.properties[propName];
+      if (!prop || typeof prop !== 'object' || !prop.type) {
+        return false;
+      }
+
+      // Arrays must have items
+      if (prop.type === 'array') {
+        if (!prop.items || typeof prop.items !== 'object' || !prop.items.type) {
+          return false;
+        }
+      }
+    }
+
+    return true;
+  }
+
+  async callLLMWithTools(apiBaseUrl, apiKey, model, messages, tools) {
+    // Make LLM API call with optional tools
+    const headers = {
+      'Content-Type': 'application/json'
+    };
+
+    if (apiKey && apiKey.trim()) {
+      headers['Authorization'] = `Bearer ${apiKey}`;
+    }
+
+    const body = {
+      model,
+      messages,
+      temperature: 0.7,
+      max_tokens: 4000
+    };
+
+    if (tools && tools.length > 0) {
+      body.tools = tools;
+      body.tool_choice = 'auto';
+    }
+
+    const response = await fetch(`${apiBaseUrl}/chat/completions`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body)
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`LLM API error: ${response.status} ${response.statusText} - ${errorText}`);
+    }
+
+    return await response.json();
+  }
+
+  parseOpenAIToolCallToMCP(toolCall) {
+    // Parse OpenAI tool call back to MCP format
+    const funcName = toolCall.function.name;
+
+    if (!funcName.startsWith('mcp_')) {
+      throw new Error(`Invalid MCP tool name: ${funcName}`);
+    }
+
+    const nameParts = funcName.replace('mcp_', '').split('_');
+    if (nameParts.length < 2) {
+      throw new Error(`Invalid MCP tool name format: ${funcName}`);
+    }
+
+    const server = nameParts[0];
+    const toolName = nameParts.slice(1).join('_');
+
+    // Parse arguments
+    let parsedArgs = {};
+    try {
+      const argsString = toolCall.function.arguments || '{}';
+      parsedArgs = typeof argsString === 'string' ? JSON.parse(argsString) : argsString;
+    } catch (error) {
+      this.log(`Failed to parse tool arguments: ${error.message}`, 'warn');
+    }
+
+    return {
+      name: toolName,
+      arguments: parsedArgs,
+      server: server,
+      callId: toolCall.id || `mcp_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    };
+  }
+
+  async executeMCPTool(mcpProxyUrl, mcpToolCall) {
+    // Execute MCP tool via the proxy service
+    const response = await fetch(`${mcpProxyUrl}/api/tools/execute`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(mcpToolCall)
+    });
+
+    if (!response.ok) {
+      throw new Error(`MCP tool execution failed: ${response.status} ${response.statusText}`);
+    }
+
+    const result = await response.json();
+
+    // Extract actual result from wrapper if needed
+    return result.result || result;
+  }
+
+  formatMCPToolResult(toolResult) {
+    // Format MCP tool result for LLM consumption
+    if (!toolResult) {
+      return 'No result';
+    }
+
+    if (toolResult.success === false) {
+      return `Error: ${toolResult.error || 'Tool execution failed'}`;
+    }
+
+    if (toolResult.content && Array.isArray(toolResult.content)) {
+      // Extract text from content array
+      const textParts = toolResult.content
+        .filter(c => c.type === 'text' && c.text)
+        .map(c => c.text);
+
+      if (textParts.length > 0) {
+        return textParts.join('\n\n');
+      }
+
+      // Try JSON content
+      const jsonParts = toolResult.content
+        .filter(c => c.type === 'json' && c.data)
+        .map(c => typeof c.data === 'string' ? c.data : JSON.stringify(c.data, null, 2));
+
+      if (jsonParts.length > 0) {
+        return jsonParts.join('\n\n');
+      }
+    }
+
+    // Fallback to JSON stringify
+    return JSON.stringify(toolResult, null, 2);
+  }
+
   async executeAPIRequestNode(node, inputs) {
     const url = inputs.url || node.data?.url;
     const method = node.data?.method || 'GET';
     const headers = { ...node.data?.headers, ...inputs.headers };
     const body = inputs.body || node.data?.body;
-    
+
     if (!url) {
       throw new Error('API Request node requires URL');
     }
@@ -696,6 +1348,28 @@ class ClaraFlowRunner {
   truncateValue(value) {
     const str = typeof value === 'string' ? value : JSON.stringify(value);
     return str.length > 100 ? str.substring(0, 100) + '...' : str;
+  }
+
+  convertLocalhostForDocker(url) {
+    // Convert localhost/127.0.0.1 to host.docker.internal for Docker compatibility
+    // This allows services running inside Docker to access services on the host machine
+    if (!url || typeof url !== 'string') return url;
+
+    // Check if we're running in Docker (common indicators)
+    const isDocker = process.env.DOCKER_CONTAINER === 'true' ||
+                     process.env.NODE_ENV === 'production' ||
+                     (typeof process !== 'undefined' && process.platform === 'linux' &&
+                      (process.env.HOSTNAME?.includes('docker') ||
+                       process.env.HOSTNAME?.length === 12)); // Docker container hostnames are 12 chars
+
+    if (isDocker) {
+      // Replace localhost and 127.0.0.1 with host.docker.internal
+      return url
+        .replace(/localhost/g, 'host.docker.internal')
+        .replace(/127\.0\.0\.1/g, 'host.docker.internal');
+    }
+
+    return url;
   }
 
   log(message, level = 'info', data = null) {

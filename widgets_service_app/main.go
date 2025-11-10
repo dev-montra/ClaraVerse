@@ -140,6 +140,30 @@ var statsInterval = 2 * time.Second
 var fileProcessor = NewFileProcessor()
 var enhancedPDFProcessor = NewEnhancedPDFProcessor()
 
+func isExpectedWebsocketDisconnect(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Treat normal closure codes as expected disconnects
+	if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+		return true
+	}
+
+	errMsg := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(errMsg, "use of closed network connection"),
+		strings.Contains(errMsg, "broken pipe"),
+		strings.Contains(errMsg, "connection reset by peer"),
+		strings.Contains(errMsg, "wsasend"),
+		strings.Contains(errMsg, "wsarecv"),
+		strings.Contains(errMsg, "reset by peer"): // Windows-specific wording
+		return true
+	default:
+		return false
+	}
+}
+
 func main() {
 	port := "8765"
 	if len(os.Args) > 1 {
@@ -272,7 +296,7 @@ func handleFileUpload(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			log.Printf("Error processing PDF %s: %v", handler.Filename, err)
 		}
-		
+
 		// Convert enhanced result to standard result format
 		result := &FileParseResult{
 			Filename:    enhancedResult.Filename,
@@ -285,7 +309,7 @@ func handleFileUpload(w http.ResponseWriter, r *http.Request) {
 			ProcessTime: enhancedResult.ProcessTime,
 			Metadata:    make(map[string]string),
 		}
-		
+
 		// Add enhanced metadata
 		result.Metadata["title"] = enhancedResult.Metadata.Title
 		result.Metadata["author"] = enhancedResult.Metadata.Author
@@ -302,17 +326,17 @@ func handleFileUpload(w http.ResponseWriter, r *http.Request) {
 		result.Metadata["securityEncrypted"] = fmt.Sprintf("%t", enhancedResult.Security.IsEncrypted)
 		result.Metadata["hasBookmarks"] = fmt.Sprintf("%t", enhancedResult.Structure.HasBookmarks)
 		result.Metadata["isTaggedPDF"] = fmt.Sprintf("%t", enhancedResult.Structure.IsTaggedPDF)
-		
+
 		// Add custom metadata
 		for key, value := range enhancedResult.Metadata.Custom {
 			result.Metadata["custom_"+key] = value
 		}
-		
+
 		// Add quality recommendations
 		if len(enhancedResult.Quality.Recommendations) > 0 {
 			result.Metadata["recommendations"] = strings.Join(enhancedResult.Quality.Recommendations, "; ")
 		}
-		
+
 		// Log the enhanced upload
 		log.Printf("Enhanced PDF processed: %s (%s) - Success: %v, Quality: %.2f, Tables: %d",
 			result.Filename, result.FileType, result.Success, enhancedResult.Quality.OverallScore, len(enhancedResult.Tables))
@@ -382,7 +406,9 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		case <-ticker.C:
 			stats := collectSystemStats()
 			if err := conn.WriteJSON(stats); err != nil {
-				log.Printf("Error sending stats update: %v", err)
+				if !isExpectedWebsocketDisconnect(err) {
+					log.Printf("Error sending stats update: %v", err)
+				}
 				return
 			}
 		}

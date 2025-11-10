@@ -15,7 +15,7 @@ import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
-import { Copy, Eye, EyeOff, ExternalLink, Code2, Loader2, BarChart3, GitBranch, Maximize2, Download } from 'lucide-react';
+import { Copy, Check, Eye, EyeOff, ExternalLink, Code2, Loader2, BarChart3, GitBranch, Maximize2, Download, FileDown } from 'lucide-react';
 import { copyToClipboard } from '../../utils/clipboard';
 import { ClaraFileAttachment } from '../../types/clara_assistant_types';
 
@@ -748,6 +748,125 @@ const InlineChartRenderer: React.FC<{ content: string; isDark?: boolean }> = ({ 
 };
 
 /**
+ * Enhanced Table Component with CSV Download
+ */
+const EnhancedTable: React.FC<{
+  children: React.ReactNode;
+  [key: string]: any;
+}> = ({ children, ...props }) => {
+  const tableRef = useRef<HTMLTableElement>(null);
+  const [downloaded, setDownloaded] = useState(false);
+
+  const downloadAsCSV = () => {
+    if (!tableRef.current) return;
+
+    try {
+      const table = tableRef.current;
+      const rows: string[][] = [];
+
+      // Extract headers
+      const headers = Array.from(table.querySelectorAll('thead th, thead td')).map(
+        (cell) => (cell as HTMLElement).innerText.trim()
+      );
+      if (headers.length > 0) {
+        rows.push(headers);
+      }
+
+      // Extract body rows
+      const bodyRows = table.querySelectorAll('tbody tr');
+      bodyRows.forEach((row) => {
+        const cells = Array.from(row.querySelectorAll('td, th')).map(
+          (cell) => (cell as HTMLElement).innerText.trim()
+        );
+        if (cells.length > 0) {
+          rows.push(cells);
+        }
+      });
+
+      // If no thead/tbody structure, try direct tr extraction
+      if (rows.length === 0) {
+        const allRows = table.querySelectorAll('tr');
+        allRows.forEach((row, index) => {
+          const cells = Array.from(row.querySelectorAll('td, th')).map(
+            (cell) => (cell as HTMLElement).innerText.trim()
+          );
+          if (cells.length > 0) {
+            rows.push(cells);
+          }
+        });
+      }
+
+      // Convert to CSV format
+      const csvContent = rows
+        .map((row) =>
+          row
+            .map((cell) => {
+              // Escape quotes and wrap in quotes if contains comma, quote, or newline
+              const escaped = cell.replace(/"/g, '""');
+              return /[",\n]/.test(escaped) ? `"${escaped}"` : escaped;
+            })
+            .join(',')
+        )
+        .join('\n');
+
+      // Create and download file
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `table-${Date.now()}.csv`;
+      link.click();
+      URL.revokeObjectURL(url);
+
+      // Show feedback
+      setDownloaded(true);
+      setTimeout(() => setDownloaded(false), 2000);
+    } catch (error) {
+      console.error('Failed to download table as CSV:', error);
+    }
+  };
+
+  return (
+    <div className="my-0">
+      {/* Table header with download button */}
+      <div className="flex items-center justify-between mb-1 px-1">
+        <span className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+          Table
+        </span>
+        <button
+          onClick={downloadAsCSV}
+          className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-800 rounded transition-colors"
+          title="Download as CSV"
+        >
+          {downloaded ? (
+            <>
+              <Check className="w-3.5 h-3.5 text-green-500" />
+              <span className="text-green-500">Downloaded!</span>
+            </>
+          ) : (
+            <>
+              <FileDown className="w-3.5 h-3.5" />
+              <span>CSV</span>
+            </>
+          )}
+        </button>
+      </div>
+
+      {/* Table container */}
+      <div className="overflow-x-auto rounded-lg" style={{ border: '1px solid rgba(47, 52, 61, 0.5)' }}>
+        <table
+          ref={tableRef}
+          className="min-w-full"
+          {...props}
+        >
+          {children}
+        </table>
+      </div>
+    </div>
+  );
+};
+
+/**
  * Enhanced Code Block Component with Inline Visual Rendering
  */
 const CodeBlock: React.FC<{
@@ -761,40 +880,49 @@ const CodeBlock: React.FC<{
 }> = ({ children, language, className, isInline, isDark, isStreaming, ...props }) => {
   const [copied, setCopied] = useState(false);
   const [showCode, setShowCode] = useState(false);
-  
+  const [isHighlighterReady, setIsHighlighterReady] = useState(false);
+
   const code = String(children).replace(/\n$/, '');
-  
+
+  // Check if this is actually a code block (not just text rendered incorrectly)
+  // A code block should either have a language specified OR be wrapped in triple backticks
+  const isActualCodeBlock = Boolean(
+    language || // Has explicit language
+    className?.includes('language-') || // Has language class
+    code.includes('\n') // Multi-line (likely from triple backticks)
+  );
+
   // Check if this should be rendered as a visual element instead of code
-  const shouldRenderAsVisual = !isInline && code.length > 20;
-  
+  const shouldRenderAsVisual = !isInline && code.length > 20 && isActualCodeBlock;
+
   // Detect Mermaid diagrams
   const isMermaidDiagram = shouldRenderAsVisual && (
     language === 'mermaid' ||
     code.trim().match(/^(graph|flowchart|sequenceDiagram|classDiagram|stateDiagram|erDiagram|journey|gantt|pie|gitgraph|mindmap|timeline|requirement|c4context)/i)
   );
-  
+
   // Detect Chart.js JSON
   const isChartJSON = shouldRenderAsVisual && (
     language === 'json' && (
-      code.includes('"type":') && 
-      code.includes('"data":') && 
+      code.includes('"type":') &&
+      code.includes('"data":') &&
       (code.includes('"bar"') || code.includes('"line"') || code.includes('"pie"') || code.includes('"doughnut"'))
     )
   );
-  
+
   // Detect HTML content
   const isHTML = shouldRenderAsVisual && (
     language === 'html' ||
     (code.includes('<') && code.includes('>') && (
-      code.includes('<html') || 
-      code.includes('<div') || 
-      code.includes('<p') || 
-      code.includes('<h1') || 
-      code.includes('<h2') || 
-      code.includes('<h3') || 
-      code.includes('<section') || 
-      code.includes('<article') || 
-      code.includes('<header') || 
+      code.includes('<html') ||
+      code.includes('<div') ||
+      code.includes('<p') ||
+      code.includes('<h1') ||
+      code.includes('<h2') ||
+      code.includes('<h3') ||
+      code.includes('<section') ||
+      code.includes('<article') ||
+      code.includes('<header') ||
       code.includes('<footer') ||
       code.includes('<main') ||
       code.includes('<nav') ||
@@ -811,6 +939,29 @@ const CodeBlock: React.FC<{
     ))
   );
 
+  // Lazy load syntax highlighter for better performance - but skip during streaming
+  // MUST be called before any conditional returns
+  useEffect(() => {
+    // If streaming or not an actual code block, don't load highlighter
+    if (isStreaming || !isActualCodeBlock) {
+      return;
+    }
+
+    // Delay syntax highlighting to prevent blocking UI on history load
+    const hasIdleCallback = typeof window !== 'undefined' && 'requestIdleCallback' in window;
+    const timer = hasIdleCallback ?
+      window.requestIdleCallback(() => setIsHighlighterReady(true), { timeout: 500 }) :
+      setTimeout(() => setIsHighlighterReady(true), 100);
+
+    return () => {
+      if (hasIdleCallback && typeof timer === 'number') {
+        window.cancelIdleCallback(timer);
+      } else if (typeof timer === 'number') {
+        clearTimeout(timer);
+      }
+    };
+  }, [isStreaming, isActualCodeBlock]);
+
   const handleCopy = async () => {
     const success = await copyToClipboard(code);
     if (success) {
@@ -822,7 +973,7 @@ const CodeBlock: React.FC<{
   // If inline code, render normally
   if (isInline) {
     return (
-      <code 
+      <code
         className="px-1.5 py-0.5 bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 rounded text-sm font-mono"
         {...props}
       >
@@ -831,127 +982,77 @@ const CodeBlock: React.FC<{
     );
   }
 
-  // If this is a Mermaid diagram, render it visually (but only after streaming is complete)
-  if (isMermaidDiagram && !isStreaming) {
-    return (
-      <div className="my-4">
-        <InlineMermaidRenderer content={code} isDark={isDark} />
-        
-        {/* Show code option */}
-        <div className="mt-2 flex justify-end">
-          <button
-            onClick={() => setShowCode(!showCode)}
-            className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors flex items-center gap-1"
-          >
-            <Code2 className="w-3 h-3" />
-            {showCode ? 'Hide source' : 'Show source'}
-          </button>
-        </div>
-        
-        {showCode && (
-          <div className="mt-2 relative">
-            <div className="absolute top-2 right-2 z-10">
-              <button
-                onClick={handleCopy}
-                className="p-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white rounded transition-colors"
-                title="Copy code"
-              >
-                {copied ? <Eye className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-              </button>
-            </div>
-            <SyntaxHighlighter
-              style={isDark ? oneDark : oneLight}
-              language={language || 'text'}
-              PreTag="div"
-              className="text-sm rounded-lg"
-              showLineNumbers={false}
-              {...props}
-            >
-              {code}
-            </SyntaxHighlighter>
-          </div>
-        )}
-      </div>
-    );
+  // If this is not an actual code block (no language, no multi-line), render as plain text
+  // This prevents regular text from being incorrectly rendered as code
+  if (!isActualCodeBlock) {
+    return <span {...props}>{children}</span>;
   }
 
-  // If this is a Chart.js JSON, render it visually (but only after streaming is complete)
-  if (isChartJSON && !isStreaming) {
-    return (
-      <div className="my-4">
-        <InlineChartRenderer content={code} isDark={isDark} />
-        
-        {/* Show code option */}
-        <div className="mt-2 flex justify-end">
-          <button
-            onClick={() => setShowCode(!showCode)}
-            className="text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors flex items-center gap-1"
-          >
-            <Code2 className="w-3 h-3" />
-            {showCode ? 'Hide source' : 'Show source'}
-          </button>
-        </div>
-        
-        {showCode && (
-          <div className="mt-2 relative">
-            <div className="absolute top-2 right-2 z-10">
-              <button
-                onClick={handleCopy}
-                className="p-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white rounded transition-colors"
-                title="Copy code"
-              >
-                {copied ? <Eye className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
-              </button>
-            </div>
-            <SyntaxHighlighter
-              style={isDark ? oneDark : oneLight}
-              language="json"
-              PreTag="div"
-              className="text-sm rounded-lg"
-              showLineNumbers={false}
-              {...props}
-            >
-              {code}
-            </SyntaxHighlighter>
-          </div>
-        )}
-      </div>
-    );
-  }
+  // Mermaid diagrams are now shown in the artifact pane only - just show code here
+  // (The artifact preview button will allow users to open the rendered diagram)
 
-  // If this is HTML content, render it visually (but only after streaming is complete)
-  if (isHTML && !isStreaming) {
-    return (
-      <div className="my-4">
-        <InlineHTMLRenderer content={code} isDark={isDark} />
-      </div>
-    );
-  }
+  // Charts are now shown in the artifact pane only - just show code here
+  // (The artifact preview button will allow users to open the rendered chart)
 
-  // Regular code block rendering
+  // HTML content is now shown in the artifact pane only - just show code here
+  // (The artifact preview button will allow users to open the rendered HTML)
+
+  // Regular code block rendering with beautiful styling
   return (
     <div className="relative my-4 group">
-      {/* Copy button */}
-      <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
+      {/* Language badge and copy button header */}
+      <div className="flex items-center justify-between px-4 py-2 rounded-t-lg bg-gray-100/80 dark:bg-gray-800/80">
+        <span className="text-xs font-medium text-gray-600 dark:text-gray-400 uppercase tracking-wide">
+          {language || 'code'}
+        </span>
         <button
           onClick={handleCopy}
-          className="p-1.5 bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white rounded transition-colors"
+          className="flex items-center gap-1.5 px-2 py-1 text-xs font-medium text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-200/50 dark:hover:bg-gray-700/50 rounded transition-colors"
           title="Copy code"
         >
-          {copied ? <Eye className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
+          {copied ? (
+            <>
+              <Check className="w-3.5 h-3.5 text-green-500" />
+              <span className="text-green-500">Copied!</span>
+            </>
+          ) : (
+            <>
+              <Copy className="w-3.5 h-3.5" />
+              <span>Copy</span>
+            </>
+          )}
         </button>
       </div>
 
-      <SyntaxHighlighter
-        style={isDark ? oneDark : oneLight}
-        language={language || 'text'}
-        PreTag="div"
-        className="text-sm rounded-lg"
-        showLineNumbers={code.split('\n').length > 5}
-        {...props}
-      >
-        {code}
-      </SyntaxHighlighter>
+      {/* Code content */}
+      <div className="rounded-b-lg overflow-hidden shadow-sm">
+        {(!isHighlighterReady || isStreaming) ? (
+          // Show plain pre while streaming or waiting for syntax highlighter
+          <pre className={`text-sm p-4 overflow-x-auto ${
+            isDark ? 'bg-[#1e1e1e] text-gray-100' : 'bg-[#fafafa] text-gray-900'
+          } font-mono leading-relaxed`}>
+            <code>{code}</code>
+          </pre>
+        ) : (
+          <SyntaxHighlighter
+            style={isDark ? oneDark : oneLight}
+            language={language || 'text'}
+            PreTag="div"
+            className="text-sm"
+            showLineNumbers={code.split('\n').length > 5}
+            customStyle={{
+              margin: 0,
+              padding: '1rem',
+              background: isDark ? '#1e1e1e' : '#fafafa',
+              fontSize: '0.875rem',
+              lineHeight: '1.6',
+            }}
+            {...props}
+          >
+            {code}
+          </SyntaxHighlighter>
+        )}
+      </div>
     </div>
   );
 };
@@ -963,8 +1064,27 @@ const MessageContentRenderer: React.FC<MessageContentRendererProps> = React.memo
   isStreaming = false,
   attachments = [] // Default to empty array
 }) => {
-  // Auto-detect dark mode if not explicitly provided
-  const [darkMode, setDarkMode] = useState(isDark);
+  // Auto-detect dark mode from system/document
+  const [darkMode, setDarkMode] = useState(() => {
+    if (isDark !== false) return isDark;
+    // Check if dark mode is enabled in the document
+    return document.documentElement.classList.contains('dark');
+  });
+
+  // Listen for theme changes
+  useEffect(() => {
+    const observer = new MutationObserver(() => {
+      const isDarkMode = document.documentElement.classList.contains('dark');
+      setDarkMode(isDarkMode);
+    });
+
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['class']
+    });
+
+    return () => observer.disconnect();
+  }, []);
   
   // State to hold extracted images
   const [extractedImages, setExtractedImages] = useState<Array<{
@@ -1269,13 +1389,11 @@ const MessageContentRenderer: React.FC<MessageContentRendererProps> = React.memo
                   );
                 },
                 
-                // Enhanced table renderer
+                // Enhanced table renderer with CSV download
                 table: ({ children, ...props }) => (
-                  <div className="overflow-x-auto my-4">
-                    <table className="min-w-full border border-gray-200 dark:border-gray-700 rounded-lg" {...props}>
-                      {children}
-                    </table>
-                  </div>
+                  <EnhancedTable {...props}>
+                    {children}
+                  </EnhancedTable>
                 ),
                 
                 // Enhanced blockquote renderer
@@ -1337,13 +1455,17 @@ const MessageContentRenderer: React.FC<MessageContentRendererProps> = React.memo
 
   // Render as Markdown with custom image handling
   return (
-    <div className={`prose prose-base dark:prose-invert max-w-none ${className}`}>
+    <div
+      className={`prose prose-base dark:prose-invert max-w-none break-words ${className}`}
+      style={{ overflowWrap: 'break-word', wordBreak: 'break-word' }}
+    >
       {renderContentWithImages(processedContent.content)}
     </div>
   );
 });
 
 // Set display names for React DevTools
+EnhancedTable.displayName = 'EnhancedTable';
 CodeBlock.displayName = 'CodeBlock';
 MessageContentRenderer.displayName = 'MessageContentRenderer';
 

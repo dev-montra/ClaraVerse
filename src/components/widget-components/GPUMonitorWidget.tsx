@@ -35,10 +35,24 @@ const GPUMonitorWidget: React.FC<GPUMonitorWidgetProps> = ({ id, onRemove, width
 
   useEffect(() => {
     let ws: WebSocket | null = null;
-    let reconnectTimeout: NodeJS.Timeout;
+  let connectTimeout: NodeJS.Timeout | null = null;
+  let reconnectTimeout: NodeJS.Timeout | null = null;
+  let isServiceAvailable = false;
+  let isDisposed = false;
 
     const initializeWidget = async () => {
       try {
+        // Check if widget service is available first
+        const statusCheck = await widgetServiceClient.getStatus();
+        if (!statusCheck.success || !statusCheck.status?.running) {
+          console.log('Widget service not available, cannot initialize GPU monitor widget');
+          setError('Widget service is not running');
+          setIsLoading(false);
+          return;
+        }
+
+        isServiceAvailable = true;
+
         // Register this widget with the service
         const result = await widgetServiceClient.registerWidget('gpu-monitor');
         if (!result.success) {
@@ -51,15 +65,25 @@ const GPUMonitorWidget: React.FC<GPUMonitorWidgetProps> = ({ id, onRemove, width
         console.log('GPU monitor widget registered successfully');
         
         // Start WebSocket connection after a brief delay to allow service startup
-        setTimeout(connectWebSocket, 1000);
+        connectTimeout = setTimeout(() => {
+          if (isDisposed) {
+            return;
+          }
+          connectWebSocket();
+        }, 1000);
       } catch (err) {
         console.error('Error initializing widget:', err);
-        setError('Failed to initialize widget service');
+        setError('Widget service unavailable');
         setIsLoading(false);
       }
     };
 
     const connectWebSocket = () => {
+      // Only connect if service is available
+      if (!isServiceAvailable) {
+        return;
+      }
+
       try {
         // Try to connect to the widgets service
         ws = new WebSocket('ws://localhost:8765/ws/stats');
@@ -86,8 +110,27 @@ const GPUMonitorWidget: React.FC<GPUMonitorWidgetProps> = ({ id, onRemove, width
           setIsConnected(false);
           setError('Connection lost to monitoring service');
           
-          // Attempt to reconnect after 5 seconds
-          reconnectTimeout = setTimeout(connectWebSocket, 5000);
+          // Only attempt to reconnect if service is still available
+          if (isServiceAvailable && !isDisposed) {
+            reconnectTimeout = setTimeout(async () => {
+              if (isDisposed) {
+                return;
+              }
+              // Re-check if service is still running before reconnecting
+              try {
+                const statusCheck = await widgetServiceClient.getStatus();
+                if (statusCheck.success && statusCheck.status?.running) {
+                  connectWebSocket();
+                } else {
+                  isServiceAvailable = false;
+                  console.log('Widget service no longer available, stopping reconnection attempts');
+                }
+              } catch (err) {
+                isServiceAvailable = false;
+                console.log('Widget service check failed, stopping reconnection attempts');
+              }
+            }, 5000);
+          }
         };
 
         ws.onerror = (error) => {
@@ -109,6 +152,12 @@ const GPUMonitorWidget: React.FC<GPUMonitorWidgetProps> = ({ id, onRemove, width
 
     // Cleanup on unmount
     return () => {
+      isDisposed = true;
+
+      if (connectTimeout) {
+        clearTimeout(connectTimeout);
+      }
+
       if (ws) {
         ws.close();
       }

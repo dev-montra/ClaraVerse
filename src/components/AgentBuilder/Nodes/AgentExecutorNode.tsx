@@ -139,14 +139,41 @@ const AgentExecutorNode = memo<NodeProps<AgentExecutorNodeData>>((props) => {
 
   // Update data callback
   const updateData = useCallback((updates: Partial<AgentExecutorNodeData>) => {
-    console.log('🔄 AgentExecutorNode updateData called with:', updates);
-    if (data.onUpdate) {
-      const newData = { ...data, ...updates };
-      console.log('📝 Saving node data:', newData);
-      data.onUpdate({ data: newData });
-    } else {
+    if (!data.onUpdate) {
       console.warn('⚠️ No onUpdate callback available');
+      return;
     }
+
+    const hasMeaningfulChange = Object.entries(updates).some(([key, value]) => {
+      const previousValue = (data as Record<string, any>)[key];
+
+      if (Array.isArray(value) && Array.isArray(previousValue)) {
+        if (value.length !== previousValue.length) return true;
+        return value.some((item, index) => !Object.is(item, previousValue[index]));
+      }
+
+      if (
+        value !== null &&
+        previousValue !== null &&
+        typeof value === 'object' &&
+        typeof previousValue === 'object'
+      ) {
+        try {
+          return JSON.stringify(value) !== JSON.stringify(previousValue);
+        } catch (error) {
+          return true;
+        }
+      }
+
+      return !Object.is(previousValue, value);
+    });
+
+    if (!hasMeaningfulChange) {
+      return;
+    }
+
+    const newData = { ...data, ...updates };
+    data.onUpdate({ data: newData });
   }, [data]);
 
   // Helper function to ensure MCP servers are running before execution

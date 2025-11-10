@@ -1,5 +1,5 @@
-import React, { useRef, useEffect } from 'react';
-import { Terminal as TerminalIcon, Maximize2, Minimize2 } from 'lucide-react';
+import React, { useRef, useEffect, useState } from 'react';
+import { Terminal as TerminalIcon, Maximize2, Minimize2, RefreshCw } from 'lucide-react';
 import { Terminal } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
@@ -11,69 +11,167 @@ interface TerminalComponentProps {
   isVisible: boolean;
   onToggle: () => void;
   terminalRef: React.MutableRefObject<Terminal | null>;
+  onReconnectShell?: () => Promise<void>;
 }
 
-const TerminalComponent: React.FC<TerminalComponentProps> = ({ 
-  webContainer, 
-  isVisible, 
-  onToggle, 
-  terminalRef 
+const TerminalComponent: React.FC<TerminalComponentProps> = ({
+  isVisible,
+  onToggle,
+  terminalRef,
+  onReconnectShell
 }) => {
   const terminalElementRef = useRef<HTMLDivElement>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
+  const [isReconnecting, setIsReconnecting] = useState(false);
 
   useEffect(() => {
     if (terminalElementRef.current && !terminalRef.current) {
-      // Initialize terminal
-      const terminal = new Terminal({
-        theme: {
-          background: '#1e1e1e',
-          foreground: '#cccccc',
-          cursor: '#ffffff',
-        },
-        fontSize: 14,
-        fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-        cursorBlink: true,
-        convertEol: true,
-      });
+      // Wait for the DOM element to have dimensions before initializing
+      const element = terminalElementRef.current;
 
-      const fitAddon = new FitAddon();
-      const webLinksAddon = new WebLinksAddon();
-      
-      terminal.loadAddon(fitAddon);
-      terminal.loadAddon(webLinksAddon);
-      
-      terminal.open(terminalElementRef.current);
-      fitAddon.fit();
-      
-      terminalRef.current = terminal;
-      fitAddonRef.current = fitAddon;
+      // Check if element has dimensions
+      const hasValidDimensions = () => {
+        const rect = element.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
+      };
 
-      // Add some initial text
-      terminal.writeln('\x1b[32m🚀 Lumaui Terminal Ready\x1b[0m');
-      terminal.writeln('WebContainer processes will appear here when you start a project...\n');
+      const initializeTerminal = () => {
+        if (!hasValidDimensions()) {
+          // Element not ready, wait and retry
+          const retryTimeout = setTimeout(initializeTerminal, 50);
+          return () => clearTimeout(retryTimeout);
+        }
+
+        try {
+          // Initialize terminal
+          const terminal = new Terminal({
+            theme: {
+              background: '#1e1e1e',
+              foreground: '#cccccc',
+              cursor: '#ffffff',
+            },
+            fontSize: 14,
+            fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+            cursorBlink: true,
+            convertEol: true,
+          });
+
+          const fitAddon = new FitAddon();
+          const webLinksAddon = new WebLinksAddon();
+
+          terminal.loadAddon(fitAddon);
+          terminal.loadAddon(webLinksAddon);
+
+          terminal.open(element);
+
+          // Wait a frame before fitting to ensure layout is complete
+          requestAnimationFrame(() => {
+            try {
+              fitAddon.fit();
+            } catch (error) {
+              console.warn('Terminal fit failed on initialization, will retry:', error);
+              // Retry fit after a short delay
+              setTimeout(() => {
+                try {
+                  fitAddon.fit();
+                } catch (retryError) {
+                  console.warn('Terminal fit retry failed:', retryError);
+                }
+              }, 100);
+            }
+          });
+
+          terminalRef.current = terminal;
+          fitAddonRef.current = fitAddon;
+
+          // Add some initial text
+          terminal.writeln('\x1b[32m🚀 Lumaui Terminal Ready\x1b[0m');
+          terminal.writeln('WebContainer processes will appear here when you start a project...\n');
+        } catch (error) {
+          console.error('Failed to initialize terminal:', error);
+        }
+      };
+
+      initializeTerminal();
+    } else if (terminalElementRef.current && terminalRef.current) {
+      // Terminal exists but component was remounted (switching modes)
+      // ALWAYS reattach - don't check if already attached
+      try {
+        const element = terminalElementRef.current;
+        const terminal = terminalRef.current;
+
+        console.log('Terminal instance exists, reattaching to DOM...');
+
+        // Recreate fitAddon since we're reattaching
+        const fitAddon = new FitAddon();
+        terminal.loadAddon(fitAddon);
+        fitAddonRef.current = fitAddon;
+
+        // Reattach terminal to DOM element
+        terminal.open(element);
+
+        // Fit after reattachment with multiple attempts
+        const attemptFit = (attempts = 0) => {
+          if (attempts > 3) return;
+
+          setTimeout(() => {
+            try {
+              const rect = element.getBoundingClientRect();
+              if (rect.width > 0 && rect.height > 0) {
+                fitAddon.fit();
+                console.log('✅ Terminal reattached and fitted successfully');
+              } else {
+                console.log('Element not ready, retrying fit...');
+                attemptFit(attempts + 1);
+              }
+            } catch (e) {
+              console.warn('Fit error, retrying...:', e);
+              attemptFit(attempts + 1);
+            }
+          }, 50 * (attempts + 1));
+        };
+
+        attemptFit();
+      } catch (error) {
+        console.error('Error reattaching terminal:', error);
+      }
     }
 
+    // DON'T dispose terminal on unmount to persist output across project switches
+    // Terminal will be cleaned up when component is fully removed from DOM
     return () => {
-      if (terminalRef.current) {
-        terminalRef.current.dispose();
-        terminalRef.current = null;
+      // Only clear fitAddon reference, keep terminal alive
+      if (fitAddonRef.current) {
+        fitAddonRef.current = null;
       }
     };
   }, [terminalRef]);
 
   useEffect(() => {
-    if (fitAddonRef.current && isVisible) {
+    if (fitAddonRef.current && isVisible && terminalElementRef.current) {
       // Fit terminal when visibility changes or container resizes
       const fitTerminal = () => {
-        fitAddonRef.current?.fit();
+        try {
+          // Check if element has valid dimensions before fitting
+          const element = terminalElementRef.current;
+          if (element) {
+            const rect = element.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0) {
+              fitAddonRef.current?.fit();
+            }
+          }
+        } catch (error) {
+          // Silently ignore fit errors - they're not critical
+          console.debug('Terminal fit error (non-critical):', error);
+        }
       };
       
-      // Initial fit
-      setTimeout(fitTerminal, 100);
+      // Initial fit with delay to ensure layout is complete
+      const initialFitTimeout = setTimeout(fitTerminal, 100);
       
       // Add resize observer to handle container size changes
       const resizeObserver = new ResizeObserver(() => {
+        // Debounce resize events
         setTimeout(fitTerminal, 50);
       });
       
@@ -82,6 +180,7 @@ const TerminalComponent: React.FC<TerminalComponentProps> = ({
       }
       
       return () => {
+        clearTimeout(initialFitTimeout);
         resizeObserver.disconnect();
       };
     }
@@ -106,6 +205,19 @@ const TerminalComponent: React.FC<TerminalComponentProps> = ({
     );
   }
 
+  const handleReconnect = async () => {
+    if (onReconnectShell && !isReconnecting) {
+      setIsReconnecting(true);
+      try {
+        await onReconnectShell();
+      } catch (error) {
+        console.error('Reconnect failed:', error);
+      } finally {
+        setIsReconnecting(false);
+      }
+    }
+  };
+
   return (
     <div className="h-full border-t border-gray-200 dark:border-gray-700 bg-black flex flex-col">
       <div className="flex items-center justify-between px-3 py-1 bg-gray-800 border-b border-gray-600 shrink-0">
@@ -113,15 +225,28 @@ const TerminalComponent: React.FC<TerminalComponentProps> = ({
           <TerminalIcon className="w-4 h-4 text-green-400" />
           <span className="text-sm text-gray-300">Terminal</span>
         </div>
-        <button
-          onClick={onToggle}
-          className="p-1 hover:bg-gray-700 rounded transition-colors"
-        >
-          <Minimize2 className="w-4 h-4 text-gray-400" />
-        </button>
+        <div className="flex items-center gap-2">
+          {onReconnectShell && (
+            <button
+              onClick={handleReconnect}
+              disabled={isReconnecting}
+              className="flex items-center gap-1 px-2 py-1 text-xs bg-blue-600 hover:bg-blue-700 disabled:bg-blue-800 disabled:cursor-not-allowed text-white rounded transition-colors"
+              title="Reconnect interactive shell"
+            >
+              <RefreshCw className={`w-3 h-3 ${isReconnecting ? 'animate-spin' : ''}`} />
+              <span>{isReconnecting ? 'Connecting...' : 'Reconnect Shell'}</span>
+            </button>
+          )}
+          <button
+            onClick={onToggle}
+            className="p-1 hover:bg-gray-700 rounded transition-colors"
+          >
+            <Minimize2 className="w-4 h-4 text-gray-400" />
+          </button>
+        </div>
       </div>
-      <div 
-        ref={terminalElementRef} 
+      <div
+        ref={terminalElementRef}
         className="flex-1 p-2"
       />
     </div>

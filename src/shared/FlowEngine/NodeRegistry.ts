@@ -15,10 +15,11 @@ export class NodeRegistry {
 
   private registerBuiltInNodes(): void {
     // Input Node
-    this.nodeExecutors.set('input', (node: FlowNode) => {
-      const value = node.data.value || '';
+    this.nodeExecutors.set('input', (node: FlowNode, inputs: Record<string, any>) => {
+      // Check for runtime input first, then fall back to saved workflow value
+      const value = inputs.input !== undefined ? inputs.input : (node.data.value || '');
       const inputType = node.data.inputType || 'text';
-      
+
       switch (inputType) {
         case 'number':
           return { output: Number(value) || 0 };
@@ -34,7 +35,7 @@ export class NodeRegistry {
     });
 
     // Output Node
-    this.nodeExecutors.set('output', (node: FlowNode, inputs: Record<string, any>) => {
+  this.nodeExecutors.set('output', (_node: FlowNode, inputs: Record<string, any>) => {
       const outputInput = inputs.input || Object.values(inputs)[0];
       return outputInput;
     });
@@ -73,13 +74,28 @@ export class NodeRegistry {
 
     // JSON Parse Node
     this.nodeExecutors.set('json-parse', (node: FlowNode, inputs: Record<string, any>) => {
-      const inputValue = inputs.input || Object.values(inputs)[0] || '';
+      let inputValue = inputs.input || Object.values(inputs)[0] || '';
       const extractField = node.data.extractField || '';
       const failOnError = node.data.failOnError || false;
       
       try {
-        const jsonString = String(inputValue);
-        const parsed = JSON.parse(jsonString);
+        let parsed: any;
+        
+        // Handle API response format { data: {...}, status: 200, ... }
+        if (inputValue && typeof inputValue === 'object' && 'data' in inputValue && 'status' in inputValue) {
+          // Extract the actual data from API response wrapper
+          parsed = inputValue.data;
+        } else if (typeof inputValue === 'string') {
+          // Parse JSON string
+          parsed = JSON.parse(inputValue);
+        } else if (typeof inputValue === 'object') {
+          // Already an object, use as-is
+          parsed = inputValue;
+        } else {
+          // Try to parse as string
+          const jsonString = String(inputValue);
+          parsed = JSON.parse(jsonString);
+        }
         
         if (extractField) {
           // Support dot notation for nested field extraction
@@ -103,6 +119,36 @@ export class NodeRegistry {
           throw new Error(`JSON Parse Error: ${error instanceof Error ? error.message : 'Invalid JSON'}`);
         }
         return { output: null };
+      }
+    });
+
+    // JSON Stringify Node
+    this.nodeExecutors.set('json-stringify', (node: FlowNode, inputs: Record<string, any>) => {
+      const inputValue = inputs.input ?? Object.values(inputs)[0];
+      const prettyPrint = node.data?.prettyPrint ?? true;
+      const indentSetting = Number.isFinite(node.data?.indent) ? Number(node.data?.indent) : 2;
+      const indent = Math.min(Math.max(Math.round(indentSetting), 0), 8);
+      const fallback = node.data?.nullFallback ?? '';
+
+      if (inputValue === null || inputValue === undefined) {
+        return { output: fallback };
+      }
+
+      if (typeof inputValue === 'string') {
+        return { output: inputValue };
+      }
+
+      try {
+        const spacing = prettyPrint ? indent : 0;
+        const jsonText = JSON.stringify(inputValue, null, spacing || undefined);
+        return { output: jsonText ?? fallback };
+      } catch (error) {
+        console.warn('JSON Stringify error:', error);
+        try {
+          return { output: String(inputValue) };
+        } catch {
+          return { output: fallback };
+        }
       }
     });
 
@@ -140,7 +186,7 @@ export class NodeRegistry {
 
     // LLM Node
     this.nodeExecutors.set('llm', async (node: FlowNode, inputs: Record<string, any>) => {
-      const apiBaseUrl = node.data.apiBaseUrl || 'https://api.openai.com/v1';
+      const apiBaseUrl = (node.data.apiBaseUrl && node.data.apiBaseUrl.trim()) || 'http://localhost:8091/v1';
       const apiKey = node.data.apiKey || '';
       const model = node.data.model || 'gpt-3.5-turbo';
       const temperature = node.data.temperature || 0.7;
@@ -257,7 +303,7 @@ export class NodeRegistry {
 
     // Structured LLM Node
     this.nodeExecutors.set('structured-llm', async (node: FlowNode, inputs: Record<string, any>) => {
-      const apiBaseUrl = node.data.apiBaseUrl || 'https://api.openai.com/v1';
+      const apiBaseUrl = (node.data.apiBaseUrl && node.data.apiBaseUrl.trim()) || 'http://localhost:8091/v1';
       const apiKey = node.data.apiKey || '';
       const model = node.data.model || 'gpt-4o-mini';
       const temperature = node.data.temperature || 0.7;
@@ -776,7 +822,7 @@ export class NodeRegistry {
     });
 
     // Combine Text Node
-    this.nodeExecutors.set('combine-text', async (node: FlowNode, inputs: Record<string, any>, context: ExecutionContext) => {
+  this.nodeExecutors.set('combine-text', async (node: FlowNode, inputs: Record<string, any>, _context: ExecutionContext) => {
       const { combineMode = 'concat', separator = '', addSpaces = true } = node.data;
       
       const text1 = inputs.text1 || '';
@@ -850,7 +896,7 @@ export class NodeRegistry {
     });
 
     // Whisper Transcription Node
-    this.nodeExecutors.set('whisper-transcription', async (node: FlowNode, inputs: Record<string, any>, context: ExecutionContext) => {
+  this.nodeExecutors.set('whisper-transcription', async (node: FlowNode, inputs: Record<string, any>, _context: ExecutionContext) => {
       const { apiKey, model = 'gpt-4o-transcribe', language = 'auto', temperature = 0, prompt = 'You are a transcription assistant. Transcribe the audio accurately.' } = node.data;
       
       if (!apiKey) {
@@ -858,7 +904,13 @@ export class NodeRegistry {
       }
 
       // Get binary audio data from inputs
-      const binaryData = inputs.audioData || inputs.content;
+      let binaryData = inputs.audioData || inputs.content || inputs.file;
+      
+      // Handle file-upload node output format: { content: ..., metadata: ... }
+      if (binaryData && typeof binaryData === 'object' && binaryData.content) {
+        binaryData = binaryData.content;
+      }
+      
       if (!binaryData) {
         throw new Error('No binary audio data provided');
       }
@@ -940,6 +992,121 @@ export class NodeRegistry {
           throw new Error(`Whisper transcription failed: ${error.message}`);
         }
         throw new Error('Whisper transcription failed: Unknown error');
+      }
+    });
+
+    // Speech to Text (Base64) Node - configurable HTTP transcription endpoint
+    this.nodeExecutors.set('speech-to-text', async (node: FlowNode, inputs: Record<string, any>) => {
+      const {
+        baseUrl = 'http://localhost:5001/transcribe',
+        language = 'en',
+        beamSize = 5,
+        initialPrompt = ''
+      } = node.data || {};
+
+      if (!baseUrl) {
+        throw new Error('Transcription endpoint URL is required');
+      }
+
+      // Extract audio input from various possible formats
+      let audioInput = inputs.audioBase64 || inputs.audio || inputs.content || inputs.file;
+      
+      // Handle file-upload node output format: { content: ..., metadata: ... }
+      if (audioInput && typeof audioInput === 'object' && audioInput.content) {
+        audioInput = audioInput.content;
+      }
+      
+      if (!audioInput) {
+        throw new Error('No base64 audio input found for speech-to-text node');
+      }
+
+      const overrideLanguage = inputs.languageOverride;
+
+      const decodeBase64ToBlob = (value: string) => {
+        let cleaned = value.trim();
+        let mimeType = 'audio/wav';
+        let extension = 'wav';
+
+        if (cleaned.startsWith('data:')) {
+          const match = cleaned.match(/^data:(.*?);base64,/);
+          if (match) {
+            mimeType = match[1] || mimeType;
+            cleaned = cleaned.substring(match[0].length);
+          }
+        }
+
+        if (mimeType.includes('mpeg') || mimeType.includes('mp3')) {
+          extension = 'mp3';
+        } else if (mimeType.includes('ogg')) {
+          extension = 'ogg';
+        } else if (mimeType.includes('webm')) {
+          extension = 'webm';
+        }
+
+        try {
+          const binary = atob(cleaned);
+          const bytes = new Uint8Array(binary.length);
+          for (let i = 0; i < binary.length; i++) {
+            bytes[i] = binary.charCodeAt(i);
+          }
+
+          const blob = new Blob([bytes], { type: mimeType });
+          return {
+            blob,
+            fileName: `audio.${extension}`
+          };
+        } catch (error) {
+          throw new Error('Invalid base64 audio payload provided');
+        }
+      };
+
+      const { blob, fileName } = decodeBase64ToBlob(typeof audioInput === 'string' ? audioInput : String(audioInput));
+
+      const formData = new FormData();
+      formData.append('file', blob, fileName);
+
+      if (overrideLanguage || language) {
+        formData.append('language', (overrideLanguage || language).toString());
+      }
+
+      if (beamSize) {
+        formData.append('beam_size', beamSize.toString());
+      }
+
+      if (initialPrompt) {
+        formData.append('initial_prompt', initialPrompt);
+      }
+
+      try {
+        const response = await fetch(baseUrl, {
+          method: 'POST',
+          body: formData
+        });
+
+        if (!response.ok) {
+          const errorBody = await response.text();
+          throw new Error(`Transcription request failed: ${response.status} ${response.statusText} - ${errorBody}`);
+        }
+
+        const payload = await response.json();
+        const transcriptionText = payload?.transcription?.text || payload?.text || '';
+        const segments = payload?.transcription?.segments || [];
+
+        return {
+          transcription: transcriptionText,
+          segments,
+          raw: payload,
+          metadata: {
+            language: payload?.transcription?.language || overrideLanguage || language,
+            beamSize,
+            endpoint: baseUrl
+          }
+        };
+      } catch (error) {
+        if (error instanceof Error) {
+          throw new Error(`Speech-to-text request failed: ${error.message}`);
+        }
+        throw new Error('Speech-to-text request failed: Unknown error');
       }
     });
 

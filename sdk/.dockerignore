@@ -1,0 +1,62 @@
+# Clara Agent Runner - Docker Ignore
+# Exclude files not needed in Docker image
+
+# Node modules (will be installed in container)
+node_modules
+npm-debug.log
+yarn-error.log
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Git
+.git
+.gitignore
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Test files
+test
+tests
+__tests__
+*.test.js
+*.spec.js
+coverage
+
+# Documentation
+README.md
+CHANGELOG.md
+*.md
+docs
+
+# Example files
+examples
+agent_exported
+*.example.js
+debug-*.js
+test-*.js
+simple-test.js
+
+# Temporary files
+tmp
+temp
+.cache
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build artifacts (will be rebuilt)
+dist/*.map
+
+# Docker files
+Dockerfile
+.dockerignore
+docker-compose.yml

@@ -2,6 +2,7 @@ import type { Tool } from '../db';
 import { TokenLimitRecoveryService } from '../services/tokenLimitRecoveryService';
 import { ToolSuccessRegistry } from '../services/toolSuccessRegistry';
 import { THINKING_TAGS } from './thinkingTagsConfig';
+import { fetchWithTimeout } from './timeout';
 
 export type ChatRole = "system" | "user" | "assistant" | "tool";
 
@@ -177,7 +178,11 @@ export class APIClient {
       fetchOptions.signal = this.abortController.signal;
     }
 
-    const response = await fetch(`${this.config.baseUrl}${endpoint}`, fetchOptions);
+    // Apply standard API timeout (60s) to prevent premature aborts on slower providers
+    const response = await fetchWithTimeout(
+      `${this.config.baseUrl}${endpoint}`,
+      fetchOptions
+    );
 
     if (!response.ok) {
       // Try to get the actual server response (JSON or text)

@@ -130,6 +130,12 @@ export interface ClaraMessageMetadata {
   /** Whether this is a streaming message that's being updated */
   isStreaming?: boolean;
   
+  /** Whether to hide streaming content (e.g., when inside thinking tags) */
+  hideStreamingContent?: boolean;
+  
+  /** Whether this message contains thinking content that should be parsed after streaming */
+  hasThinkingContent?: boolean;
+  
   /** Whether this message was aborted during generation */
   aborted?: boolean;
   
@@ -604,6 +610,8 @@ export interface ClaraAIConfig {
     confidenceThreshold: number;
     enableChainOfThought: boolean;
     enableErrorLearning: boolean;
+    /** Enables deep verification of task completion using secondary analysis */
+    enableDeepThinkingVerification?: boolean;
   };
   
   /** Custom provider configuration (for non-stored providers) */
@@ -671,12 +679,18 @@ export interface ClaraChatWindowProps {
   
   /** Callback when user wants to retry a message */
   onRetryMessage?: (messageId: string) => void;
-  
+
   /** Callback when user wants to copy a message */
   onCopyMessage?: (content: string) => void;
-  
+
+  /** Callback when user clicks an example prompt */
+  onSendExamplePrompt?: (prompt: string, mode?: 'chat' | 'agent') => void;
+
   /** Callback when user wants to edit a message */
   onEditMessage?: (messageId: string, newContent: string) => void;
+
+  /** Trigger to force scroll to bottom (incremented to trigger scroll) */
+  scrollTrigger?: number;
 }
 
 /**
@@ -1115,6 +1129,51 @@ export interface ClaraAutonomousAgentConfig {
   
   /** Enable error analysis and learning */
   enableErrorLearning: boolean;
+
+  /** Enable deep verification phase before declaring tasks complete */
+  enableDeepThinkingVerification?: boolean;
+}
+
+// ================================
+// PERSONA TYPES
+// ================================
+
+/**
+ * Represents a custom persona for Clara
+ * Personas allow users to customize Clara's system prompt and behavior
+ */
+export interface ClaraPersona {
+  /** Unique identifier for the persona */
+  id: string;
+
+  /** Display name for the persona */
+  name: string;
+
+  /** Optional emoji icon for the persona */
+  emoji?: string;
+
+  /** Custom system prompt for this persona */
+  systemPrompt: string;
+
+  /** Whether to enable memory enhancement for this persona */
+  enableMemory: boolean;
+
+  /** Timestamp when the persona was created */
+  createdAt: number;
+
+  /** Timestamp when the persona was last updated */
+  updatedAt: number;
+}
+
+/**
+ * Storage structure for personas in localStorage
+ */
+export interface PersonaStorage {
+  /** List of all saved personas */
+  personas: ClaraPersona[];
+
+  /** ID of the currently active persona */
+  activePersonaId: string;
 }
 
 // ================================

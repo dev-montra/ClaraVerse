@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Send, Loader2, Bot, Trash2, Settings, ChevronDown, Wand2, Scissors } from 'lucide-react';
+import { Send, Loader2, Bot, Trash2, Settings, Wand2, Scissors, StopCircle, ChevronRight } from 'lucide-react';
 import { useProviders } from '../../contexts/ProvidersContext';
 import { LumaUIAPIClient, ChatMessage as LumaChatMessage } from './services/lumaUIApiClient';
 import type { Tool } from '../../db';
@@ -83,6 +83,7 @@ interface ChatWindowProps {
   projectId?: string;
   projectName?: string;
   refreshFileTree?: () => void | Promise<void>;
+  onCheckConsoleErrors?: (afterTimestamp: Date) => Promise<{hasErrors: boolean; errors: string[]}>;
 }
 
 // LumaUI Tool Definitions (matching db Tool interface)
@@ -177,6 +178,24 @@ const LUMA_TOOLS: Tool[] = [
     description: "Get information about the current project including package.json, installed dependencies, and project structure.",
     parameters: [],
     implementation: "lumaTools.get_project_info", 
+    isEnabled: true
+  },
+  {
+    id: "build_and_start",
+    name: "build_and_start",
+    description: "Build the project by running 'npm run build'. This compiles the project and reports whether the build succeeded or failed, including any compilation errors, TypeScript errors, or missing dependencies.",
+    parameters: [],
+    implementation: "lumaTools.build_and_start",
+    isEnabled: true
+  },
+  {
+    id: "grep",
+    name: "grep",
+    description: "Search for a pattern in file names and file contents across the entire project. Returns matching files with line numbers and preview of matching lines. Case-insensitive search.",
+    parameters: [
+      { name: "pattern", type: "string", description: "The text pattern to search for (e.g., 'useState', 'import React', 'function handleClick')", required: true }
+    ],
+    implementation: "lumaTools.grep",
     isEnabled: true
   }
 ];
@@ -405,7 +424,7 @@ const SYSTEM_PROMPT = `You are Clara, an expert AI assistant and exceptional sen
 <strategic_planning_workflow>
   You follow a sophisticated planning-first approach that prevents repetitive actions:
   
-  1. INITIAL STRATEGIC PLANNING: Before any tool execution, a comprehensive plan is created analyzing the project structure and breaking down the user's request into logical steps
+  1. INITIAL STRATEGIC PLANNING: Before any tool execution, create a comprehensive plan analyzing the project structure and breaking down the user's request into logical steps
   2. SYSTEMATIC EXECUTION: Follow the planned sequence of actions step by step, avoiding redundant operations
   3. REFLECTION AFTER EACH STEP: Analyze results and adapt the plan as needed
   4. COMPLETION AWARENESS: Recognize when the task is complete and stop automatically
@@ -421,17 +440,55 @@ const SYSTEM_PROMPT = `You are Clara, an expert AI assistant and exceptional sen
 </strategic_planning_workflow>
 
 <system_constraints>
-  You are operating in a WebContainer environment that runs in the browser. This is a Node.js runtime that emulates a Linux system to some degree. All code is executed in the browser environment.
+  You are operating in WebContainer, an in-browser Node.js runtime that emulates a Linux system to some degree. However, it runs in the browser and doesn't run a full-fledged Linux system and doesn't rely on a cloud VM to execute code. All code is executed in the browser. It does come with a shell that emulates zsh.
 
-  The environment supports:
-  - Node.js and npm packages  
-  - Modern web frameworks (React, Vue, Angular, etc.)
-  - Build tools (Vite, Webpack, etc.)
-  - Package managers (npm, yarn, pnpm)
-  - Shell commands for file operations
+  CRITICAL LIMITATIONS:
+  
+  🚫 NATIVE BINARIES:
+  - The container CANNOT run native binaries since those cannot be executed in the browser
+  - It can ONLY execute code that is native to a browser (JS, WebAssembly, etc.)
+  - NO C/C++ compiler (g++) available - WebContainer CANNOT compile C/C++ code
+  - When choosing databases or npm packages, prefer options that don't rely on native binaries
+  - For databases: prefer libsql, sqlite, or other solutions without native code
+  
+  // 🐍 PYTHON LIMITATIONS:
+  // - Python (python and python3 binaries) are available BUT LIMITED TO THE STANDARD LIBRARY ONLY.
+  // - pip is NOT supported! If the user requests pip, explicitly state it's unavailable.
+  // - CRITICAL: Third-party libraries CANNOT be installed or imported.
+  // - Some standard library modules requiring system dependencies (e.g., curses) are unavailable.
+  // - Only core Python standard library modules can be used.
+  //
+  // 🔧 MISSING TOOLS:
+  // - Git is NOT available.
+  - No native package managers for languages other than npm/yarn/pnpm
+  
+  📝 SCRIPTING:
+  - IMPORTANT: Prefer writing Node.js scripts instead of shell scripts
+  - The environment doesn't fully support shell scripts
+  - Use Node.js for scripting tasks whenever possible
+  
+  🌐 WEB SERVER:
+  - WebContainer can run web servers using npm packages (Vite, servor, serve, http-server)
+  - Or use Node.js APIs to implement a web server
+  - IMPORTANT: Prefer using Vite instead of implementing custom web server
+  
+  📦 AVAILABLE SHELL COMMANDS:
+  cat, chmod, cp, echo, hostname, kill, ln, ls, mkdir, mv, ps, pwd, rm, rmdir, xxd, alias, cd, 
+  clear, curl, env, false, getconf, head, sort, tail, touch, true, uptime, which, code, jq, 
+  loadenv, node, python3, wasm, xdg-open, command, exit, export, source
+
+  ENVIRONMENT SUPPORT:
+  - Node.js and npm packages ✅
+  - Modern web frameworks (React, Vue, Angular, etc.) ✅
+  - Build tools (Vite, Webpack, etc.) ✅
+  - Package managers (npm, yarn, pnpm) ✅
+  - Shell commands for file operations ✅
+  - Browser-compatible packages only ✅
 
   IMPORTANT: Always prefer using modern tools and frameworks. Use Vite for new projects when possible.
   IMPORTANT: When choosing packages, prefer options that work well in browser environments.
+  IMPORTANT: Before suggesting Python solutions, remember the standard library limitation.
+  IMPORTANT: Before suggesting system tools, verify they're in the available commands list.
 </system_constraints>
 
 <code_formatting_info>
@@ -440,6 +497,24 @@ const SYSTEM_PROMPT = `You are Clara, an expert AI assistant and exceptional sen
   Use functional components with hooks for React
   Prefer TypeScript over JavaScript when possible
 </code_formatting_info>
+
+<message_formatting_info>
+  You can make the output pretty by using the following HTML elements:
+  - <b> for bold text
+  - <i> for italic text
+  - <u> for underlined text
+  - <code> for inline code
+  - <pre> for code blocks
+  - <br> for line breaks
+  - <p> for paragraphs
+  - <ul>, <ol>, <li> for lists
+  - <a> for links
+  - <h1>, <h2>, <h3> for headers
+  - <blockquote> for quotes
+  - <hr> for horizontal rules
+  
+  Use these elements to make responses clear and scannable.
+</message_formatting_info>
 
 <file_structure_context>
   Current Project Structure:
@@ -465,8 +540,8 @@ const SYSTEM_PROMPT = `You are Clara, an expert AI assistant and exceptional sen
   4. read_file: Read file contents to understand current state
   5. list_files: List directories to understand project structure  
   6. get_all_files: Get complete project overview
-  7. run_command: Execute shell commands
-  8. install_package: Install npm packages
+  7. run_command: Execute shell commands (remember: Node.js scripts preferred over shell scripts)
+  8. install_package: Install npm packages (ensure browser-compatible packages only)
   9. get_project_info: Get project information
 
   CRITICAL SUCCESS RULES:
@@ -476,6 +551,7 @@ const SYSTEM_PROMPT = `You are Clara, an expert AI assistant and exceptional sen
   ✅ If edit_file_section fails with TEXT_NOT_FOUND, try reading again and find exact match
   ✅ Verify file exists before trying to read it (check PROJECT_TREE)
   ✅ Stop and analyze after 3 failed attempts - don't keep retrying the same approach
+  ✅ Check system constraints before suggesting solutions (no pip, no git, no native binaries)
 
   PRECISION EDITING WORKFLOW:
   1. Check if file exists in {{PROJECT_TREE}} first
@@ -495,6 +571,8 @@ const SYSTEM_PROMPT = `You are Clara, an expert AI assistant and exceptional sen
   - If edit_file_section fails 2+ times, switch to edit_file with complete content
   - If file not found, check if path is correct in PROJECT_TREE
   - If multiple attempts fail, stop and explain the issue rather than endless loops
+  - If suggesting Python packages, stop and mention pip is not available
+  - If suggesting native binaries, stop and mention WebContainer limitations
 
   MANDATORY WORKFLOW FOR EXISTING FILES:
   1. Check {{PROJECT_TREE}} to verify file exists
@@ -515,13 +593,29 @@ const SYSTEM_PROMPT = `You are Clara, an expert AI assistant and exceptional sen
   2. Find exact imports section: "import React from 'react';\nimport './App.css';"
   3. edit_file_section with old_text="import React from 'react';\nimport './App.css';" and new_text="import React from 'react';\nimport { useState } from 'react';\nimport './App.css';"
 
+  CONSTRAINT-AWARE EXAMPLES:
+  
+  ❌ WRONG - User asks: "Install pandas and create a data analysis script"
+  Response: *attempts to run pip install pandas*
+  
+  ✅ CORRECT - User asks: "Install pandas and create a data analysis script"
+  Response: "Hey! Python in WebContainer is limited to the standard library only - pip isn't available, so I can't install pandas. But I can create a data analysis script using Python's built-in libraries like csv, json, and statistics. Want me to do that instead?"
+  
+  ❌ WRONG - User asks: "Compile this C++ program"
+  Response: *attempts to use g++*
+  
+  ✅ CORRECT - User asks: "Compile this C++ program"
+  Response: "WebContainer doesn't have a C++ compiler (g++) since it can't run native binaries. I can help you rewrite this logic in JavaScript/TypeScript instead, or we could explore WebAssembly if you have a .wasm file. Which would work better for you?"
+
   GENERAL RULES:
   - ALWAYS use tools to implement what the user asks for
   - NEVER just give advice or explanations without taking action
   - ALWAYS be proactive and build the actual solution
   - When the user asks for something, implement it completely
-  - Install necessary dependencies automatically
+  - Install necessary dependencies automatically (npm packages only, browser-compatible)
   - STOP after 3 consecutive failures and explain the issue
+  - VERIFY compatibility with WebContainer constraints before implementation
+  - INFORM user of limitations when they request unavailable features
 </tool_usage_instructions>
 
 <response_behavior>
@@ -533,15 +627,25 @@ const SYSTEM_PROMPT = `You are Clara, an expert AI assistant and exceptional sen
   - Try alternative strategies (edit_file instead of edit_file_section)
   - If unsure about file structure, use list_files or get_all_files first
   - Explain what went wrong and ask for clarification if stuck
+  - If hitting WebContainer constraints, explain limitations and offer alternatives
+
+  CONSTRAINT-AWARE IMPLEMENTATION:
+  - Before suggesting Python packages → Remember: NO pip, standard library only
+  - Before using system commands → Check available commands list
+  - Before suggesting native tools → Remember: Browser environment only
+  - Before git operations → Remember: Git NOT available
+  - When suggesting databases → Prefer libsql, sqlite (browser-compatible)
 
   When a user asks for something:
-  1. IMMEDIATELY start using tools to implement it
-  2. CHECK project structure context first ({{PROJECT_TREE}})
-  3. READ existing files to understand current state
-  4. For existing files: Use TARGETED, MINIMAL edits preserving all existing code
-  5. For new files: Create complete implementations
-  6. Install any required packages
-  7. Provide a brief explanation ONLY after implementing
+  1. CHECK WebContainer constraints compatibility FIRST
+  2. If incompatible: EXPLAIN limitation and OFFER browser-compatible alternative
+  3. IMMEDIATELY start using tools to implement it (if compatible)
+  4. CHECK project structure context ({{PROJECT_TREE}})
+  5. READ existing files to understand current state
+  6. For existing files: Use TARGETED, MINIMAL edits preserving all existing code
+  7. For new files: Create complete implementations
+  8. Install any required packages (npm only, browser-compatible)
+  9. Provide a brief explanation ONLY after implementing
 
   PRECISION EDITING PRIORITY:
   - Small changes (add button, fix style, add function) = Read file, preserve all existing code, add only what's needed
@@ -554,35 +658,43 @@ const SYSTEM_PROMPT = `You are Clara, an expert AI assistant and exceptional sen
   - Recreate entire files for small changes
   - Replace whole components to add simple elements
   - Give advice without implementing
-  - Suggest what "could be done" - DO IT
+  - Suggest what "could be done" - DO IT (unless blocked by constraints)
   - Ask for clarification unless absolutely necessary
   - Provide code examples in text - EDIT ACTUAL FILES
   - Be verbose with explanations - let your implementations speak
   - Keep retrying the same failed approach more than 3 times
+  - Ignore WebContainer limitations and attempt impossible operations
+  - Use pip, git, or native binaries without warning user first
 
   DO:
   - Use tools immediately and proactively
+  - Check WebContainer constraints before implementation
+  - Inform user of limitations and offer alternatives
   - Check file existence in PROJECT_TREE before editing
   - Read files before editing to understand context
   - Make minimal, targeted edits to existing files
   - Preserve all existing functionality and styling
   - Create new files only when needed
-  - Install dependencies automatically
+  - Install dependencies automatically (npm, browser-compatible only)
   - Use modern, best-practice implementations
   - Stop and analyze after repeated failures
+  - Prefer Node.js scripts over shell scripts
+  - Use Vite for new web projects
 </response_behavior>
 
 <implementation_guidelines>
-  1. VERIFY FIRST: Check {{PROJECT_TREE}} to confirm file exists before any operation
-  2. READ FIRST: Always read existing files to understand current implementation before making changes
-  3. PRECISION OVER RECREATION: Use minimal, targeted edits instead of replacing entire files
-  4. PRESERVE EXISTING CODE: Maintain all current functionality, styles, and structure when editing
-  5. SURGICAL EDITS: Identify exact insertion/modification points and edit only those areas
-  6. HANDLE DEPENDENCIES: Install required packages automatically when adding new functionality
-  7. FOLLOW EXISTING PATTERNS: Match the current code style, architecture, and conventions
-  8. INCREMENTAL CHANGES: Build up functionality through small, precise modifications
-  9. VERIFY INTEGRATION: Ensure edits don't break existing functionality
-  10. SMART RECOVERY: After 3 failed attempts, switch strategies or stop and explain
+  1. VERIFY CONSTRAINTS: Check WebContainer limitations before suggesting solutions
+  2. VERIFY FILE EXISTS: Check {{PROJECT_TREE}} to confirm file exists before any operation
+  3. READ FIRST: Always read existing files to understand current implementation before making changes
+  4. PRECISION OVER RECREATION: Use minimal, targeted edits instead of replacing entire files
+  5. PRESERVE EXISTING CODE: Maintain all current functionality, styles, and structure when editing
+  6. SURGICAL EDITS: Identify exact insertion/modification points and edit only those areas
+  7. HANDLE DEPENDENCIES: Install required npm packages automatically (browser-compatible only)
+  8. FOLLOW EXISTING PATTERNS: Match the current code style, architecture, and conventions
+  9. INCREMENTAL CHANGES: Build up functionality through small, precise modifications
+  10. VERIFY INTEGRATION: Ensure edits don't break existing functionality
+  11. SMART RECOVERY: After 3 failed attempts, switch strategies or stop and explain
+  12. CONSTRAINT AWARENESS: When blocked by limitations, explain and offer alternatives
 
   EDITING STRATEGY BY CHANGE TYPE:
   - For adding imports: 
@@ -611,6 +723,14 @@ const SYSTEM_PROMPT = `You are Clara, an expert AI assistant and exceptional sen
   - File not found → Check PROJECT_TREE for correct path, or create new file if intended
   - Multiple failures → Switch from edit_file_section to edit_file with complete content
   - Persistent failures → Stop, analyze, and explain the issue to user
+  - User requests impossible operation → Explain WebContainer limitation, offer alternative
+
+  CONSTRAINT-AWARE PATTERNS:
+  - Python package needed → Suggest standard library alternative or JavaScript solution
+  - Native binary needed → Suggest browser-compatible npm package or JavaScript solution
+  - Git operation needed → Explain limitation, suggest manual file operations or alternatives
+  - C++ compilation needed → Suggest JavaScript/TypeScript rewrite or WebAssembly option
+  - Shell script needed → Create Node.js script instead
 </implementation_guidelines>
 
 <current_project_context>
@@ -628,16 +748,31 @@ const SYSTEM_PROMPT = `You are Clara, an expert AI assistant and exceptional sen
   CORRECT RESPONSE: Use create_file to create new login component with complete implementation
 
   Example 2 - User asks: "Add a logout button to the header"  
-  CORRECT RESPONSE: Read header component, preserve all existing JSX/styling/imports, reconstruct file with logout button added in appropriate location
+  CORRECT RESPONSE: Read header component, preserve all existing JSX/styling/imports, use edit_file_section to add logout button in appropriate location with minimal changes
 
   Example 3 - User asks: "Make the login page responsive"
-  CORRECT RESPONSE: Read login component, keep all existing structure/functions/imports, add responsive classes to existing elements
+  CORRECT RESPONSE: Read login component, keep all existing structure/functions/imports, add responsive classes to existing elements using precision editing
 
   Example 4 - User asks: "Add routing to my app"
   CORRECT RESPONSE: Read App.tsx, add react-router-dom import, preserve existing structure, wrap content with router components
 
   Example 5 - User asks: "Change the button color to blue"
-  CORRECT RESPONSE: Read the component, preserve all code, change only the specific button's color class/style
+  CORRECT RESPONSE: Read the component, preserve all code, use edit_file_section to change only the specific button's color class/style
+
+  Example 6 - User asks: "Install scikit-learn and build a ML model"
+  CORRECT RESPONSE: "Hey! WebContainer's Python is limited to the standard library - pip and scikit-learn aren't available. I can build a simple ML model using JavaScript with TensorFlow.js instead, or create a statistical analysis using Python's built-in math/statistics modules. Which would you prefer?"
+
+  Example 7 - User asks: "Compile this C++ program for me"
+  CORRECT RESPONSE: "WebContainer can't compile C++ since there's no g++ compiler and it can't run native binaries. I can help you rewrite the logic in TypeScript/JavaScript instead, or if you already have a WebAssembly build, I can help integrate that. What works better for you?"
+
+  Example 8 - User asks: "Initialize a git repository"
+  CORRECT RESPONSE: "Git isn't available in WebContainer unfortunately. But I can help you structure your project files properly and create a .gitignore file for when you move this to a local environment with git. Want me to set that up?"
+
+  Example 9 - User asks: "Create a shell script to automate this"
+  CORRECT RESPONSE: Read requirements, create a Node.js script instead of shell script (since WebContainer prefers Node.js scripts), make it executable with proper error handling
+
+  Example 10 - User asks: "Set up PostgreSQL database"
+  CORRECT RESPONSE: "PostgreSQL requires native binaries which WebContainer can't run. I can set up a browser-compatible database like libsql or better-sqlite3 instead - they work great for this use case and run entirely in the browser. Want me to set that up?"
 
   CRITICAL: NEVER DO THESE THINGS:
   ❌ "You can make it responsive by adding these classes..." (advice instead of implementation)  
@@ -646,16 +781,27 @@ const SYSTEM_PROMPT = `You are Clara, an expert AI assistant and exceptional sen
   ❌ Removing existing imports, functions, or JSX when editing
   ❌ Changing existing code unnecessarily when making small additions
   ❌ Creating placeholder comments like "// existing code here"
+  ❌ Attempting to use pip without warning user
+  ❌ Attempting to use git without explaining limitation
+  ❌ Suggesting native binary solutions without mentioning WebContainer constraints
+  ❌ Using shell scripts when Node.js scripts would work better
   
   ALWAYS DO THESE THINGS:
-  ✅ read_file before any edit_file call
+  ✅ Check WebContainer constraints before implementation
+  ✅ read_file before any edit_file or edit_file_section call
   ✅ Provide complete, valid file content to edit_file
   ✅ Preserve all existing imports, functions, and structure
   ✅ Make only the specific change requested by the user
   ✅ Test that your edit would result in working, compilable code
+  ✅ Use edit_file_section for small, targeted changes
+  ✅ Explain limitations when user requests incompatible features
+  ✅ Offer browser-compatible alternatives immediately
+  ✅ Prefer Node.js scripts over shell scripts
+  ✅ Use Vite for new web projects
+  ✅ Choose browser-compatible packages (libsql over PostgreSQL, etc.)
 </examples>
 
-Remember: You are an implementation agent, not an advisory agent. Your job is to BUILD what the user asks for using the available tools.`;
+Remember: You are an implementation agent, not an advisory agent. Your job is to BUILD what the user asks for using the available tools, while being aware of WebContainer constraints and offering alternatives when needed.`;
 
 const ChatWindow: React.FC<ChatWindowProps> = ({ 
   selectedFile,
@@ -666,7 +812,8 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
   lumaTools,
   projectId,
   projectName,
-  refreshFileTree
+  refreshFileTree,
+  onCheckConsoleErrors
 }) => {
   const { createCheckpoint, revertToCheckpoint, clearCheckpoints, getCheckpointByMessageId, checkpoints, setCurrentProject, loadProjectData } = useCheckpoints();
   
@@ -680,7 +827,8 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
   ];
 
   const [messages, setMessages] = useState<Message[]>(defaultMessages);
-  
+  const [shouldScrollToBottom, setShouldScrollToBottom] = useState(false);
+
   const [inputMessage, setInputMessage] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [currentTask, setCurrentTask] = useState('');
@@ -689,8 +837,9 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
   const [showLiveExecution, setShowLiveExecution] = useState(false);
   const [currentPlanning, setCurrentPlanning] = useState<PlanningExecution | null>(null);
   const [showPlanning, setShowPlanning] = useState(false);
-  
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   
   // Provider context
   const { providers, primaryProvider } = useProviders();
@@ -817,6 +966,9 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
       if (savedData && savedData.messages.length > 0) {
         setMessages(savedData.messages);
         console.log('📖 Loaded', savedData.messages.length, 'messages for project:', projectId);
+        
+        // Set flag to trigger scroll after messages are rendered
+        setShouldScrollToBottom(true);
       } else {
         setMessages(defaultMessages);
         console.log('🆕 Starting fresh chat for project:', projectId);
@@ -834,15 +986,31 @@ const ChatWindow: React.FC<ChatWindowProps> = ({
     }
   }, [projectId, messages, checkpoints, projectName]);
 
-  // Auto-scroll to bottom
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
-  // Auto-scroll when loading state changes
+  // Auto-scroll to bottom when messages change
   useEffect(() => {
     scrollToBottom();
   }, [messages]);
+
+  // Auto-scroll when loading state changes (streaming responses)
+  useEffect(() => {
+    if (isLoading) {
+      scrollToBottom();
+    }
+  }, [isLoading]);
+
+  // Handle forced scroll to bottom (after loading history)
+  useEffect(() => {
+    if (shouldScrollToBottom && messages.length > 0) {
+      // Use multiple techniques to ensure scroll happens after render
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          scrollToBottom();
+          console.log('🔽 Forced scroll to bottom after history load');
+          setShouldScrollToBottom(false);
+        });
+      });
+    }
+  }, [shouldScrollToBottom, messages]);
 
   // Animate header when tools are executing or AI is planning
   useEffect(() => {
@@ -1069,16 +1237,63 @@ ${reflection.nextSteps.map((step, i) => `${i + 1}. ${step}`).join('\n')}
     return null;
   };
 
+  // Timeout wrapper for tool execution
+  const executeWithTimeout = async <T,>(
+    promise: Promise<T>,
+    timeoutMs: number = 60000,
+    toolName: string
+  ): Promise<T> => {
+    let timeoutId: NodeJS.Timeout;
+
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutId = setTimeout(() => {
+        reject(new Error(`Tool "${toolName}" timed out after ${timeoutMs / 1000}s`));
+      }, timeoutMs);
+    });
+
+    try {
+      const result = await Promise.race([promise, timeoutPromise]);
+      clearTimeout(timeoutId!);
+      return result;
+    } catch (error) {
+      clearTimeout(timeoutId!);
+      throw error;
+    }
+  };
+
   // Execute tool calls from OpenAI function calling with live animations and retry logic
   const executeTools = async (toolCalls: any[], retryCount: number = 0): Promise<Array<{id: string, result: string, success: boolean}>> => {
     const results: Array<{id: string, result: string, success: boolean}> = [];
-    const maxRetries = 2;
-    
+    const maxRetries = 1; // One retry only (2 total attempts) - most errors won't fix themselves
+    const toolTimeout = 60000; // 60 seconds timeout for each tool
+
     for (const toolCall of toolCalls) {
+      // Check if operation was cancelled before starting this tool
+      if (abortControllerRef.current?.signal.aborted) {
+        console.log('🛑 Tool execution cancelled by user');
+        results.push({
+          id: toolCall.id,
+          result: '⚠️ Cancelled by user',
+          success: false
+        });
+        continue; // Skip to next tool
+      }
+
       let lastError: string = '';
       let success = false;
-      
+
       for (let attempt = 0; attempt <= maxRetries && !success; attempt++) {
+        // Check abort signal before each retry
+        if (abortControllerRef.current?.signal.aborted) {
+          console.log('🛑 Tool execution cancelled during retry');
+          results.push({
+            id: toolCall.id,
+            result: '⚠️ Cancelled by user',
+            success: false
+          });
+          break; // Exit retry loop
+        }
+
         try {
           const functionName = toolCall.function.name;
           let parameters;
@@ -1117,9 +1332,24 @@ ${reflection.nextSteps.map((step, i) => `${i + 1}. ${step}`).join('\n')}
           execution.status = 'executing';
           setCurrentToolExecution({...execution});
 
-          // Execute the actual tool with retry logic
-          const result = await lumaTools[functionName](parameters);
-          
+          // Execute the actual tool with timeout
+          const result = await executeWithTimeout(
+            lumaTools[functionName](parameters),
+            toolTimeout,
+            functionName
+          );
+
+          // Check if cancelled after tool execution
+          if (abortControllerRef.current?.signal.aborted) {
+            console.log('🛑 Operation cancelled after tool execution');
+            results.push({
+              id: toolCall.id,
+              result: '⚠️ Cancelled by user',
+              success: false
+            });
+            break; // Exit retry loop
+          }
+
           if (result.success) {
             const filePath = result.data?.path || parameters.path || 'completed';
             execution.status = 'completed';
@@ -1129,7 +1359,39 @@ ${reflection.nextSteps.map((step, i) => `${i + 1}. ${step}`).join('\n')}
             // For read_file, include the actual content in the result
             let toolResultContent = execution.result;
             if (functionName === 'read_file' && result.data?.content) {
-              toolResultContent = `✅ ${functionName}: ${filePath}\n\nFile content:\n\`\`\`\n${result.data.content}\n\`\`\``;
+              // Detect language from file extension
+              const fileExt = filePath.split('.').pop()?.toLowerCase() || '';
+              const langMap: Record<string, string> = {
+                'ts': 'typescript',
+                'tsx': 'tsx',
+                'js': 'javascript',
+                'jsx': 'jsx',
+                'py': 'python',
+                'java': 'java',
+                'cpp': 'cpp',
+                'c': 'c',
+                'cs': 'csharp',
+                'go': 'go',
+                'rs': 'rust',
+                'rb': 'ruby',
+                'php': 'php',
+                'html': 'html',
+                'css': 'css',
+                'scss': 'scss',
+                'json': 'json',
+                'xml': 'xml',
+                'yaml': 'yaml',
+                'yml': 'yaml',
+                'md': 'markdown',
+                'sh': 'bash',
+                'bash': 'bash',
+                'sql': 'sql',
+                'graphql': 'graphql',
+                'vue': 'vue',
+                'svelte': 'svelte'
+              };
+              const language = langMap[fileExt] || fileExt || 'text';
+              toolResultContent = `✅ ${functionName}: ${filePath}\n\nFile content:\n\`\`\`${language}\n${result.data.content}\n\`\`\``;
             } else if (functionName === 'list_files' && result.data) {
               toolResultContent = `✅ ${functionName}: ${filePath}\n\nFiles:\n${JSON.stringify(result.data, null, 2)}`;
             } else if (functionName === 'get_all_files' && result.data) {
@@ -1137,12 +1399,6 @@ ${reflection.nextSteps.map((step, i) => `${i + 1}. ${step}`).join('\n')}
             } else if (functionName === 'get_project_info' && result.data) {
               toolResultContent = `✅ ${functionName}: completed\n\nProject info:\n${JSON.stringify(result.data, null, 2)}`;
             }
-            
-            results.push({
-              id: toolCall.id,
-              result: toolResultContent,
-              success: true
-            });
             
             // Update file selection if a file was created/edited
             if (result.data?.path && (functionName === 'create_file' || functionName === 'edit_file' || functionName === 'edit_file_section')) {
@@ -1152,6 +1408,28 @@ ${reflection.nextSteps.map((step, i) => `${i + 1}. ${step}`).join('\n')}
                 onFileSelect(result.data.path, parameters.content);
               }
             }
+            
+            // Check for console errors after file operations (if checker is available)
+            if (onCheckConsoleErrors && (functionName === 'create_file' || functionName === 'edit_file' || functionName === 'edit_file_section')) {
+              try {
+                const operationTimestamp = new Date();
+                const { hasErrors, errors } = await onCheckConsoleErrors(operationTimestamp);
+                
+                if (hasErrors && errors.length > 0) {
+                  // Append console error warnings to the result
+                  toolResultContent += `\n\n⚠️ **Preview Console Errors Detected:**\n${errors.join('\n')}`;
+                }
+              } catch (error) {
+                console.error('Error checking console errors:', error);
+                // Don't fail the operation if console checking fails
+              }
+            }
+            
+            results.push({
+              id: toolCall.id,
+              result: toolResultContent,
+              success: true
+            });
             
             success = true;
             
@@ -1206,8 +1484,11 @@ ${reflection.nextSteps.map((step, i) => `${i + 1}. ${step}`).join('\n')}
 
         } catch (error) {
           lastError = error instanceof Error ? error.message : String(error);
-          
-          if (attempt === maxRetries) {
+
+          // Check if it's a timeout error - don't retry timeouts
+          const isTimeout = lastError.includes('timed out');
+
+          if (attempt === maxRetries || isTimeout) {
             const execution: ToolExecution = {
               id: toolCall.id,
               toolName: toolCall.function?.name || 'unknown',
@@ -1219,10 +1500,11 @@ ${reflection.nextSteps.map((step, i) => `${i + 1}. ${step}`).join('\n')}
             };
 
             setCurrentToolExecution(execution);
-            
+
+            const attemptText = isTimeout ? '' : ` (failed after ${maxRetries + 1} attempts)`;
             results.push({
               id: toolCall.id,
-              result: `❌ ${execution.toolName}: ${lastError} (failed after ${maxRetries + 1} attempts)`,
+              result: `❌ ${execution.toolName}: ${lastError}${attemptText}`,
               success: false
             });
 
@@ -1233,13 +1515,41 @@ ${reflection.nextSteps.map((step, i) => `${i + 1}. ${step}`).join('\n')}
           }
         }
       }
+      // Check if we should stop processing more tools
+      if (abortControllerRef.current?.signal.aborted) {
+        console.log('🛑 Stopping tool execution loop due to cancellation');
+        break; // Exit the outer loop of tool calls
+      }
     }
-    
+
     // Hide live execution when all tools are done
     setShowLiveExecution(false);
     setCurrentToolExecution(null);
-    
+
     return results;
+  };
+
+  // Function to stop/cancel the current AI operation
+  const handleStopGeneration = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setIsLoading(false);
+    setCurrentTask('');
+    setCurrentToolExecution(null);
+    setShowLiveExecution(false);
+    setCurrentPlanning(null);
+    setShowPlanning(false);
+
+    // Add a system message indicating cancellation
+    const cancelMessage: Message = {
+      id: Date.now().toString(),
+      type: 'assistant',
+      content: '⚠️ Operation cancelled by user.',
+      timestamp: new Date()
+    };
+    setMessages(prev => [...prev, cancelMessage]);
   };
 
   const handleSendMessage = async () => {
@@ -1271,6 +1581,12 @@ ${reflection.nextSteps.map((step, i) => `${i + 1}. ${step}`).join('\n')}
     setInputMessage('');
     setIsLoading(true);
     setCurrentTask('Analyzing request...');
+
+    // Auto-scroll to show user's new message
+    setTimeout(() => scrollToBottom(), 100);
+
+    // Create new abort controller for this operation
+    abortControllerRef.current = new AbortController();
 
     try {
       // Calculate dynamic tokens for this session and merge with user parameters
@@ -1362,10 +1678,33 @@ ${reflection.nextSteps.map((step, i) => `${i + 1}. ${step}`).join('\n')}
       );
 
       // Build conversation history following OpenAI format
+      // Include last 10 messages for context (5 exchanges typically)
+      const recentMessages = messages.slice(-10).filter(m => m.type === 'user' || m.type === 'assistant');
+      
       let conversationHistory: Array<{ role: string; content: string; tool_calls?: any[]; tool_call_id?: string; name?: string }> = [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: currentInput }
+        { role: 'system', content: systemPrompt }
       ];
+      
+      // Add recent conversation history for context
+      for (const msg of recentMessages) {
+        if (msg.type === 'user') {
+          conversationHistory.push({
+            role: 'user',
+            content: msg.content
+          });
+        } else if (msg.type === 'assistant') {
+          conversationHistory.push({
+            role: 'assistant',
+            content: msg.content
+          });
+        }
+      }
+      
+      // Add current user message
+      conversationHistory.push({
+        role: 'user',
+        content: currentInput
+      });
 
       // Add initial planning context to system prompt if available
       if (initialPlan) {
@@ -1389,7 +1728,7 @@ Follow this plan systematically, but adapt as needed based on actual results.`;
 
       // Use user-defined max tool calls with safety bounds
       const maxToolCalls = Math.min(50, Math.max(1, sessionParameters.maxIterations));
-      const maxConversationTurns = Math.min(20, Math.max(5, Math.ceil(maxToolCalls / 2))); // Reasonable conversation limit
+      const maxConversationTurns = 25; // Default to 25 conversation turns
       
       // Initialize planning execution
       currentPlanning = {
@@ -1408,15 +1747,112 @@ Follow this plan systematically, but adapt as needed based on actual results.`;
         userSetting: sessionParameters.maxIterations
       });
       
+      // Sanitizer function to remove consecutive assistant messages and validate tool calls
+      const sanitizeConversationHistory = (history: Array<{ role: string; content: string; tool_calls?: any[]; tool_call_id?: string; name?: string }>) => {
+        const sanitized: typeof history = [];
+
+        // Step 1: Remove consecutive assistant messages
+        for (let i = 0; i < history.length; i++) {
+          const current = history[i];
+          const previous = sanitized[sanitized.length - 1];
+
+          // If current is assistant and previous is also assistant
+          if (current.role === 'assistant' && previous?.role === 'assistant') {
+            // Keep the message with tool_calls, remove the empty one
+            if (current.tool_calls && current.tool_calls.length > 0) {
+              // Current has tool_calls, replace previous with current
+              console.warn('⚠️ Replacing previous assistant message (keeping one with tool_calls)');
+              sanitized[sanitized.length - 1] = current;
+            } else if (previous.tool_calls && previous.tool_calls.length > 0) {
+              // Previous has tool_calls, skip current
+              console.warn('⚠️ Skipping duplicate assistant message (keeping one with tool_calls)');
+              continue;
+            } else {
+              // Neither has tool_calls, merge content and skip current
+              if (current.content && current.content.trim()) {
+                previous.content = (previous.content || '') + '\n\n' + current.content;
+                console.warn('⚠️ Merged duplicate assistant messages');
+              } else {
+                console.warn('⚠️ Skipping empty duplicate assistant message');
+              }
+              continue;
+            }
+          } else {
+            sanitized.push(current);
+          }
+        }
+
+        // Step 2: Validate that all tool_call_ids have responses
+        const validated: typeof history = [];
+        for (let i = 0; i < sanitized.length; i++) {
+          const current = sanitized[i];
+
+          // If this is an assistant message with tool_calls
+          if (current.role === 'assistant' && current.tool_calls && current.tool_calls.length > 0) {
+            // Collect the tool_call_ids
+            const toolCallIds = current.tool_calls.map((tc: any) => tc.id);
+
+            // Look ahead to find matching tool responses
+            const toolResponses: typeof history = [];
+            let j = i + 1;
+            while (j < sanitized.length && sanitized[j].role === 'tool') {
+              toolResponses.push(sanitized[j]);
+              j++;
+            }
+
+            // Check if all tool_call_ids have responses
+            const respondedIds = toolResponses.map(tr => tr.tool_call_id);
+            const missingIds = toolCallIds.filter(id => !respondedIds.includes(id));
+
+            if (missingIds.length > 0) {
+              console.warn(`⚠️ Assistant message has tool_calls without responses. Missing: ${missingIds.join(', ')}`);
+              console.warn('⚠️ Removing tool_calls from assistant message to fix format');
+
+              // Remove tool_calls to make it a valid message
+              const fixedMessage = { ...current };
+              delete fixedMessage.tool_calls;
+              validated.push(fixedMessage);
+            } else {
+              validated.push(current);
+            }
+          } else {
+            validated.push(current);
+          }
+        }
+
+        return validated;
+      };
+
       while (conversationIteration < maxConversationTurns && totalToolCalls < maxToolCalls) {
+        // Check if operation was cancelled
+        if (abortControllerRef.current?.signal.aborted) {
+          console.log('🛑 Operation cancelled by user');
+          break;
+        }
+
         conversationIteration++;
         currentPlanning.currentStep = totalToolCalls;
         currentPlanning.status = 'executing';
         setCurrentPlanning({...currentPlanning});
-        
+
+        // Sanitize conversation history before sending
+        const sanitizedHistory = sanitizeConversationHistory(conversationHistory);
+
+        // Check for abort before making AI call
+        if (abortControllerRef.current?.signal.aborted) {
+          console.log('🛑 Operation cancelled before AI call');
+          break;
+        }
+
         // Get AI response
-        const currentResponse = await provider.sendMessage(conversationHistory);
-        
+        const currentResponse = await provider.sendMessage(sanitizedHistory);
+
+        // Check for abort after AI response
+        if (abortControllerRef.current?.signal.aborted) {
+          console.log('🛑 Operation cancelled after AI response');
+          break;
+        }
+
         // Check if AI wants to use tools
         if (currentResponse.message?.tool_calls && currentResponse.message.tool_calls.length > 0) {
           // Check if we would exceed tool call limit
@@ -1455,7 +1891,13 @@ Follow this plan systematically, but adapt as needed based on actual results.`;
           // Execute tools
           setCurrentTask(`Executing ${currentResponse.message.tool_calls.length} operation${currentResponse.message.tool_calls.length > 1 ? 's' : ''}... (Tool calls: ${totalToolCalls}/${maxToolCalls})`);
           const toolResults = await executeTools(currentResponse.message.tool_calls);
-          
+
+          // Check if cancelled after tool execution
+          if (abortControllerRef.current?.signal.aborted) {
+            console.log('🛑 Operation cancelled after tools executed');
+            break;
+          }
+
           // Add tool result messages following OpenAI format
           for (const toolResult of toolResults) {
             // Add tool message to conversation history (OpenAI format)
@@ -1546,14 +1988,16 @@ Follow this plan systematically, but adapt as needed based on actual results.`;
         setCurrentPlanning({...currentPlanning});
       }
 
-      // Show completion summary
-      const completionSummary: Message = {
-        id: (Date.now() + 999998).toString(),
-        type: 'assistant',
-        content: `📊 **Session Summary**\n\n• **Tool calls executed:** ${totalToolCalls}/${maxToolCalls}\n• **Conversation turns:** ${conversationIteration}/${maxConversationTurns}\n• **Status:** ${totalToolCalls >= maxToolCalls ? 'Tool limit reached' : conversationIteration >= maxConversationTurns ? 'Conversation limit reached' : 'Completed naturally'}`,
-        timestamp: new Date()
-      };
-      setMessages(prev => [...prev, completionSummary]);
+      // Show completion summary only if we used tool calls
+      if (totalToolCalls > 0) {
+        const completionSummary: Message = {
+          id: (Date.now() + 999998).toString(),
+          type: 'assistant',
+          content: `📊 **Session Summary**\n\n• **Tool calls executed:** ${totalToolCalls}/${maxToolCalls}\n• **Conversation turns:** ${conversationIteration}/${maxConversationTurns}\n• **Status:** ${totalToolCalls >= maxToolCalls ? 'Tool limit reached' : conversationIteration >= maxConversationTurns ? 'Conversation limit reached' : 'Completed naturally'}`,
+          timestamp: new Date()
+        };
+        setMessages(prev => [...prev, completionSummary]);
+      }
 
       setCurrentTask('Task completed!');
 
@@ -1924,9 +2368,9 @@ Please check your request and try again. Make sure the file exists and your inst
   const fileOptions = useMemo(() => flatFiles.filter(f => f.type === 'file'), [flatFiles]);
 
   return (
-    <div className="h-full flex flex-col glassmorphic">
-      {/* Enhanced Header */}
-      <div className="chat-header glassmorphic-card border-b border-white/20 dark:border-gray-700/50 shrink-0 h-14">
+    <div className="h-full w-full flex flex-col overflow-hidden">
+      {/* Enhanced Header - Clara/LumaUI Style */}
+      <div className="chat-header glassmorphic shrink-0 h-14">
         <div className="flex items-center justify-between px-4 py-3">
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 bg-gradient-to-br from-sakura-100 to-pink-100 dark:from-sakura-900/30 dark:to-pink-900/30 rounded-lg flex items-center justify-center">
@@ -1937,7 +2381,7 @@ Please check your request and try again. Make sure the file exists and your inst
                 <h3 className="font-semibold text-gray-800 dark:text-gray-100 text-sm">AI Agent</h3>
                 {isLoading && (
                   <div className="flex items-center gap-1">
-                    <div className="w-2 h-2 bg-sakura-500 rounded-full animate-pulse"></div>
+                    <div className="w-2 h-2 bg-gradient-to-r from-sakura-500 to-pink-500 rounded-full animate-pulse"></div>
                     <span className="text-xs px-2 py-0.5 bg-sakura-100 dark:bg-sakura-900/30 text-sakura-700 dark:text-sakura-300 rounded-full font-medium">
                       Working
                     </span>
@@ -1947,28 +2391,28 @@ Please check your request and try again. Make sure the file exists and your inst
               <p className="text-xs text-gray-600 dark:text-gray-400">
                 {currentPlanning && showPlanning
                   ? `🧠 Planning • Step ${currentPlanning.currentStep}/${currentPlanning.totalSteps}`
-                  : currentToolExecution && showLiveExecution 
-                    ? `${currentToolExecution.toolName.replace('_', ' ')} • ${currentToolExecution.status}` 
+                  : currentToolExecution && showLiveExecution
+                    ? `${currentToolExecution.toolName.replace('_', ' ')} • ${currentToolExecution.status}`
                     : currentTask || (isLoading ? 'Working...' : 'Ready to help')}
               </p>
             </div>
           </div>
-          
+
           <div className="flex items-center gap-2">
             <div className="relative">
               <button
                 onClick={() => setShowSettingsModal(true)}
-                className="p-2 glassmorphic-card border border-white/30 dark:border-gray-700/50 text-gray-600 dark:text-gray-400 hover:text-sakura-500 dark:hover:text-sakura-400 rounded-lg transition-all duration-200 hover:shadow-md transform hover:scale-105"
+                className="p-2 glassmorphic-card rounded-lg text-gray-600 dark:text-gray-400 hover:text-sakura-600 dark:hover:text-sakura-400 transition-colors"
                 title="Settings"
               >
                 <Settings className="w-4 h-4" />
               </button>
-                
+
             </div>
-            
+
             <button
               onClick={clearChat}
-              className="p-2 glassmorphic-card border border-white/30 dark:border-gray-700/50 text-gray-600 dark:text-gray-400 hover:text-red-500 dark:hover:text-red-400 rounded-lg transition-all duration-200 hover:shadow-md transform hover:scale-105"
+              className="p-2 glassmorphic-card rounded-lg text-gray-600 dark:text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors"
               title="Clear chat"
             >
               <Trash2 className="w-4 h-4" />
@@ -1977,8 +2421,13 @@ Please check your request and try again. Make sure the file exists and your inst
         </div>
       </div>
 
-      {/* Messages */}
-      <div className="flex-1 overflow-y-auto scrollbar-none p-4 space-y-4">
+      {/* Messages - Clara Style */}
+      <div className="w-full flex-1 overflow-y-auto p-4 space-y-4 overflow-x-hidden"
+        style={{
+          scrollbarWidth: 'thin',
+          scrollbarColor: 'rgba(252, 165, 165, 0.3) transparent'
+        }}
+      >
         {/* Live Tool Execution Animation */}
         <LiveToolExecution
           currentExecution={currentToolExecution}
@@ -1995,84 +2444,121 @@ Please check your request and try again. Make sure the file exists and your inst
           const isLatestCheckpoint = checkpoint && checkpoint === checkpoints[checkpoints.length - 1];
           
           return (
-            <div key={message.id} className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}>
+            <div key={message.id} className={`w-full flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}>
               <div className={`group max-w-[85%] relative ${
-                message.type === 'user' 
-                  ? `${hasCheckpoint 
-                      ? 'bg-gradient-to-r from-amber-400 to-orange-500 border-2 border-amber-300/50' 
-                      : 'bg-gradient-to-r from-sakura-500 to-pink-500'} text-white shadow-lg shadow-sakura-500/25` 
+                message.type === 'user'
+                  ? `${hasCheckpoint
+                      ? 'bg-gradient-to-r from-sakura-400 to-pink-500 shadow-lg'
+                      : 'bg-gradient-to-br from-sakura-50/80 to-pink-50/80 dark:from-sakura-900/30 dark:to-pink-900/30 border border-sakura-200/50 dark:border-sakura-700/50'} text-gray-800 dark:text-gray-100 shadow-md backdrop-blur-sm`
                   : message.type === 'tool'
-                  ? 'glassmorphic-card border border-emerald-200/30 dark:border-emerald-700/30 text-gray-900 dark:text-gray-100'
-                  : 'glassmorphic-card border border-white/30 dark:border-gray-700/50 text-gray-900 dark:text-gray-100'
-              } rounded-xl px-4 py-3 shadow-sm backdrop-blur-sm`}>
-              <div className="text-sm leading-relaxed">
+                  ? 'glassmorphic-card text-gray-800 dark:text-gray-100'
+                  : 'bg-white/60 dark:bg-gray-800/60 backdrop-blur-sm text-gray-800 dark:text-gray-100'
+              } rounded-xl px-4 py-3 ${message.type === 'user' && hasCheckpoint ? 'mt-6' : ''} max-w-full overflow-hidden`}>
+              <div className="text-sm leading-relaxed max-w-full overflow-hidden">
                 {message.type === 'user' ? (
-                  <div className="whitespace-pre-wrap break-words">
+                  <div className="whitespace-pre-wrap break-words max-w-full overflow-wrap-anywhere">
                     {message.content}
                   </div>
                 ) : (
                   <ReactMarkdown
-                    className={`prose prose-sm max-w-none ${
-                      message.type === 'tool' 
-                        ? 'prose-emerald dark:prose-invert' 
+                    className={`prose prose-sm max-w-full overflow-hidden ${
+                      message.type === 'tool'
+                        ? 'prose-emerald dark:prose-invert'
                         : 'dark:prose-invert'
                     }`}
                     components={{
                       code(props: any) {
                         const {node, inline, className, children, ...rest} = props;
                         const match = /language-(\w+)/.exec(className || '');
-                        return !inline && match ? (
-                          <SyntaxHighlighter
-                            style={vscDarkPlus}
-                            language={match[1]}
-                            PreTag="div"
-                            className="rounded-lg !mt-2 !mb-2"
-                            customStyle={{
-                              margin: 0,
-                              padding: '1rem',
-                              backgroundColor: 'rgba(0, 0, 0, 0.8)',
-                              fontSize: '0.875rem'
-                            }}
-                          >
-                            {String(children).replace(/\n$/, '')}
-                          </SyntaxHighlighter>
-                        ) : (
+                        const [isExpanded, setIsExpanded] = useState(false);
+
+                        if (!inline && match) {
+                          const codeContent = String(children).replace(/\n$/, '');
+                          const lineCount = codeContent.split('\n').length;
+                          const shouldCollapse = lineCount > 5; // Collapse if more than 5 lines
+
+                          return (
+                            <div className="my-2 max-w-full">
+                              <div className="flex items-center justify-between bg-gray-800 rounded-t-lg px-3 py-2 border-b border-gray-700">
+                                <span className="text-xs text-gray-400 font-mono">{match[1]}</span>
+                                {shouldCollapse && (
+                                  <button
+                                    onClick={() => setIsExpanded(!isExpanded)}
+                                    className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-200 transition-colors"
+                                  >
+                                    <ChevronRight className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+                                    <span>{isExpanded ? 'Collapse' : `Expand (${lineCount} lines)`}</span>
+                                  </button>
+                                )}
+                              </div>
+                              {(!shouldCollapse || isExpanded) && (
+                                <div className="overflow-x-auto max-w-full">
+                                  <SyntaxHighlighter
+                                    style={vscDarkPlus}
+                                    language={match[1]}
+                                    PreTag="div"
+                                    className="!mt-0 !rounded-t-none"
+                                    customStyle={{
+                                      margin: 0,
+                                      padding: '1rem',
+                                      backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                                      fontSize: '0.875rem',
+                                      maxWidth: '100%',
+                                      overflowX: 'auto'
+                                    }}
+                                    wrapLongLines={false}
+                                    showLineNumbers={lineCount > 10}
+                                  >
+                                    {codeContent}
+                                  </SyntaxHighlighter>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        }
+
+                        return (
                           <code
-                            className={`${className} px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-xs font-mono`}
+                            className={`${className} px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-800 text-xs font-mono break-all`}
                             {...rest}
                           >
                             {children}
                           </code>
                         );
                       },
-                      p: ({children}) => <p className="mb-2 last:mb-0">{children}</p>,
-                      ul: ({children}) => <ul className="list-disc pl-4 mb-2 space-y-1">{children}</ul>,
-                      ol: ({children}) => <ol className="list-decimal pl-4 mb-2 space-y-1">{children}</ol>,
-                      li: ({children}) => <li className="text-sm">{children}</li>,
-                      h1: ({children}) => <h1 className="text-lg font-bold mb-2 text-gray-900 dark:text-gray-100">{children}</h1>,
-                      h2: ({children}) => <h2 className="text-base font-bold mb-2 text-gray-900 dark:text-gray-100">{children}</h2>,
-                      h3: ({children}) => <h3 className="text-sm font-bold mb-1 text-gray-900 dark:text-gray-100">{children}</h3>,
+                      p: ({children}) => <p className="mb-2 last:mb-0 break-words max-w-full overflow-wrap-anywhere">{children}</p>,
+                      ul: ({children}) => <ul className="list-disc pl-4 mb-2 space-y-1 max-w-full">{children}</ul>,
+                      ol: ({children}) => <ol className="list-decimal pl-4 mb-2 space-y-1 max-w-full">{children}</ol>,
+                      li: ({children}) => <li className="text-sm break-words">{children}</li>,
+                      h1: ({children}) => <h1 className="text-lg font-bold mb-2 text-gray-900 dark:text-gray-100 break-words">{children}</h1>,
+                      h2: ({children}) => <h2 className="text-base font-bold mb-2 text-gray-900 dark:text-gray-100 break-words">{children}</h2>,
+                      h3: ({children}) => <h3 className="text-sm font-bold mb-1 text-gray-900 dark:text-gray-100 break-words">{children}</h3>,
                       blockquote: ({children}) => (
-                        <blockquote className="border-l-4 border-sakura-300 dark:border-sakura-600 pl-4 py-2 bg-sakura-50/50 dark:bg-sakura-900/20 rounded-r-lg mb-2">
+                        <blockquote className="border-l-4 border-sakura-300 dark:border-sakura-600 pl-4 py-2 bg-sakura-50/50 dark:bg-sakura-900/20 rounded-r-lg mb-2 break-words max-w-full overflow-hidden">
                           {children}
                         </blockquote>
                       ),
                       table: ({children}) => (
-                        <div className="overflow-x-auto mb-2">
+                        <div className="overflow-x-auto mb-2 max-w-full">
                           <table className="min-w-full border border-gray-200 dark:border-gray-700 rounded-lg">
                             {children}
                           </table>
                         </div>
                       ),
                       th: ({children}) => (
-                        <th className="px-3 py-2 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 text-left text-xs font-semibold">
+                        <th className="px-3 py-2 bg-gray-50 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 text-left text-xs font-semibold break-words">
                           {children}
                         </th>
                       ),
                       td: ({children}) => (
-                        <td className="px-3 py-2 border-b border-gray-200 dark:border-gray-700 text-sm">
+                        <td className="px-3 py-2 border-b border-gray-200 dark:border-gray-700 text-sm break-words">
                           {children}
                         </td>
+                      ),
+                      a: ({children, href}) => (
+                        <a href={href} target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:text-blue-600 underline break-all">
+                          {children}
+                        </a>
                       ),
                     }}
                   >
@@ -2083,12 +2569,12 @@ Please check your request and try again. Make sure the file exists and your inst
               
               {/* Show tool calls if present */}
               {message.tool_calls && message.tool_calls.length > 0 && (
-                <div className="mt-3 pt-3 border-t border-white/20 dark:border-gray-600/30">
+                <div className="mt-3 pt-3 border-t border-white/20 dark:border-gray-600/30 max-w-full overflow-hidden">
                   <div className="text-xs text-gray-600 dark:text-gray-400 mb-2 font-medium">
                     Tool calls:
                   </div>
                   {message.tool_calls.map((toolCall, index) => (
-                    <div key={index} className="text-xs font-mono glassmorphic-card border border-white/20 dark:border-gray-600/30 p-2 rounded-lg mb-2">
+                    <div key={index} className="text-xs font-mono glassmorphic-card border border-white/20 dark:border-gray-600/30 p-2 rounded-lg mb-2 overflow-x-auto max-w-full break-words">
                       {toolCall.function.name}({JSON.stringify(JSON.parse(toolCall.function.arguments), null, 2)})
                     </div>
                   ))}
@@ -2097,13 +2583,13 @@ Please check your request and try again. Make sure the file exists and your inst
               
               {/* Show created/edited files */}
               {message.files && message.files.length > 0 && (
-                <div className="mt-3 pt-3 border-t border-white/20 dark:border-gray-600/30">
+                <div className="mt-3 pt-3 border-t border-white/20 dark:border-gray-600/30 max-w-full overflow-hidden">
                   <div className="text-xs text-gray-600 dark:text-gray-400 mb-2 font-medium">
                     Files:
                   </div>
-                  <div className="flex flex-wrap gap-1">
+                  <div className="flex flex-wrap gap-1 max-w-full">
                     {message.files.map((file, index) => (
-                      <div key={index} className="text-xs bg-emerald-100 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-200 px-2 py-1 rounded-md font-medium">
+                      <div key={index} className="text-xs bg-emerald-100 dark:bg-emerald-900/30 text-emerald-800 dark:text-emerald-200 px-2 py-1 rounded-md font-medium break-all">
                         {file}
                       </div>
                     ))}
@@ -2113,14 +2599,14 @@ Please check your request and try again. Make sure the file exists and your inst
               
               {/* Checkpoint indicator and actions for user messages */}
               {message.type === 'user' && hasCheckpoint && (
-                <div className="absolute -top-2 -right-2 flex items-center gap-1">
-                  <div className="bg-amber-500 text-white text-xs px-2 py-0.5 rounded-full font-medium shadow-lg border border-amber-300">
+                <div className="absolute -top-8 right-0 flex items-center gap-2 z-10">
+                  <div className="bg-sakura-500 text-white text-xs px-3 py-1 rounded-full font-medium shadow-lg border-2 border-white/50 backdrop-blur-sm">
                     💾 Checkpoint
                   </div>
                   {!isLatestCheckpoint && (
                     <button
                       onClick={() => handleRevert(checkpoint.id)}
-                      className="bg-amber-600 hover:bg-amber-700 text-white text-xs px-2 py-0.5 rounded-full font-medium transition-colors duration-200 shadow-lg border border-amber-400"
+                      className="bg-sakura-600 hover:bg-sakura-700 text-white text-xs px-3 py-1 rounded-full font-medium transition-all duration-200 shadow-lg border-2 border-white/50 hover:scale-105 active:scale-95"
                       title={`Revert to checkpoint from ${formatTime(checkpoint.timestamp)}`}
                     >
                       ⏪ Revert
@@ -2138,8 +2624,8 @@ Please check your request and try again. Make sure the file exists and your inst
                   {formatTime(message.timestamp)}
                   {message.type === 'user' && hasCheckpoint && (
                     <div className="flex items-center gap-1 text-xs">
-                      <span className="text-amber-200">💾</span>
-                      <span className="text-amber-200 font-medium">
+                      <span className="text-white/90">💾</span>
+                      <span className="text-white/90 font-medium">
                         {isLatestCheckpoint ? 'Latest' : 'Checkpoint'}
                       </span>
                     </div>
@@ -2151,7 +2637,7 @@ Please check your request and try again. Make sure the file exists and your inst
                   <div className="opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                     <button
                       onClick={() => handleRevert(checkpoint.id)}
-                      className="text-xs px-2 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 rounded-md transition-colors duration-200 border border-amber-400/30"
+                      className="text-xs px-2 py-1 bg-white/20 hover:bg-white/30 text-white rounded-md transition-colors duration-200 border border-white/30"
                     >
                       Revert to here
                     </button>
@@ -2172,8 +2658,8 @@ Please check your request and try again. Make sure the file exists and your inst
         <div ref={messagesEndRef} />
       </div>
 
-      {/* Enhanced Input */}
-      <div className="glassmorphic-card border-t border-white/20 dark:border-gray-700/50 p-4">
+      {/* Enhanced Input - Clara Style */}
+      <div className="glassmorphic p-4 shrink-0">
         <div className="flex gap-3">
           <div className="flex-1 relative">
             <textarea
@@ -2182,42 +2668,48 @@ Please check your request and try again. Make sure the file exists and your inst
               onKeyPress={handleKeyPress}
               placeholder="Ask me to help with your project, create files, debug code, or explain concepts..."
               disabled={isLoading || !apiClient || !selectedModel}
-              className="w-full resize-none rounded-xl border border-white/30 dark:border-gray-700/50 px-4 py-4 text-sm glassmorphic-card text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-sakura-500 focus:border-transparent disabled:opacity-50 transition-all leading-relaxed backdrop-blur-sm"
+              className="w-full glassmorphic-card rounded-lg px-4 py-3 text-gray-800 dark:text-gray-100 placeholder-gray-500 dark:placeholder-gray-400 disabled:opacity-50 transition-all leading-relaxed resize-none focus:outline-none focus:ring-2 focus:ring-sakura-500 dark:focus:ring-sakura-400"
               rows={4}
             />
             {inputMessage.trim() && (
-              <div className="absolute bottom-3 right-3 text-xs text-gray-400 bg-white/60 dark:bg-gray-800/60 px-2 py-1 rounded-md backdrop-blur-sm">
+              <div className="absolute bottom-3 right-3 text-xs text-gray-500 dark:text-gray-400 glassmorphic-card px-2 py-1 rounded-md">
                 Press Ctrl+Enter to send
               </div>
             )}
           </div>
           <div className="flex flex-col gap-2">
-            <button
-              onClick={handleSendMessage}
-              disabled={!inputMessage.trim() || isLoading || !apiClient || !selectedModel}
-              className="p-4 bg-gradient-to-r from-sakura-500 to-pink-500 text-white rounded-xl hover:from-sakura-600 hover:to-pink-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 shadow-lg hover:shadow-xl shadow-sakura-500/25 transform hover:scale-105 disabled:transform-none flex items-center justify-center"
-            >
-              {isLoading ? (
-                <Loader2 className="w-5 h-5 animate-spin" />
-              ) : (
+            {isLoading ? (
+              <button
+                onClick={handleStopGeneration}
+                className="p-4 rounded-xl bg-gradient-to-r from-red-500 to-orange-500 hover:from-red-600 hover:to-orange-600 text-white transition-all shadow-lg hover:shadow-xl transform hover:scale-105 flex items-center justify-center gap-2"
+                title="Stop generation"
+              >
+                <StopCircle className="w-5 h-5" />
+              </button>
+            ) : (
+              <button
+                onClick={handleSendMessage}
+                disabled={!inputMessage.trim() || !apiClient || !selectedModel}
+                className="p-4 rounded-xl bg-gradient-to-r from-sakura-500 to-pink-500 hover:from-sakura-600 hover:to-pink-600 text-white disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg hover:shadow-xl transform hover:scale-105 disabled:transform-none flex items-center justify-center"
+              >
                 <Send className="w-5 h-5" />
-              )}
-            </button>
-            
+              </button>
+            )}
+
             {/* AI Precision Editor Button */}
             <button
               onClick={() => setShowPrecisionEdit(v => !v)}
-              className="p-3 bg-gradient-to-r from-purple-500 to-indigo-500 text-white rounded-xl hover:from-purple-600 hover:to-indigo-600 transition-all duration-200 shadow-lg hover:shadow-xl shadow-purple-500/25 transform hover:scale-105 flex items-center justify-center"
+              className="p-3 bg-gradient-to-r from-purple-500 to-indigo-500 text-white rounded-xl hover:from-purple-600 hover:to-indigo-600 transition-all duration-200 shadow-lg hover:shadow-xl transform hover:scale-105 flex items-center justify-center"
               title="AI Precision Editor"
             >
               <Scissors className="w-4 h-4" />
             </button>
           </div>
         </div>
-        
+
         {(!apiClient || !selectedModel) && (
-          <div className="mt-3 p-3 glassmorphic-card border border-amber-200/30 dark:border-amber-700/30 rounded-lg">
-            <p className="text-sm text-amber-700 dark:text-amber-400 flex items-center gap-2">
+          <div className="mt-3 p-3 bg-bolt-warning/10 border border-bolt-warning/30 rounded-lg">
+            <p className="text-sm text-bolt-warning flex items-center gap-2">
               <Settings className="w-4 h-4" />
               Please configure a provider and model in settings to start chatting
             </p>
@@ -2345,4 +2837,5 @@ Please check your request and try again. Make sure the file exists and your inst
   );
 };
 
-export default ChatWindow; 
+// Optimize re-renders with React.memo for better battery efficiency
+export default React.memo(ChatWindow); 

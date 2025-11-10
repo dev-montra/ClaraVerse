@@ -110,6 +110,65 @@ export const simpleNodeDefinitions: NodeDefinition[] = [
     }
   },
 
+  // JSON STRINGIFY NODE
+  {
+    id: 'json-stringify-node',
+    name: 'JSON Stringify',
+    type: 'json-stringify',
+    category: 'data',
+    description: 'Convert JSON data to a string for prompts and display nodes',
+    icon: 'file-text',
+    version: '1.0.0',
+    author: 'Clara',
+    inputs: [
+      {
+        id: 'input',
+        name: 'JSON/Data',
+        type: 'input',
+        dataType: 'any',
+        required: true,
+        description: 'Object, array, or value to stringify'
+      }
+    ],
+    outputs: [
+      {
+        id: 'output',
+        name: 'String Output',
+        type: 'output',
+        dataType: 'string',
+        description: 'Stringified JSON output'
+      }
+    ],
+    properties: [
+      {
+        id: 'prettyPrint',
+        name: 'Pretty Print',
+        type: 'boolean',
+        defaultValue: true,
+        description: 'Format output with whitespace for readability'
+      },
+      {
+        id: 'indent',
+        name: 'Indent Spaces',
+        type: 'number',
+        defaultValue: 2,
+        description: 'Number of spaces to use for indentation when pretty print is enabled'
+      },
+      {
+        id: 'nullFallback',
+        name: 'Null Fallback Text',
+        type: 'string',
+        defaultValue: '',
+        description: 'Text to output when input is null or undefined'
+      }
+    ],
+    executionHandler: 'json-stringify-node-handler',
+    metadata: {
+      tags: ['json', 'stringify', 'data'],
+      documentation: 'Converts JSON objects into text while preserving formatting, ideal for LLM prompts and text outputs.'
+    }
+  },
+
   // OUTPUT NODE
   {
     id: 'output-node',
@@ -299,7 +358,7 @@ export const simpleNodeDefinitions: NodeDefinition[] = [
         id: 'apiBaseUrl',
         name: 'API Base URL',
         type: 'string',
-        defaultValue: 'https://api.openai.com/v1',
+        defaultValue: 'http://localhost:8091/v1',
         description: 'OpenAI-compatible API base URL'
       },
       {
@@ -1013,6 +1072,121 @@ export const simpleNodeDefinitions: NodeDefinition[] = [
         }
       ],
       tags: ['ai', 'audio', 'transcription', 'whisper', 'binary', 'speech-to-text']
+    }
+  },
+
+  // SPEECH TO TEXT (BASE64) NODE
+  {
+    id: 'speech-to-text-node',
+    name: 'Speech to Text (Base64)',
+    type: 'speech-to-text',
+    category: 'ai',
+    description: 'Send base64 audio to a configurable transcription endpoint and return the JSON response',
+    icon: 'mic',
+    version: '1.0.0',
+    author: 'Clara',
+    inputs: [
+      {
+        id: 'audioBase64',
+        name: 'Audio (Base64)',
+        type: 'input',
+        dataType: 'string',
+        required: true,
+        description: 'Base64 or data URL encoded audio payload'
+      },
+      {
+        id: 'languageOverride',
+        name: 'Language Override',
+        type: 'input',
+        dataType: 'string',
+        required: false,
+        description: 'Optional ISO language code to override configuration'
+      }
+    ],
+    outputs: [
+      {
+        id: 'transcription',
+        name: 'Transcription',
+        type: 'output',
+        dataType: 'string',
+        required: true,
+        description: 'Primary transcription text returned by the service'
+      },
+      {
+        id: 'segments',
+        name: 'Segments',
+        type: 'output',
+        dataType: 'array',
+        required: false,
+        description: 'Array of segment metadata from the service response'
+      },
+      {
+        id: 'rawResponse',
+        name: 'Raw Response',
+        type: 'output',
+        dataType: 'object',
+        required: false,
+        description: 'Unmodified JSON payload returned by the transcription server'
+      }
+    ],
+    properties: [
+      {
+        id: 'baseUrl',
+        name: 'Transcription Endpoint',
+        type: 'string',
+        defaultValue: 'http://localhost:5001/transcribe',
+        description: 'HTTP endpoint that accepts multipart/form-data uploads'
+      },
+      {
+        id: 'language',
+        name: 'Language',
+        type: 'string',
+        defaultValue: 'en',
+        description: 'Default language ISO code sent with the request'
+      },
+      {
+        id: 'beamSize',
+        name: 'Beam Size',
+        type: 'number',
+        defaultValue: 5,
+        description: 'Beam search size forwarded to the backend service',
+        validation: {
+          min: 1,
+          max: 10
+        }
+      },
+      {
+        id: 'initialPrompt',
+        name: 'Initial Prompt',
+        type: 'string',
+        defaultValue: '',
+        description: 'Optional primer text passed as initial_prompt to the server'
+      }
+    ],
+    executionHandler: 'speech-to-text-node-handler',
+    metadata: {
+      examples: [
+        {
+          name: 'Local Whisper Gateway',
+          description: 'Send base64 audio to a local FastAPI Whisper gateway running at http://localhost:5001/transcribe',
+          config: {
+            baseUrl: 'http://localhost:5001/transcribe',
+            language: 'en',
+            beamSize: 5
+          }
+        },
+        {
+          name: 'Custom Cloud Endpoint',
+          description: 'Use a hosted speech-to-text service that expects prompts and language hints',
+          config: {
+            baseUrl: 'https://my-api.company.com/v1/transcribe',
+            language: 'auto',
+            beamSize: 3,
+            initialPrompt: 'Transcribe clearly and include punctuation.'
+          }
+        }
+      ],
+      tags: ['ai', 'audio', 'transcription', 'base64', 'speech-to-text', 'http']
     }
   },
 

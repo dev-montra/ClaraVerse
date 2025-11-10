@@ -43,6 +43,10 @@ const NotebooksContent: React.FC<{ onPageChange: (page: string) => void; userNam
   const [showStartupModal, setShowStartupModal] = useState(false);
   const [wallpaperUrl, setWallpaperUrl] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('list');
+
+  // Python backend deployment mode
+  const [pythonBackendMode, setPythonBackendMode] = useState<'docker' | 'remote' | 'manual' | null>(null);
+  const [pythonBackendUrl, setPythonBackendUrl] = useState<string | null>(null);
   
   // Clara Core auto-start for notebooks list (if any notebook requires it)
   const claraCoreStatus = useClaraCoreAutostart(selectedNotebook);
@@ -80,6 +84,54 @@ const NotebooksContent: React.FC<{ onPageChange: (page: string) => void; userNam
     return unsubscribe;
   }, []);
 
+  // Check Python backend deployment mode
+  useEffect(() => {
+    const checkPythonBackendMode = async () => {
+      try {
+        console.log('🔍 [Notebooks] Checking Python backend deployment mode...');
+
+        if ((window as any).electronAPI?.invoke) {
+          const status = await (window as any).electronAPI.invoke('check-python-status');
+          console.log('📊 [Notebooks] Python backend status received:', status);
+
+          if (status) {
+            console.log(`✅ [Notebooks] Python Backend Mode: ${status.mode || 'unknown'}`);
+            console.log(`📍 [Notebooks] Python Backend URL: ${status.serviceUrl || 'none'}`);
+            console.log(`💚 [Notebooks] Python Backend Healthy: ${status.isHealthy}`);
+
+            setPythonBackendMode(status.mode || null);
+            setPythonBackendUrl(status.serviceUrl || null);
+          } else {
+            console.warn('⚠️ [Notebooks] No status returned from check-python-status');
+          }
+        } else {
+          console.warn('⚠️ [Notebooks] electronAPI.invoke not available');
+        }
+      } catch (error) {
+        console.error('❌ [Notebooks] Failed to check Python backend mode:', error);
+      }
+    };
+
+    // Refresh notebook service URL to ensure we have the latest configuration
+    console.log('🔄 [Notebooks] Refreshing Python backend URL in notebook service...');
+    claraNotebookService.refreshBaseUrl().then(() => {
+      console.log('✅ [Notebooks] Notebook service URL refreshed');
+    }).catch(err => {
+      console.error('❌ [Notebooks] Failed to refresh notebook service URL:', err);
+    });
+
+    // Initial check
+    checkPythonBackendMode();
+
+    // Check periodically every 30 seconds
+    const interval = setInterval(() => {
+      console.log('🔄 [Notebooks] Periodic Python backend check...');
+      checkPythonBackendMode();
+    }, 30000);
+
+    return () => clearInterval(interval);
+  }, []);
+
   // Load notebooks on component mount and when backend becomes healthy
   useEffect(() => {
     if (isBackendHealthy) {
@@ -112,7 +164,7 @@ const NotebooksContent: React.FC<{ onPageChange: (page: string) => void; userNam
       if (notebooksNeedingRefresh.length > 0) {
         loadDocumentStatusForNotebooks(notebooksNeedingRefresh);
       }
-    }, 30000); // Refresh every 30 seconds
+    }, 60000); // Refresh every 60 seconds (1 minute)
 
     return () => clearInterval(interval);
   }, [isBackendHealthy, notebooks]);
@@ -174,7 +226,7 @@ const NotebooksContent: React.FC<{ onPageChange: (page: string) => void; userNam
     }
   };
 
-  const handleCreateNotebook = async (name: string, description: string, llmProvider: ProviderConfig, embeddingProvider: ProviderConfig) => {
+  const handleCreateNotebook = async (name: string, description: string, llmProvider: ProviderConfig, embeddingProvider: ProviderConfig, entityTypes?: string[], language?: string, manualEmbeddingDimensions?: number, manualEmbeddingMaxTokens?: number) => {
     if (!isBackendHealthy) {
       throw new Error('Notebook backend is not available');
     }
@@ -184,7 +236,11 @@ const NotebooksContent: React.FC<{ onPageChange: (page: string) => void; userNam
         name,
         description: description || undefined,
         llm_provider: llmProvider,
-        embedding_provider: embeddingProvider
+        embedding_provider: embeddingProvider,
+        entity_types: entityTypes,
+        language: language,
+        manual_embedding_dimensions: manualEmbeddingDimensions,
+        manual_embedding_max_tokens: manualEmbeddingMaxTokens
       });
       
       // Add the new notebook to the list
@@ -283,7 +339,7 @@ const NotebooksContent: React.FC<{ onPageChange: (page: string) => void; userNam
               backgroundImage: `url(${wallpaperUrl})`,
               backgroundSize: 'cover',
               backgroundPosition: 'center',
-              opacity: 0.1,
+              opacity: 0.4,
               filter: 'blur(1px)',
               pointerEvents: 'none'
             }}
@@ -316,7 +372,7 @@ const NotebooksContent: React.FC<{ onPageChange: (page: string) => void; userNam
             backgroundImage: `url(${wallpaperUrl})`,
             backgroundSize: 'cover',
             backgroundPosition: 'center',
-            opacity: 0.1,
+            opacity: 0.4,
             filter: 'blur(1px)',
             pointerEvents: 'none'
           }}
@@ -335,6 +391,26 @@ const NotebooksContent: React.FC<{ onPageChange: (page: string) => void; userNam
                     <i className="fas fa-book text-2xl"></i>
                   </div>
                   <h1 className="text-3xl font-bold text-gray-800 dark:text-gray-100">Notebooks</h1>
+                  {/* Python Backend Deployment Mode Indicator */}
+                  {pythonBackendMode && isBackendHealthy && (
+                    <div className={`flex items-center gap-1.5 px-3 py-1 rounded-lg text-sm font-medium ${
+                      pythonBackendMode === 'docker'
+                        ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300'
+                        : pythonBackendMode === 'remote'
+                        ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300'
+                        : 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
+                    }`}>
+                      {pythonBackendMode === 'docker' && <span>🐳</span>}
+                      {pythonBackendMode === 'remote' && <span>🌐</span>}
+                      {pythonBackendMode === 'manual' && <span>⚙️</span>}
+                      <span className="capitalize">{pythonBackendMode}</span>
+                      {pythonBackendUrl && pythonBackendMode !== 'docker' && (
+                        <span className="text-xs opacity-75 ml-1">
+                          ({new URL(pythonBackendUrl).hostname})
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
                 <p className="text-gray-600 dark:text-gray-400">Create, manage, and organize your knowledge documents</p>
               </div>
@@ -412,9 +488,9 @@ const NotebooksContent: React.FC<{ onPageChange: (page: string) => void; userNam
         </div>
 
           {/* Main Content - Canvas Area */}
-          <div className="flex-1 flex flex-col overflow-hidden min-h-0">
+          <div className="flex-1 flex flex-col min-h-0">
             {/* Canvas Content */}
-            <div className="flex-1 overflow-hidden">
+            <div className="flex-1 flex flex-col overflow-hidden">
               {/* Error state */}
               {error && (
                 <div className="flex-1 flex items-center justify-center">
@@ -741,12 +817,31 @@ const NotebooksContent: React.FC<{ onPageChange: (page: string) => void; userNam
         <PythonStartupModal
           isOpen={showStartupModal}
           onClose={() => setShowStartupModal(false)}
-          onStartupComplete={() => {
-            setShowStartupModal(false);
-            // Refresh the backend health after successful startup
-            setTimeout(() => {
-              loadNotebooks();
-            }, 1000);
+          onStartupComplete={async () => {
+            // FIX: Don't set health to true immediately - the backend might still be initializing
+            // The modal's startPythonContainer returns status after container health check passes,
+            // but we should do one more verification before updating the notebook service.
+            
+            console.log('🔄 [Notebooks] Container started, verifying backend health...');
+            
+            // Wait a moment for the backend to fully initialize, then force a health check
+            setTimeout(async () => {
+              try {
+                // Force a health check - this will update isBackendHealthy via the callback
+                const isHealthy = await claraNotebookService.forceHealthCheck();
+                console.log(`✅ [Notebooks] Backend health verified: ${isHealthy}`);
+                
+                if (isHealthy) {
+                  // Health callback will trigger loadNotebooks via the effect
+                  setShowStartupModal(false);
+                } else {
+                  console.warn('⚠️ [Notebooks] Backend not healthy yet, keeping modal open');
+                  // Don't close modal - let user retry or wait
+                }
+              } catch (err) {
+                console.error('❌ [Notebooks] Failed to verify backend health:', err);
+              }
+            }, 1500); // Wait 1.5 seconds for backend to fully initialize
           }}
         />
 

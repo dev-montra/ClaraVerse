@@ -8,6 +8,9 @@
 /* Clara specific styles */
 @import './styles/claraSidebar.css';
 
+/* Bolt.new Dark Theme */
+@import './styles/bolt-theme.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -102,10 +105,9 @@
 /* Make code blocks consistent in both modes */
 .prose pre,
 .dark .prose pre {
-  background-color: #1E1E1E !important;
   color: #e5e7eb !important;
   border-radius: 4px !important;
-  padding: 0.75rem 1rem !important;
+  /* padding: 0.75rem 1rem !important; */
   border: none !important;
 }
 
@@ -122,7 +124,7 @@
 .dark .prose :not(pre) > code {
   background-color: #f3f4f6 !important;
   color: #1f2937 !important;
-  padding: 0.2em 0.4em !important;
+  /* padding: 0.2em 0.4em !important; */
   border-radius: 0.25rem !important;
   border: none !important;
 }
@@ -380,7 +382,7 @@ textarea {
 
 /* Complete cleanup of code blocks in markdown for both light and dark mode */
 .bg-gradient-to-br {
-  background: linear-gradient(to bottom right, #ffffff, #fee3ec);
+  
 }
 
 .dark .bg-gradient-to-br {
@@ -458,25 +460,56 @@ textarea {
   @apply mb-0;
 }
 
+/* Table styling - ChatGPT/Claude style */
 .prose table {
-  @apply border-collapse border border-gray-300 dark:border-gray-600;
+  @apply w-full border-collapse;
+  border: none !important;
 }
 
-.prose th, .prose td {
-  @apply border border-gray-300 dark:border-gray-600 px-4 py-2;
+.prose thead {
+  border-bottom: 1px solid rgba(47, 52, 61, 0.5) !important;
 }
 
 .prose th {
-  @apply bg-gray-100 dark:bg-gray-800 font-semibold;
+  @apply px-4 py-2 text-left font-medium text-gray-700 dark:text-gray-300;
+  border: none !important;
+  background: transparent !important;
+}
+
+.prose td {
+  @apply px-4 py-2 text-gray-800 dark:text-gray-200;
+  border: none !important;
+  background: transparent !important;
+}
+
+.prose tbody tr {
+  border-bottom: 1px solid rgba(47, 52, 61, 0.5) !important;
+  border-top: none !important;
+  border-left: none !important;
+  border-right: none !important;
+}
+
+.prose tbody tr:last-child {
+  border-bottom: none !important;
+}
+
+.prose tbody tr:hover {
+  @apply bg-gray-50/50 dark:bg-gray-800/30 transition-colors duration-150;
 }
 
 /* Code block enhancements */
 .prose pre {
   @apply bg-transparent p-0 m-0;
+  overflow-x: visible !important; /* Remove unwanted horizontal scroll */
 }
 
 .prose :not(pre) > code {
   @apply bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 px-1.5 py-0.5 rounded text-sm font-mono;
+}
+
+/* Override prose default overflow on pre elements */
+.prose :where(pre):not(:where([class~="not-prose"],[class~="not-prose"] *)) {
+  overflow-x: visible !important;
 }
 
 /* Enhanced glassmorphism effects for voice chat */

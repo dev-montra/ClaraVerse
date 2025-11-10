@@ -16,11 +16,10 @@
  */
 
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import { 
-  MessageCircle, 
-  Sparkles, 
-  FileText, 
-  Image as ImageIcon, 
+import {
+  MessageCircle,
+  Sparkles,
+  FileText,
   Code,
   Search,
   Bot,
@@ -65,14 +64,10 @@ const CONTENT_CONFIG = {
 };
 
 /**
- * Smooth auto-scroll configuration (Claude/ChatGPT style)
+ * Industry-standard scroll configuration (ChatGPT/Claude style)
  */
 const SCROLL_CONFIG = {
-  STREAMING_INTERVAL: 100, // How often to auto-scroll during streaming (ms)
-  SCROLL_DURATION: 300, // Duration of smooth scroll animation (ms)
-  EASING: 'cubic-bezier(0.25, 0.46, 0.45, 0.94)', // Smooth easing function
-  SCROLL_THRESHOLD: 100, // Pixels from bottom to consider "at bottom"
-  STREAMING_DELAY: 50, // Delay before starting auto-scroll during streaming
+  SCROLL_THRESHOLD: 150, // Pixels from bottom to consider "at bottom" (ChatGPT uses ~200px)
 };
 
 /**
@@ -353,25 +348,81 @@ const VirtualizedMessageList: React.FC<{
 };
 
 /**
- * Smooth Auto-Scroll Engine (Claude/ChatGPT Style)
- * Provides butter-smooth scrolling experience
+ * Industry-Standard Auto-Scroll Engine (ChatGPT/Claude Style)
+ * Uses direct scrollTop manipulation for instant, natural scrolling
+ * Bottom-pins during streaming for seamless experience
  */
 class SmoothAutoScroller {
   private container: HTMLElement | null = null;
   private target: HTMLElement | null = null;
-  private isScrolling = false;
-  private lastScrollTime = 0;
-  private streamingInterval: NodeJS.Timeout | null = null;
-  private pendingScroll = false;
+  private isUserScrolling = false;
+  private userScrollTimeout: NodeJS.Timeout | null = null;
+  private lastScrollHeight = 0;
+  private rafId: number | null = null;
+  private wasAtBottomWhenStreamStarted = false; // Track if user was at bottom when streaming started
+  private scrollHandler: ((e: Event) => void) | null = null;
 
   constructor(container: HTMLElement | null, target: HTMLElement | null) {
     this.container = container;
     this.target = target;
+    this.setupScrollListener();
   }
 
   updateRefs(container: HTMLElement | null, target: HTMLElement | null) {
+    // Clean up old listener before updating
+    this.removeScrollListener();
+
     this.container = container;
     this.target = target;
+    this.setupScrollListener();
+  }
+
+  private setupScrollListener(): void {
+    if (!this.container) return;
+
+    // Detect when user manually scrolls
+    this.scrollHandler = () => {
+      const isAtBottom = this.isNearBottom();
+
+      if (!isAtBottom) {
+        // User has scrolled away from bottom - IMMEDIATELY respect their position
+        // Set flag synchronously (no debounce) to prevent race conditions with streaming updates
+        this.isUserScrolling = true;
+
+        // If streaming is active, remember they scrolled away
+        if (this.wasAtBottomWhenStreamStarted) {
+          // User was following along but now scrolled up - stop auto-scroll
+          this.wasAtBottomWhenStreamStarted = false;
+        }
+
+        // Clear existing timeout
+        if (this.userScrollTimeout) {
+          clearTimeout(this.userScrollTimeout);
+          this.userScrollTimeout = null;
+        }
+
+        // Don't auto-reset - keep user in control until they scroll back to bottom
+        // This prevents forced scrolling when user is reading older content
+      } else {
+        // User is at bottom - allow auto-scroll again
+        this.isUserScrolling = false;
+
+        // Clear timeout since we're at bottom
+        if (this.userScrollTimeout) {
+          clearTimeout(this.userScrollTimeout);
+          this.userScrollTimeout = null;
+        }
+      }
+    };
+
+    this.container.addEventListener('scroll', this.scrollHandler, { passive: true });
+  }
+
+  private removeScrollListener(): void {
+    if (this.container && this.scrollHandler) {
+      this.container.removeEventListener('scroll', this.scrollHandler);
+      this.scrollHandler = null;
+    }
   }
 
   private isNearBottom(): boolean {
@@ -380,118 +431,104 @@ class SmoothAutoScroller {
     return scrollHeight - scrollTop - clientHeight < SCROLL_CONFIG.SCROLL_THRESHOLD;
   }
 
-  private smoothScrollToBottom(duration = SCROLL_CONFIG.SCROLL_DURATION): Promise<void> {
-    return new Promise((resolve) => {
-      if (!this.container || this.isScrolling) {
-        resolve();
-        return;
-      }
+  /**
+   * Instant scroll to bottom (ChatGPT/Claude style)
+   * No animation, just direct position update
+   */
+  private scrollToBottomInstant(): void {
+    if (!this.container) return;
 
-      this.isScrolling = true;
-      const startTime = performance.now();
-      const startScrollTop = this.container.scrollTop;
-      const targetScrollTop = this.container.scrollHeight - this.container.clientHeight;
-      const distance = targetScrollTop - startScrollTop;
+    // Cancel any pending RAF
+    if (this.rafId !== null) {
+      cancelAnimationFrame(this.rafId);
+    }
 
-      // Don't scroll if already at bottom
-      if (Math.abs(distance) < 5) {
-        this.isScrolling = false;
-        resolve();
-        return;
-      }
+    // Use RAF to sync with browser paint cycle for smoothness
+    this.rafId = requestAnimationFrame(() => {
+      if (!this.container) return;
 
-      const animate = (currentTime: number) => {
-        if (!this.container) {
-          this.isScrolling = false;
-          resolve();
-          return;
-        }
+      const scrollHeight = this.container.scrollHeight;
+      const clientHeight = this.container.clientHeight;
 
-        const elapsed = currentTime - startTime;
-        const progress = Math.min(elapsed / duration, 1);
-        
-        // Smooth easing function (cubic-bezier)
-        const easeProgress = this.cubicBezier(0.25, 0.46, 0.45, 0.94, progress);
-        
-        const currentScrollTop = startScrollTop + (distance * easeProgress);
-        this.container.scrollTop = currentScrollTop;
+      // Direct scrollTop manipulation - instant and natural
+      this.container.scrollTop = scrollHeight - clientHeight;
 
-        if (progress < 1) {
-          requestAnimationFrame(animate);
-        } else {
-          this.isScrolling = false;
-          this.lastScrollTime = currentTime;
-          resolve();
-        }
-      };
-
-      requestAnimationFrame(animate);
+      this.lastScrollHeight = scrollHeight;
+      this.rafId = null;
     });
   }
 
-  private cubicBezier(x1: number, y1: number, x2: number, y2: number, t: number): number {
-    // Simplified cubic bezier calculation
-    const cx = 3 * x1;
-    const bx = 3 * (x2 - x1) - cx;
-    const ax = 1 - cx - bx;
-    
-    const cy = 3 * y1;
-    const by = 3 * (y2 - y1) - cy;
-    const ay = 1 - cy - by;
-    
-    const cubeT = t * t * t;
-    const squareT = t * t;
-    
-    return ay * cubeT + by * squareT + cy * t;
-  }
-
-  // For new messages - immediate smooth scroll
+  /**
+   * For new messages - instant scroll to bottom
+   */
   scrollToNewMessage(): void {
+    // Don't interrupt if user is actively scrolling
+    if (this.isUserScrolling) return;
+
+    // Only scroll if user is near bottom
     if (!this.isNearBottom()) return;
-    
-    // Cancel any existing streaming scroll
-    this.stopStreamingScroll();
-    
-    // Add slight delay to let message render
-    setTimeout(() => {
-      this.smoothScrollToBottom(SCROLL_CONFIG.SCROLL_DURATION);
-    }, 50);
+
+    this.scrollToBottomInstant();
   }
 
-  // For streaming content - gradual continuous scrolling
+  /**
+   * For streaming content - instant bottom-pinning (industry standard)
+   * This is how ChatGPT/Claude keep you locked to bottom during streaming
+   */
   startStreamingScroll(): void {
-    if (this.streamingInterval) return;
-    
-    this.streamingInterval = setInterval(() => {
-      if (!this.isNearBottom()) {
-        this.stopStreamingScroll();
-        return;
-      }
-      
-      // Gentle continuous scroll during streaming
-      if (!this.isScrolling) {
-        this.smoothScrollToBottom(SCROLL_CONFIG.STREAMING_INTERVAL + 50);
-      }
-    }, SCROLL_CONFIG.STREAMING_INTERVAL);
+    // Check if this is the first call for this streaming session
+    // If so, record whether user is at bottom
+    if (!this.wasAtBottomWhenStreamStarted) {
+      this.wasAtBottomWhenStreamStarted = this.isNearBottom();
+    }
+
+    // Don't scroll if user has scrolled away during streaming
+    if (this.isUserScrolling) return;
+
+    // Only auto-scroll if user was at bottom when streaming started
+    // This prevents forcing scroll when user is reading older messages
+    if (!this.wasAtBottomWhenStreamStarted) return;
+
+    // Instant scroll - will be called on every content update
+    this.scrollToBottomInstant();
   }
 
   stopStreamingScroll(): void {
-    if (this.streamingInterval) {
-      clearInterval(this.streamingInterval);
-      this.streamingInterval = null;
+    // No intervals to stop in the new approach
+    // Just cancel any pending RAF
+    if (this.rafId !== null) {
+      cancelAnimationFrame(this.rafId);
+      this.rafId = null;
     }
+
+    // Reset the flag for the next streaming session
+    this.wasAtBottomWhenStreamStarted = false;
   }
 
-  // Force scroll to bottom (for button click)
+  /**
+   * Force scroll to bottom (for button click)
+   * Even if user scrolled away, bring them back
+   */
   forceScrollToBottom(): void {
-    this.stopStreamingScroll();
-    this.smoothScrollToBottom(SCROLL_CONFIG.SCROLL_DURATION * 1.5); // Slightly longer for user action
+    this.isUserScrolling = false; // Override user scroll state
+    this.wasAtBottomWhenStreamStarted = true; // Re-enable auto-scroll for streaming
+    this.scrollToBottomInstant();
   }
 
-  // Clean up
+  /**
+   * Clean up
+   */
   destroy(): void {
     this.stopStreamingScroll();
-    this.isScrolling = false;
+    this.removeScrollListener();
+
+    if (this.userScrollTimeout) {
+      clearTimeout(this.userScrollTimeout);
+    }
+
+    if (this.rafId !== null) {
+      cancelAnimationFrame(this.rafId);
+    }
   }
 }
 
@@ -501,97 +538,152 @@ class SmoothAutoScroller {
 const WelcomeScreen: React.FC<{
   userName?: string;
   onStartChat?: () => void;
-}> = ({ userName, onStartChat }) => {
-  const suggestions = [
+  onSendExamplePrompt?: (prompt: string) => void;
+}> = ({ userName, onStartChat, onSendExamplePrompt }) => {
+  // Random example selection
+  const getRandomExample = (examples: string[]) => {
+    return examples[Math.floor(Math.random() * examples.length)];
+  };
+
+  const allSuggestions = [
     {
       icon: FileText,
       title: "Analyze Documents",
       description: "Upload PDFs, docs, or text files for analysis",
-      action: "Upload a document and ask me about it"
+      examples: [
+        "Summarize the main points from this document",
+        "Extract key information and create a table",
+        "What are the action items in this file?"
+      ],
+      mode: "chat" as const
     },
     {
-      icon: ImageIcon,
-      title: "Image Understanding",
-      description: "Upload images for description and analysis",
-      action: "Share an image and I'll describe what I see"
+      icon: Brain,
+      title: "Clara Remembers",
+      description: "I remember our conversations and your preferences",
+      examples: [
+        "What do you know about me?",
+        "What have we discussed before?",
+        "What are my preferences?"
+      ],
+      mode: "chat" as const
     },
     {
       icon: Code,
       title: "Code Assistance",
       description: "Get help with programming and debugging",
-      action: "Show me some code you'd like help with"
+      examples: [
+        "Make a page in HTML that shows an animation of a ball bouncing in a rotating hypercube",
+        "Help me generate an SVG of 5 Pokémons, include details",
+        "How many 'r's are in the word 'strawberry'? Make a cute little card!",
+        "I want a TODO list that allows me to add tasks, delete tasks, and I would like the overall color theme to be purple"
+      ],
+      mode: "chat" as const
     },
     {
       icon: Search,
       title: "Research & Analysis",
-      description: "Ask complex questions and get detailed answers",
-      action: "Ask me anything you'd like to research"
+      description: "Deep research with web search (Agent Mode)",
+      examples: [
+        "Search about ClaraVerse on the web",
+        "Research the latest AI developments",
+        "Find information about quantum computing trends"
+      ],
+      mode: "agent" as const
     }
   ];
+
+  // Select random examples for each suggestion
+  const suggestions = React.useMemo(() =>
+    allSuggestions.map(suggestion => ({
+      ...suggestion,
+      example: getRandomExample(suggestion.examples)
+    })),
+    [] // Only randomize once on mount
+  );
 
   return (
     <div className="flex items-center justify-center h-full p-8">
       <div className="max-w-2xl text-center">
         {/* Hero Section */}
         <div className="mb-8">
-          <div className="w-20 h-20 bg-gradient-to-br from-purple-500 via-pink-500 to-sakura-500 rounded-full flex items-center justify-center mx-auto mb-6 shadow-lg">
-            {/* support dark mode and light mode */}
-            <Bot className="w-10 h-10 dark:text-white text-gray-500" />
-          </div>
           
+
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white mb-3">
-            Welcome{userName ? ` back, ${userName}` : ''} to Clara! 
+            Welcome{userName ? ` back, ${userName}` : ''} to Clara!
             <Sparkles className="inline-block w-6 h-6 ml-2 text-sakura-500" />
           </h1>
-          
+
           <p className="text-lg text-gray-600 dark:text-gray-400 mb-6">
-            Your intelligent assistant for documents, images, code, and more.
-            Just upload files and start asking questions!
+           Clara Can Help You With Anything - From Quick Answers to Deep Research
           </p>
 
-          {/* Feature highlights */}
-          <div className="flex flex-wrap justify-center gap-2 mb-8">
-            <span className="px-3 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded-full text-sm font-medium">
-              Multi-modal AI
-            </span>
-            <span className="px-3 py-1 bg-sakura-100 dark:bg-sakura-900/30 text-sakura-700 dark:text-sakura-300 rounded-full text-sm font-medium">
-              Document Analysis
-            </span>
-            <span className="px-3 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-full text-sm font-medium">
-              Image Understanding
-            </span>
-            <span className="px-3 py-1 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-full text-sm font-medium">
-              Code Assistant
-            </span>
-          </div>
+        
         </div>
 
         {/* Suggestions Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
           {suggestions.map((suggestion, index) => (
-            <button
+            <div
               key={index}
-              onClick={() => onStartChat?.()}
               className="p-4 bg-white/50 dark:bg-gray-800/50 rounded-xl hover:bg-white/70 dark:hover:bg-gray-800/70 transition-all hover:shadow-md group text-left"
             >
-              <div className="flex items-start gap-3">
-                <div className="p-2 bg-gradient-to-br from-purple-500 to-pink-500 rounded-lg group-hover:scale-110 transition-transform">
-                  <suggestion.icon className="w-5 h-5 dark:text-white text-gray-500" />
+              <div className="flex items-start gap-3 mb-3">
+                <div className="p-2 bg-gradient-to-br from-purple-500 to-pink-500 rounded-lg group-hover:scale-110 transition-transform flex-shrink-0">
+                  <suggestion.icon className="w-5 h-5 text-white" />
                 </div>
-                <div className="flex-1">
+                <div className="flex-1 min-w-0">
                   <h3 className="font-semibold text-gray-900 dark:text-white text-sm mb-1">
                     {suggestion.title}
                   </h3>
-                  <p className="text-xs text-gray-600 dark:text-gray-400 mb-2">
+                  <p className="text-xs text-gray-600 dark:text-gray-400">
                     {suggestion.description}
-                  </p>
-                  <p className="text-xs text-sakura-600 dark:text-sakura-400 font-medium">
-                    "{suggestion.action}"
                   </p>
                 </div>
               </div>
-            </button>
+
+              {/* Example prompt with mode badge */}
+              <button
+                onClick={() => onSendExamplePrompt?.(suggestion.example, suggestion.mode)}
+                className="w-full text-left px-3 py-2 text-xs text-gray-700 dark:text-gray-300 bg-gray-50 dark:bg-gray-900/50 hover:bg-gray-100 dark:hover:bg-gray-900 rounded-lg transition-colors border border-transparent hover:border-sakura-300 dark:hover:border-sakura-600 mt-2 group"
+                title={suggestion.mode === 'agent' ? '🤖 Uses autonomous capabilities & web search' : '💬 Fast, direct conversation'}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="flex-1 min-w-0">Try: "{suggestion.example}"</span>
+                  <span className={`flex-shrink-0 text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                    suggestion.mode === 'agent'
+                      ? 'bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300'
+                      : 'bg-blue-100 dark:bg-blue-900/50 text-blue-700 dark:text-blue-300'
+                  }`}>
+                    {suggestion.mode === 'agent' ? '🤖 Agent' : '💬 Chat'}
+                  </span>
+                </div>
+              </button>
+            </div>
           ))}
+        </div>
+
+        {/* Mode explanation */}
+        <div className="mb-6 p-4 bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 rounded-xl border border-blue-200 dark:border-blue-800">
+          <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-2 flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-purple-500" />
+            Understanding Modes - Which One to Use? 
+          </h4>
+          <div className="space-y-2 text-xs text-gray-600 dark:text-gray-400">
+            <div className="flex items-start gap-2">
+              <span className="text-blue-600 dark:text-blue-400 font-bold">💬 Chat Mode:</span>
+              <span>Quick responses, document analysis, code help, conversations</span>
+            </div>
+            <div className="flex items-start gap-2">
+              <span className="text-purple-600 dark:text-purple-400 font-bold">🤖 Agent Mode:</span>
+              <span>Deep research, web search, multi-step tasks, autonomous problem solving</span>
+            </div>
+            {/* how to toggle between modes */}
+            <div className="flex items-start gap-2">
+              <span className="text-gray-600 dark:text-gray-400">🔄 Toggle Modes:</span>
+              <span>Click the mode button to switch between Chat and Agent modes or Ctrl+M</span>
+            </div>
+          </div>
         </div>
 
         {/* Quick start tips */}
@@ -678,30 +770,74 @@ const ScrollToBottomButton: React.FC<{
 
 /**
  * Processing indicator component
+ * Keeps the same thinking phrase for 20 seconds to avoid rapid changes
  */
 const ProcessingIndicator: React.FC<{
   processingState: ClaraProcessingState;
   message?: string;
 }> = ({ processingState, message }) => {
+  const [currentThinkingPhrase, setCurrentThinkingPhrase] = useState('');
+  const lastUpdateTimeRef = useRef<number>(0);
+
+  const thinkingMessages = [
+    'thinking',
+    'wondering',
+    'dreaming',
+    'coding',
+    'pondering',
+    'spelunking',
+    'stitching',
+    'brewing ideas',
+    'conjuring magic',
+    'weaving thoughts',
+    'crafting solutions',
+    'exploring possibilities',
+    'diving deep',
+    'connecting dots',
+    'piecing together',
+    'contemplating',
+    'brainstorming',
+    'architecting',
+    'orchestrating',
+    'illuminating paths'
+  ];
+
+  // Update thinking phrase only if 20 seconds have passed or it's the first time
+  useEffect(() => {
+    if (processingState === 'processing') {
+      const now = Date.now();
+      const timeSinceLastUpdate = now - lastUpdateTimeRef.current;
+      
+      // Update if first time (no phrase set) or 20 seconds have passed
+      if (!currentThinkingPhrase || timeSinceLastUpdate >= 20000) {
+        const randomThinking = thinkingMessages[Math.floor(Math.random() * thinkingMessages.length)];
+        setCurrentThinkingPhrase(randomThinking);
+        lastUpdateTimeRef.current = now;
+      }
+    }
+  }, [processingState, currentThinkingPhrase]);
+
   const getIndicatorContent = () => {
     switch (processingState) {
       case 'processing':
         return {
           icon: <Loader2 className="w-5 h-5 animate-spin" />,
-          text: message || 'Clara is thinking...',
+          text: message || `Clara is ${currentThinkingPhrase || 'thinking'}...`,
           bgColor: 'bg-blue-500'
         };
       case 'success':
         return {
           icon: <Bot className="w-5 h-5" />,
           text: 'Response generated!',
-          bgColor: 'bg-green-500'
+          bgColor: 'bg-gradient-to-r from-green-500 to-emerald-600',
+          emoji: '✓'
         };
       case 'error':
         return {
           icon: <Bot className="w-5 h-5" />,
           text: message || 'Something went wrong',
-          bgColor: 'bg-red-500'
+          bgColor: 'bg-gradient-to-r from-red-500 to-rose-600',
+          emoji: '⚠'
         };
       default:
         return null;
@@ -713,9 +849,12 @@ const ProcessingIndicator: React.FC<{
 
   return (
     <div className="flex justify-center mb-4">
-      <div className={`flex items-center gap-2 px-4 py-2 ${content.bgColor} text-white rounded-full text-sm`}>
+      <div 
+        className={`flex items-center gap-2 px-4 py-2 ${content.bgColor} text-white rounded-full text-sm shadow-lg transition-all duration-500 ease-in-out`}
+      >
         {content.icon}
-        <span>{content.text}</span>
+        <span className="font-medium">{content.emoji}</span>
+        <span>{content.text}...</span>
       </div>
     </div>
   );
@@ -731,7 +870,9 @@ const ClaraChatWindow: React.FC<ClaraChatWindowProps> = ({
   isInitializing = false,
   onRetryMessage,
   onCopyMessage,
-  onEditMessage
+  onEditMessage,
+  onSendExamplePrompt,
+  scrollTrigger
 }) => {
   const scrollRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -810,49 +951,61 @@ const ClaraChatWindow: React.FC<ClaraChatWindowProps> = ({
     }
   }, [handleScroll]);
 
-  // Enhanced auto-scroll for new messages
+  // Force scroll to bottom when scrollTrigger changes (e.g., loading chat from history)
+  useEffect(() => {
+    if (scrollTrigger && scrollTrigger > 0) {
+      console.log('🔽 Scroll trigger activated - forcing scroll to bottom');
+      // Use requestAnimationFrame to ensure DOM is updated
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          autoScrollerRef.current?.forceScrollToBottom();
+        });
+      });
+    }
+  }, [scrollTrigger]);
+
+  // Industry-standard auto-scroll: scroll on EVERY content update (ChatGPT/Claude style)
   useEffect(() => {
     const lastMessage = messages[messages.length - 1];
     if (!lastMessage) return;
 
     const isStreaming = lastMessage?.metadata?.isStreaming;
-    
+
     if (isStreaming) {
-      // Start gentle streaming scroll
+      // Instant bottom-pin on every streaming update (no intervals!)
+      // This is called on EVERY token/chunk, creating seamless scrolling
       autoScrollerRef.current?.startStreamingScroll();
     } else {
-      // Stop streaming and scroll to new message
+      // Stop streaming and do final scroll to new message
       autoScrollerRef.current?.stopStreamingScroll();
       autoScrollerRef.current?.scrollToNewMessage();
     }
-  }, [messages.length]);
-
-  // Handle streaming content updates
-  useEffect(() => {
-    const lastMessage = messages[messages.length - 1];
-    if (lastMessage?.metadata?.isStreaming && lastMessage.content) {
-      // Continue streaming scroll - the engine handles this automatically
-      // No need for manual intervention
-    }
-  }, [messages[messages.length - 1]?.content]);
+  }, [messages.length, messages[messages.length - 1]?.content]); // Triggers on EVERY content change
 
   // Update processing state based on loading and messages
   useEffect(() => {
+    let timeoutId: NodeJS.Timeout | null = null;
+
     if (isLoading) {
       setProcessingState('processing');
     } else {
       const lastMessage = messages[messages.length - 1];
       if (lastMessage?.metadata?.error) {
         setProcessingState('error');
-        setTimeout(() => setProcessingState('idle'), 3000);
+        timeoutId = setTimeout(() => setProcessingState('idle'), 3000);
       } else if (lastMessage && lastMessage.role === 'assistant') {
         setProcessingState('success');
-        setTimeout(() => setProcessingState('idle'), 2000);
+        timeoutId = setTimeout(() => setProcessingState('idle'), 2000);
       } else {
         setProcessingState('idle');
       }
     }
-  }, [isLoading, messages]);
+
+    // Cleanup timeout on dependency change
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [isLoading, messages.length, messages[messages.length - 1]?.metadata?.error]);
 
   // Handle message actions
   const handleMessageAction = useCallback((action: string, messageId: string, data?: any) => {
@@ -878,17 +1031,17 @@ const ClaraChatWindow: React.FC<ClaraChatWindowProps> = ({
   const shouldUseVirtualization = messages.length > 50; // Use virtualization for 50+ messages
 
   return (
-    <div 
+    <div
       ref={scrollRef}
       className="flex-1 overflow-y-auto p-6 relative"
-      style={{ scrollBehavior: 'auto' }} // Let our custom scroller handle smooth behavior
+      style={{ scrollBehavior: 'auto' }} // No smooth scrolling - instant updates like ChatGPT/Claude
     >
       <div className="max-w-4xl mx-auto">
         {/* Loading screen when Clara is initializing */}
         {isInitializing ? (
           <LoadingScreen userName={userName} />
         ) : /* Welcome screen when no messages */ messages.length === 0 ? (
-          <WelcomeScreen userName={userName} />
+          <WelcomeScreen userName={userName} onSendExamplePrompt={onSendExamplePrompt} />
         ) : shouldUseVirtualization ? (
           // Use virtualized rendering for large message lists
           <VirtualizedMessageList

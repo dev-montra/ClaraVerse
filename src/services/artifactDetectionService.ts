@@ -1,9 +1,9 @@
 /**
  * Artifact Detection Service
- * 
+ *
  * This service automatically detects and extracts various types of structured content
  * from AI responses to create artifacts for enhanced display and interaction.
- * 
+ *
  * Features:
  * - Automatic detection of code blocks, tables, charts, diagrams
  * - Language detection for 25+ programming languages
@@ -14,6 +14,52 @@
  */
 
 import { ClaraArtifact, ClaraArtifactType, ClaraAIConfig } from '../types/clara_assistant_types';
+
+/**
+ * Artifact Type Rendering Configuration
+ *
+ * Controls which artifact types should be rendered in the artifact pane.
+ * Only types marked as `true` will create artifacts that appear in the pane.
+ *
+ * Usage:
+ * - Set to `true` to render in artifact pane
+ * - Set to `false` to skip artifact creation (content stays inline in chat)
+ *
+ * Current Configuration:
+ * - HTML: Rendered (live preview with iframe)
+ * - Chart: Rendered (interactive Chart.js visualizations)
+ * - Mermaid: Rendered (SVG diagrams with zoom)
+ * - Others: Not rendered (stays inline in chat)
+ */
+export const ARTIFACT_RENDER_MAP: Record<ClaraArtifactType | string, boolean> = {
+  // Rendered in artifact pane
+  html: true,        // Live HTML preview with code toggle
+  chart: true,       // Interactive charts (line, bar, pie, doughnut)
+  mermaid: true,     // Mermaid diagrams with zoom controls
+
+  // Not rendered in artifact pane (stays inline)
+  code: false,       // Code blocks with syntax highlighting
+  table: false,      // Markdown/CSV tables
+  markdown: false,   // Markdown content
+  json: false,       // JSON data
+  diagram: false,    // Generic diagrams
+  csv: false,        // CSV data
+};
+
+/**
+ * Check if an artifact type should be rendered in the artifact pane
+ * @param type - The artifact type
+ * @param language - Optional language (for code artifacts)
+ */
+export function shouldRenderArtifact(type: ClaraArtifactType | string, language?: string): boolean {
+  // Special handling for 'code' type - check if the language should be rendered
+  if (type === 'code' && language) {
+    // Check if this specific language should be rendered as an artifact
+    return ARTIFACT_RENDER_MAP[language] ?? false;
+  }
+
+  return ARTIFACT_RENDER_MAP[type] ?? false;
+}
 
 export interface DetectionContext {
   userMessage?: string;
@@ -486,21 +532,36 @@ export class ArtifactDetectionService {
         detectionConfidence += contextArtifacts.confidence;
       }
 
+      // **FILTER: Only keep artifacts that should be rendered in the pane**
+      const renderableArtifacts = artifacts.filter(artifact => {
+        const shouldRender = shouldRenderArtifact(artifact.type, artifact.language);
+        if (!shouldRender) {
+          console.log(`⏭️ Skipping artifact (type: ${artifact.type}, language: ${artifact.language || 'none'}) - not configured for rendering in artifact pane`);
+        }
+        return shouldRender;
+      });
+
       // Apply max artifacts limit
-      const limitedArtifacts = artifacts.slice(0, config.maxArtifactsPerMessage);
-      
+      const limitedArtifacts = renderableArtifacts.slice(0, config.maxArtifactsPerMessage);
+
       // Log configuration usage
-      if (artifacts.length > limitedArtifacts.length) {
-        console.log(`🎨 Artifact limit applied: ${artifacts.length} detected, ${limitedArtifacts.length} kept (max: ${config.maxArtifactsPerMessage})`);
+      if (artifacts.length > renderableArtifacts.length) {
+        console.log(`🎨 Artifact render filter applied: ${artifacts.length} detected, ${renderableArtifacts.length} renderable (filtered by ARTIFACT_RENDER_MAP)`);
       }
-      
+
+      if (renderableArtifacts.length > limitedArtifacts.length) {
+        console.log(`🎨 Artifact limit applied: ${renderableArtifacts.length} renderable, ${limitedArtifacts.length} kept (max: ${config.maxArtifactsPerMessage})`);
+      }
+
       if (limitedArtifacts.length > 0) {
         console.log(`🎨 Artifact detection config used:`, {
           enabledTypes: Object.entries(config)
             .filter(([key, value]) => key.startsWith('enable') && value === true)
             .map(([key]) => key.replace('enable', '').replace('Artifacts', '')),
           maxLimit: config.maxArtifactsPerMessage,
-          detected: limitedArtifacts.length
+          detected: artifacts.length,
+          renderable: renderableArtifacts.length,
+          final: limitedArtifacts.length
         });
       }
 
@@ -547,15 +608,15 @@ export class ArtifactDetectionService {
     // Extract fenced code blocks
     const fencedCodeRegex = /```(\w+)?\n?([\s\S]*?)```/g;
     let match;
-    
+
     while ((match = fencedCodeRegex.exec(content)) !== null) {
       const language = match[1] || this.detectLanguage(match[2]);
       const code = match[2].trim();
-      
+
       if (code.length > 10) { // Only create artifacts for substantial code
         let artifactType: ClaraArtifactType = 'code';
         let title = `${language.charAt(0).toUpperCase() + language.slice(1)} Code`;
-        
+
         // Special handling for JSON - check if it should be a table or chart
         if (language === 'json') {
           try {
@@ -572,7 +633,7 @@ export class ArtifactDetectionService {
             // Keep as code if JSON is invalid
           }
         }
-        
+
         artifacts.push({
           id: this.generateId(),
           type: artifactType,
@@ -588,16 +649,19 @@ export class ArtifactDetectionService {
             preserveInline: true // Flag to indicate content should stay inline
           }
         });
-        
+
         // DON'T remove from cleaned content - keep original
         // cleanedContent = cleanedContent.replace(match[0], `\n[Code block: ${language}]\n`);
         confidence += 0.3;
       }
     }
 
-    // Extract inline code that might be substantial
+    // Remove fenced code blocks before searching for inline code to avoid duplicates
+    const contentWithoutFencedCode = content.replace(/```[\s\S]*?```/g, '');
+
+    // Extract inline code that might be substantial (only from content without fenced blocks)
     const inlineCodeRegex = /`([^`]{50,})`/g;
-    while ((match = inlineCodeRegex.exec(content)) !== null) {
+    while ((match = inlineCodeRegex.exec(contentWithoutFencedCode)) !== null) {
       const code = match[1].trim();
       const language = this.detectLanguage(code);
       
@@ -1152,18 +1216,28 @@ export class ArtifactDetectionService {
    * Detect JSON object type
    */
   private static detectJsonType(obj: any): ClaraArtifactType {
+    // Check for Chart.js format with nested data: { type, data: { labels, datasets }, options }
+    if (obj.data && obj.data.labels && obj.data.datasets) return 'chart';
+
+    // Check for flat Chart.js format: { labels, datasets }
     if (obj.labels && obj.datasets) return 'chart';
+
+    // Check for chart type indicators
+    if (obj.type && ['line', 'bar', 'pie', 'doughnut', 'radar', 'polarArea', 'bubble', 'scatter'].includes(obj.type)) {
+      return 'chart';
+    }
+
     if (obj.status && (obj.data || obj.error)) return 'json';
     if (obj.query || obj.table || obj.rows) return 'json';
-    
+
     // Check for table format: { "table": { "columns": [...], "rows": [...] } }
     if (obj.table && obj.table.columns && obj.table.rows) return 'table';
-    
+
     // Check for direct table format: { "columns": [...], "rows": [...] }
     if (obj.columns && obj.rows) return 'table';
-    
+
     if (Array.isArray(obj) && obj.length > 0 && typeof obj[0] === 'object') return 'table';
-    
+
     return 'json';
   }
 

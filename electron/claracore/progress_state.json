@@ -1,0 +1,14 @@
+{
+  "setup_progress": {
+    "status": "completed",
+    "current_step": "Saving configuration file...",
+    "progress": 100,
+    "total_models": 3,
+    "processed_models": 3,
+    "current_model": "nsfw-panda-7b.Q5_K_M",
+    "error": "",
+    "completed": true,
+    "started_at": "2025-11-09T13:05:56.3563889+05:30",
+    "updated_at": "2025-11-09T13:06:06.5683856+05:30"
+  }
+}

@@ -266,6 +266,42 @@ class ClaraMemoryIntegration {
   public getConfig(): any {
     return claraMemoryManager.getConfig();
   }
+
+  /**
+   * Get memory size information
+   */
+  public async getMemorySizeInfo() {
+    try {
+      return await claraMemoryManager.getMemorySizeInfo();
+    } catch (error) {
+      console.error('🧠 Failed to get memory size info:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Compress memory
+   */
+  public async compressMemory() {
+    try {
+      return await claraMemoryManager.compressMemory();
+    } catch (error) {
+      console.error('🧠 Failed to compress memory:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Check if compression is needed
+   */
+  public async needsCompression(): Promise<boolean> {
+    try {
+      return await claraMemoryManager.needsCompression();
+    } catch (error) {
+      console.error('🧠 Failed to check compression status:', error);
+      return false;
+    }
+  }
 }
 
 // ==================== SINGLETON EXPORT ====================

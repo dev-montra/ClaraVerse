@@ -134,6 +134,11 @@ const StructuredLLMNode = memo<NodeProps>((props) => {
     }
   }, [apiBaseUrl, availableModels.length, loadModelsFromAPI]);
 
+  // Keep configuration status in sync with current values
+  useEffect(() => {
+    validateConfig(apiKey, apiBaseUrl);
+  }, [apiBaseUrl, apiKey]);
+
   const handleSaveAndLoadModels = async () => {
     // Save current config first
     updateConfig({ 

@@ -1,0 +1,493 @@
+{
+  "id": "notebook-data-analysis",
+  "name": "Data Analysis Notebook (Python + Pandas)",
+  "description": "Automated data analysis workflow using Python, Pandas, and visualization. Upload CSV data, run statistical analysis, generate charts, and create comprehensive reports. Perfect example of notebook-style computational workflows.",
+  "category": "data-science",
+  "difficulty": "intermediate",
+  "tags": ["python", "pandas", "data-analysis", "notebook", "visualization", "statistics"],
+  "author": "ClaraVerse",
+  "downloads": 1120,
+  "rating": 4.9,
+    "flow": {
+    "id": "flow-1760377250181",
+    "name": "Data Analysis Notebook",
+    "description": "Automated data analysis with Python and Pandas",
+    "nodes": [
+      {
+        "id": "1760374329726-qk7uqq04q",
+        "type": "file-upload",
+        "name": "File Upload",
+        "position": {
+          "x": 395.0568110009417,
+          "y": 106.5624332971625
+        },
+        "data": {
+          "label": "File Upload",
+          "inputs": [],
+          "outputs": {
+            "content": "# Company Organizational Structure\n\n## Leadership\n- **CTO**: Muruganantham. SP\n- **Project Manager**: Harini Murali\n- **Quality Analyst**: Roshini\n\n## Course Team - Solution Architect\n**Team Lead**: John Prem Kumar\n\n### Team Members\n- Rajeswari Selvakumar - Software Engineer\n- Rajeshwari Anandan - Software Engineer\n- Emayakeerthi N - Software Engineer\n- Kowshika E - Software Engineer\n- Sanjay N - Software Engineer\n- Premkumar Palanisamy - Software Engineer\n- Barath RR - Software Engineer\n- Keerthana S K - Software Engineer\n- Sakthivel E - Jr. Full Stack Developer\n- Ragul R - Software Engineer\n- Surya M - Data Engineer Intern\n- Karthikeyan - Software Associate Developer Intern\n- Vennilavan - Software Associate Developer Intern\n\n## Hackerkid Team\n**Team Lead**: Balaji Anand A\n\n### Team Members\n- Sai Dharshan - Senior Software Engineer\n- Anuvindh M - Software Engineer\n- Kathirvelan - Software Engineer\n- Jawahar Srinivas S - Software Engineer\n- Thirumalesh T G - Software Associate Developer Intern\n\n## Placement & Preparation Team\n**Team Lead**: Karthhikraj V\n\n### Team Members\n- Gandhamathan V - Software Engineer\n- Ebinesh A - Software Engineer\n\n## Hyrenet Team\n**Team Lead**: Arun K\n\n### Team Members\n- Rishikesh - Software Engineer\n- Sridevimanju Raja - Software Engineer\n- Sahithya B A - Software Engineer\n- Jenifar - Software Engineer\n- Ghanathe Aarthi - Software Associate Developer Intern\n- Arjun - Software Associate Developer Intern\n\n## Zen Team\n**Team Lead**: Santhosh\n\n### Team Members\n- Gokul Prasanth - Software Engineer Level 2\n- Anand Kumar - Jr. Full Stack Developer\n- Sakthimaheswaran U S - Software Engineer\n- Mahesh - Software Associate Developer Intern\n- Hari Srinivasan - Software Associate Developer Intern\n\n## R&D and Innovation\n**Head**: Praveen G\n\n### Team Members\n- Mohanappuviya - Software Engineer\n- Raaj Kumar - Software Engineer\n- Srinithi L - Software Engineer\n- Sowjanya - Software Engineer\n- Yogeshwar Gopi - Software Associate Developer Intern\n- Akilan Palanimuthu - Software Associate Developer Intern\n- Jaishaanth - Software Associate Developer Intern\n- Pradeep G - Software Associate Developer Intern\n- Sundara Selvan G - Software Associate Developer Intern\n- Chandramouli AT - Software Engineer\n\n---\n\n## Summary Statistics\n- **Total Teams**: 6 (excluding leadership)\n- **Total Employees**: ~47 members\n- **Intern Positions**: 13\n- **Full-time Engineering Positions**: ~31\n- **Leadership Positions**: 3 (CTO, PM, QA)",
+            "metadata": {
+              "name": "org-structure-doc.txt",
+              "size": 2465,
+              "type": "text/plain",
+              "lastModified": 1756985478543,
+              "format": "text"
+            }
+          },
+          "outputFormat": "text"
+        },
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "content",
+            "name": "File Content",
+            "type": "output",
+            "dataType": "any",
+            "required": true,
+            "description": "File content in the specified format"
+          },
+          {
+            "id": "metadata",
+            "name": "File Metadata",
+            "type": "output",
+            "dataType": "object",
+            "required": false,
+            "description": "File metadata (name, size, type, format, etc.)"
+          }
+        ],
+        "metadata": {
+          "examples": [
+            {
+              "name": "Image Upload as Base64",
+              "description": "Upload image files and output as base64 for AI processing",
+              "config": {
+                "outputFormat": "base64",
+                "acceptedTypes": "image/*",
+                "maxSize": 5
+              }
+            },
+            {
+              "name": "Document Upload as Text",
+              "description": "Upload text documents and output content as plain text",
+              "config": {
+                "outputFormat": "text",
+                "acceptedTypes": ".txt,.md,.csv,.doc,.docx,.pdf,.rtf,.html,.htm,.xml,.json",
+                "maxSize": 2
+              }
+            },
+            {
+              "name": "Any File Upload",
+              "description": "Upload any file type and get file object with metadata",
+              "config": {
+                "outputFormat": "file",
+                "acceptedTypes": "*/*",
+                "maxSize": 10
+              }
+            }
+          ],
+          "tags": [
+            "file",
+            "upload",
+            "input",
+            "base64",
+            "binary",
+            "text",
+            "universal"
+          ]
+        }
+      },
+      {
+        "id": "1760374765204-ey9pvnpog",
+        "type": "agent-executor",
+        "name": "Agent Executor",
+        "position": {
+          "x": 1586.7683188915285,
+          "y": 657.8326756204481
+        },
+        "data": {
+          "label": "Agent Executor",
+          "inputs": [
+            {
+              "id": "instructions",
+              "name": "Instructions",
+              "type": "input",
+              "dataType": "string",
+              "required": true,
+              "description": "Task instructions for the autonomous agent"
+            },
+            {
+              "id": "context",
+              "name": "Context",
+              "type": "input",
+              "dataType": "string",
+              "required": false,
+              "description": "Additional context for the task"
+            },
+            {
+              "id": "attachments",
+              "name": "Attachments",
+              "type": "input",
+              "dataType": "array",
+              "required": false,
+              "description": "File attachments for the task"
+            }
+          ],
+          "outputs": [
+            {
+              "id": "result",
+              "name": "Result",
+              "type": "output",
+              "dataType": "string",
+              "description": "Agent execution result"
+            },
+            {
+              "id": "toolResults",
+              "name": "Tool Results",
+              "type": "output",
+              "dataType": "array",
+              "description": "Results from MCP tools used"
+            },
+            {
+              "id": "executionLog",
+              "name": "Execution Log",
+              "type": "output",
+              "dataType": "string",
+              "description": "Detailed execution log"
+            },
+            {
+              "id": "success",
+              "name": "Success",
+              "type": "output",
+              "dataType": "boolean",
+              "description": "Whether execution was successful"
+            },
+            {
+              "id": "metadata",
+              "name": "Metadata",
+              "type": "output",
+              "dataType": "object",
+              "description": "Execution metadata (timing, tools used, etc.)"
+            }
+          ],
+          "textModel": "eb8e82fd-231a-45e8-9e02-08bf38de1394:jan-nano-128k",
+          "visionModel": "eb8e82fd-231a-45e8-9e02-08bf38de1394:jan-nano-128k",
+          "codeModel": "eb8e82fd-231a-45e8-9e02-08bf38de1394:jan-nano-128k",
+          "provider": "eb8e82fd-231a-45e8-9e02-08bf38de1394",
+          "enabledMCPServers": [
+            "python-mcp"
+          ],
+          "instructions": "you do anutonomous agentic working you are a pythonista and you have all the tools needed",
+          "maxToolCalls": 50,
+          "maxTokens": 24000
+        },
+        "inputs": [
+          {
+            "id": "instructions",
+            "name": "Instructions",
+            "type": "input",
+            "dataType": "string",
+            "required": true,
+            "description": "Task instructions for the autonomous agent"
+          },
+          {
+            "id": "context",
+            "name": "Context",
+            "type": "input",
+            "dataType": "string",
+            "required": false,
+            "description": "Additional context for the task"
+          },
+          {
+            "id": "attachments",
+            "name": "Attachments",
+            "type": "input",
+            "dataType": "array",
+            "required": false,
+            "description": "File attachments for the task"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "result",
+            "name": "Result",
+            "type": "output",
+            "dataType": "string",
+            "description": "Agent execution result"
+          },
+          {
+            "id": "toolResults",
+            "name": "Tool Results",
+            "type": "output",
+            "dataType": "array",
+            "description": "Results from MCP tools used"
+          },
+          {
+            "id": "executionLog",
+            "name": "Execution Log",
+            "type": "output",
+            "dataType": "string",
+            "description": "Detailed execution log"
+          },
+          {
+            "id": "success",
+            "name": "Success",
+            "type": "output",
+            "dataType": "boolean",
+            "description": "Whether execution was successful"
+          },
+          {
+            "id": "metadata",
+            "name": "Metadata",
+            "type": "output",
+            "dataType": "object",
+            "description": "Execution metadata (timing, tools used, etc.)"
+          }
+        ],
+        "metadata": {
+          "tags": [
+            "ai",
+            "agent",
+            "autonomous",
+            "mcp",
+            "tools"
+          ],
+          "documentation": "Executes autonomous AI agents with tool access for complex multi-step tasks."
+        }
+      },
+      {
+        "id": "1760374783716-hu3z4h6ey",
+        "type": "static-text",
+        "name": "Static Text",
+        "position": {
+          "x": 283.62230621222125,
+          "y": 859.7173859687005
+        },
+        "data": {
+          "label": "Static Text",
+          "inputs": [],
+          "outputs": [
+            {
+              "id": "text",
+              "name": "Text Output",
+              "type": "output",
+              "dataType": "string",
+              "required": true,
+              "description": "The static text content"
+            }
+          ],
+          "text": "i have provided the csv data i want you to create a insights and chart that will be useful from it and also use all the posible tools like python and pandas and even matplotlib chart is cool"
+        },
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "text",
+            "name": "Text Output",
+            "type": "output",
+            "dataType": "string",
+            "required": true,
+            "description": "The static text content"
+          }
+        ],
+        "metadata": {
+          "examples": [
+            {
+              "name": "System Prompt",
+              "description": "Static system prompt for AI models",
+              "config": {
+                "text": "You are a helpful AI assistant. Please respond in a friendly and professional manner.",
+                "label": "System Prompt",
+                "textFormat": "plain",
+                "multiline": true
+              }
+            },
+            {
+              "name": "API Instructions",
+              "description": "Fixed instructions for API requests",
+              "config": {
+                "text": "Please analyze the following data and provide insights:\n\n",
+                "label": "API Instructions",
+                "textFormat": "template",
+                "multiline": true
+              }
+            },
+            {
+              "name": "JSON Template",
+              "description": "Static JSON structure template",
+              "config": {
+                "text": "{\"role\": \"system\", \"content\": \"You are a helpful assistant\"}",
+                "label": "JSON Template",
+                "textFormat": "json",
+                "multiline": false
+              }
+            }
+          ],
+          "tags": [
+            "text",
+            "static",
+            "prompt",
+            "template",
+            "content",
+            "fixed",
+            "constant"
+          ]
+        }
+      },
+      {
+        "id": "1760374855250-shb6wdprq",
+        "type": "combine-text",
+        "name": "Combine Text",
+        "position": {
+          "x": 1020.6994251699584,
+          "y": 671.027754728177
+        },
+        "data": {},
+        "inputs": [
+          {
+            "id": "text1",
+            "name": "Text 1",
+            "type": "input",
+            "dataType": "string",
+            "required": true,
+            "description": "First text input"
+          },
+          {
+            "id": "text2",
+            "name": "Text 2",
+            "type": "input",
+            "dataType": "string",
+            "required": true,
+            "description": "Second text input"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "combined",
+            "name": "Combined Text",
+            "type": "output",
+            "dataType": "string",
+            "required": true,
+            "description": "Combined text result"
+          },
+          {
+            "id": "metadata",
+            "name": "Metadata",
+            "type": "output",
+            "dataType": "object",
+            "required": false,
+            "description": "Combination metadata (mode, separator, lengths, etc.)"
+          }
+        ],
+        "metadata": {
+          "examples": [
+            {
+              "name": "Simple Prompt Building",
+              "description": "Combine system prompt with user input",
+              "config": {
+                "combineMode": "concat",
+                "addSpaces": true
+              }
+            },
+            {
+              "name": "Prompt with Separator",
+              "description": "Add context with clear separation",
+              "config": {
+                "combineMode": "separator",
+                "separator": "\\n\\n---\\n\\n",
+                "addSpaces": false
+              }
+            },
+            {
+              "name": "Prefix Instructions",
+              "description": "Add instructions before main content",
+              "config": {
+                "combineMode": "prefix",
+                "addSpaces": true
+              }
+            }
+          ],
+          "tags": [
+            "text",
+            "combine",
+            "prompt",
+            "concatenate",
+            "string",
+            "merge"
+          ]
+        }
+      },
+      {
+        "id": "1760374903327-3dxbdxzv4",
+        "type": "output",
+        "name": "Output",
+        "position": {
+          "x": 2334.137599553295,
+          "y": 541.7159794724333
+        },
+        "data": {},
+        "inputs": [
+          {
+            "id": "input",
+            "name": "Value",
+            "type": "input",
+            "dataType": "any",
+            "required": true,
+            "description": "Value to output"
+          }
+        ],
+        "outputs": [],
+        "metadata": {
+          "tags": [
+            "output",
+            "basic",
+            "sink"
+          ],
+          "documentation": "Displays the final result with various formatting options."
+        }
+      }
+    ],
+    "connections": [
+      {
+        "id": "1760374859743-1t00ds1kl",
+        "sourceNodeId": "1760374783716-hu3z4h6ey",
+        "sourcePortId": "text",
+        "targetNodeId": "1760374855250-shb6wdprq",
+        "targetPortId": "text2"
+      },
+      {
+        "id": "1760374864813-rzk8qxjtx",
+        "sourceNodeId": "1760374855250-shb6wdprq",
+        "sourcePortId": "combined",
+        "targetNodeId": "1760374765204-ey9pvnpog",
+        "targetPortId": "instructions"
+      },
+      {
+        "id": "1760374910167-h67brvvz4",
+        "sourceNodeId": "1760374765204-ey9pvnpog",
+        "sourcePortId": "result",
+        "targetNodeId": "1760374903327-3dxbdxzv4",
+        "targetPortId": "input"
+      },
+      {
+        "id": "1760416990022-sarkixnkv",
+        "sourceNodeId": "1760374329726-qk7uqq04q",
+        "sourcePortId": "content",
+        "targetNodeId": "1760374855250-shb6wdprq",
+        "targetPortId": "text1"
+      }
+    ],
+    "variables": [],
+    "settings": {
+      "name": "Data Analysis Notebook",
+      "version": "1.0.0"
+    },
+    "createdAt": "2025-10-13T17:40:53.818Z",
+    "updatedAt": "2025-10-14T04:45:31.614Z",
+    "version": "1.0.0"
+  },
+  "customNodes": [],
+  "metadata": {
+    "exportedAt": "2025-10-14T05:29:04.485Z",
+    "exportedBy": "Clara Agent Studio",
+    "hasCustomNodes": false
+  }
+}

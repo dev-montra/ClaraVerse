@@ -15,6 +15,7 @@ export class NodeExecutor {
       'llm': this.executeLLMNode.bind(this),
       'structured-llm': this.executeStructuredLLMNode.bind(this),
       'json-parse': this.executeJsonParseNode.bind(this),
+  'json-stringify': this.executeJsonStringifyNode.bind(this),
       'if-else': this.executeIfElseNode.bind(this),
       'image-input': this.executeImageInputNode.bind(this),
       'pdf-input': this.executePDFInputNode.bind(this),
@@ -23,6 +24,7 @@ export class NodeExecutor {
       'static-text': this.executeStaticTextNode.bind(this),
       'file-upload': this.executeFileUploadNode.bind(this),
       'whisper-transcription': this.executeWhisperTranscriptionNode.bind(this),
+      'speech-to-text': this.executeSpeechToTextNode.bind(this),
       'agent-executor': this.executeAgentExecutorNode.bind(this),
       'notebook-writer': this.executeNotebookWriterNode.bind(this),
     };
@@ -133,7 +135,7 @@ export class NodeExecutor {
    */
   async executeLLMNode(inputs, data) {
     const {
-      apiBaseUrl = 'https://api.openai.com/v1',
+  apiBaseUrl = process.env.OPENAI_API_BASE_URL || 'http://localhost:8091/v1',
       apiKey = '',
       model = 'gpt-3.5-turbo',
       temperature = 0.7,
@@ -150,19 +152,6 @@ export class NodeExecutor {
     
     if (!userMessage) {
       throw new Error('User message is required for LLM node');
-    }
-    
-    // In SDK mode without API key, we need to provide meaningful feedback
-    if (!apiKey) {
-      this.logger.warn('LLM node: No API key provided. For production use, configure your API key.');
-      
-      // Return a structured response that indicates the expected behavior
-      return {
-        response: `[LLM Response would be generated here for input: "${userMessage}"]`,
-        model: model,
-        tokensUsed: 0,
-        note: 'API key required for actual LLM execution'
-      };
     }
     
     try {
@@ -210,12 +199,19 @@ export class NodeExecutor {
       });
       
       // Make actual API call (real UI logic)
+      const headers = {
+        'Content-Type': 'application/json'
+      };
+
+      if (apiKey && apiKey.trim()) {
+        headers['Authorization'] = `Bearer ${apiKey}`;
+      } else {
+        this.logger.warn('LLM node: executing without API key. Ensure your API allows unauthenticated access.');
+      }
+
       const response = await fetch(`${apiBaseUrl}/chat/completions`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`
-        },
+        headers,
         body: JSON.stringify({
           model,
           messages,
@@ -225,7 +221,13 @@ export class NodeExecutor {
       });
       
       if (!response.ok) {
-        throw new Error(`LLM API Error: ${response.status} ${response.statusText}`);
+        if (response.status === 401) {
+          throw new Error('Authentication failed - API key may be required or invalid');
+        } else if (response.status === 403) {
+          throw new Error('Access forbidden - check API key permissions');
+        } else {
+          throw new Error(`LLM API Error: ${response.status} ${response.statusText}`);
+        }
       }
       
       const responseData = await response.json();
@@ -247,13 +249,17 @@ export class NodeExecutor {
    */
   async executeJsonParseNode(inputs, data) {
     const { extractField = '', failOnError = false } = data;
-    const inputData = inputs.input || inputs.json || Object.values(inputs)[0] || '';
+    let inputData = inputs.input || inputs.json || Object.values(inputs)[0] || '';
 
     try {
       let parsedData;
       
-      // Parse input if it's a string (real UI logic)
-      if (typeof inputData === 'string') {
+      // Handle API response format { data: {...}, status: 200, ... }
+      if (inputData && typeof inputData === 'object' && 'data' in inputData && 'status' in inputData) {
+        // Extract the actual data from API response wrapper
+        parsedData = inputData.data;
+      } else if (typeof inputData === 'string') {
+        // Parse JSON string (real UI logic)
         if (!inputData.trim()) {
           if (failOnError) {
             throw new Error('Empty input provided to JSON parser');
@@ -261,8 +267,12 @@ export class NodeExecutor {
           return null;
         }
         parsedData = JSON.parse(inputData);
-      } else {
+      } else if (typeof inputData === 'object') {
+        // Already an object, use as-is
         parsedData = inputData;
+      } else {
+        // Try to parse as string
+        parsedData = JSON.parse(String(inputData));
       }
 
       // Extract specific field if specified (real UI logic)
@@ -282,6 +292,43 @@ export class NodeExecutor {
       } else {
         this.logger.warn(`JSON parsing failed: ${error.message}, returning original input`);
         return inputData;
+      }
+    }
+  }
+
+  /**
+   * Execute JSON Stringify Node
+   * Converts objects into string output for downstream text nodes
+   */
+  async executeJsonStringifyNode(inputs, data = {}) {
+    const {
+      prettyPrint = true,
+      indent = 2,
+      nullFallback = ''
+    } = data;
+
+    const inputValue = inputs.input ?? inputs.json ?? Object.values(inputs)[0];
+
+    if (inputValue === null || inputValue === undefined) {
+      return nullFallback;
+    }
+
+    if (typeof inputValue === 'string') {
+      return inputValue;
+    }
+
+    try {
+      const normalizedIndent = Math.min(Math.max(Number.isFinite(indent) ? Math.round(indent) : 2, 0), 8);
+      const spacing = prettyPrint ? normalizedIndent : 0;
+      const stringified = JSON.stringify(inputValue, null, spacing || undefined);
+      return stringified ?? nullFallback;
+    } catch (error) {
+      this.logger.warn('JSON stringify failed, falling back to toString()', { error: error.message });
+      try {
+        return String(inputValue);
+      } catch (stringError) {
+        this.logger.error('String coercion failed', { error: stringError.message });
+        return nullFallback;
       }
     }
   }
@@ -479,16 +526,6 @@ export class NodeExecutor {
       throw new Error('JSON Example is required for Structured LLM node');
     }
     
-    if (!apiKey) {
-      this.logger.warn('Structured LLM node: No API key provided');
-      return {
-        jsonOutput: JSON.parse(jsonExample),
-        rawResponse: jsonExample,
-        usage: { totalTokens: '[REDACTED]' },
-        note: 'API key required for actual LLM execution'
-      };
-    }
-    
     try {
       // Parse the JSON example to validate it
       let exampleObject;
@@ -545,12 +582,18 @@ export class NodeExecutor {
       }
       
       // Make API call
+      const headers = {
+        'Content-Type': 'application/json'
+      };
+      if (apiKey && apiKey.trim()) {
+        headers['Authorization'] = `Bearer ${apiKey}`;
+      } else {
+        this.logger.warn('Structured LLM node: executing without API key');
+      }
+
       const response = await fetch(`${apiBaseUrl}/chat/completions`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`
-        },
+        headers,
         body: JSON.stringify(requestBody)
       });
       
@@ -638,12 +681,18 @@ export class NodeExecutor {
       messages.push({ role: 'user', content: userMessage });
       
       // Make API call without structured output format
+      const headers = {
+        'Content-Type': 'application/json'
+      };
+      if (apiKey && apiKey.trim()) {
+        headers['Authorization'] = `Bearer ${apiKey}`;
+      } else {
+        this.logger.warn('Structured LLM fallback: executing without API key');
+      }
+
       const response = await fetch(`${apiBaseUrl}/chat/completions`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`
-        },
+        headers,
         body: JSON.stringify({
           model,
           messages,
@@ -1533,6 +1582,118 @@ export class NodeExecutor {
     } catch (error) {
       this.logger.error('Whisper transcription failed:', error);
       throw new Error(`Whisper transcription failed: ${error.message}`);
+    }
+  }
+
+  /**
+   * Execute Speech-to-Text Node
+   * Send base64 encoded audio to a configurable HTTP endpoint
+   */
+  async executeSpeechToTextNode(inputs, data) {
+    const {
+      baseUrl = 'http://localhost:5001/transcribe',
+      language = 'en',
+      beamSize = 5,
+      initialPrompt = ''
+    } = data;
+
+    if (!baseUrl) {
+      throw new Error('Transcription endpoint URL is required for speech-to-text node');
+    }
+
+    // Extract audio input from various possible formats
+    let audioInput = inputs.audioBase64 || inputs.audio || inputs.content || inputs.file;
+    
+    // Handle file-upload node output format: { content: ..., metadata: ... }
+    if (audioInput && typeof audioInput === 'object' && audioInput.content) {
+      audioInput = audioInput.content;
+    }
+    
+    if (!audioInput) {
+      throw new Error('Speech-to-text node requires a base64 audio input');
+    }
+
+    const languageOverride = inputs.languageOverride;
+
+    const decodeBase64ToBlob = (payload) => {
+      let cleaned = typeof payload === 'string' ? payload.trim() : String(payload);
+      let mimeType = 'audio/wav';
+      let extension = 'wav';
+
+      if (cleaned.startsWith('data:')) {
+        const match = cleaned.match(/^data:(.*?);base64,/);
+        if (match) {
+          mimeType = match[1] || mimeType;
+          cleaned = cleaned.substring(match[0].length);
+        }
+      }
+
+      if (mimeType.includes('mpeg') || mimeType.includes('mp3')) {
+        extension = 'mp3';
+      } else if (mimeType.includes('ogg')) {
+        extension = 'ogg';
+      } else if (mimeType.includes('webm')) {
+        extension = 'webm';
+      }
+
+      try {
+        const binary = atob(cleaned);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        return {
+          blob: new Blob([bytes], { type: mimeType }),
+          fileName: `audio.${extension}`
+        };
+      } catch (error) {
+        throw new Error(`Invalid base64 audio payload: ${error.message}`);
+      }
+    };
+
+    const { blob, fileName } = decodeBase64ToBlob(audioInput);
+
+    const formData = new FormData();
+    formData.append('file', blob, fileName);
+
+    if (languageOverride || language) {
+      formData.append('language', (languageOverride || language).toString());
+    }
+
+    if (beamSize) {
+      formData.append('beam_size', beamSize.toString());
+    }
+
+    if (initialPrompt) {
+      formData.append('initial_prompt', initialPrompt);
+    }
+
+    try {
+      const response = await fetch(baseUrl, {
+        method: 'POST',
+        body: formData
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Transcription request failed: ${response.status} ${response.statusText} - ${errorText}`);
+      }
+
+      const payload = await response.json();
+
+      return {
+        transcription: payload?.transcription?.text || payload?.text || '',
+        segments: payload?.transcription?.segments || [],
+        raw: payload,
+        metadata: {
+          language: payload?.transcription?.language || languageOverride || language,
+          beamSize,
+          endpoint: baseUrl
+        }
+      };
+    } catch (error) {
+      this.logger.error('Speech-to-text node failed', error);
+      throw new Error(`Speech-to-text node failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   }
 

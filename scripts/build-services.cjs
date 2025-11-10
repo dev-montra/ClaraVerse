@@ -137,57 +137,44 @@ async function buildServices() {
 async function buildCurrentPlatformServices() {
   const platformConfig = getPlatformConfig();
   console.log(`\n🔧 Building services for ${platformConfig.name} (${platformConfig.GOARCH})`);
-  
-  // Step 1: Build llama optimizer for current platform only
-  console.log('\n=== Building llama optimizer ===');
-  process.chdir(path.join(__dirname, '..', 'clara-core-optimiser'));
-  
-  const optimizerOutput = `../electron/services/llama-optimizer-${platformConfig.name}${platformConfig.suffix}`;
-  await runCommand(goExecutable, ['build', '-ldflags="-s -w"', '-o', optimizerOutput, 'llama_optimizer.go'], {
-    env: { 
-      ...process.env, 
-      GOOS: platformConfig.GOOS, 
-      GOARCH: platformConfig.GOARCH 
-    }
-  });
 
-  // Step 2: Build widgets service for current platform only
+  // Step 1: Build widgets service for current platform only
   console.log('\n=== Building widgets service ===');
   process.chdir(path.join(__dirname, '..', 'widgets_service_app'));
-  
+
   const widgetsOutput = `../electron/services/widgets-service-${platformConfig.name}${platformConfig.suffix}`;
   await runCommand(goExecutable, ['build', '-ldflags="-s -w"', '-o', widgetsOutput, 'main.go', 'enhanced_pdf_processor.go'], {
-    env: { 
-      ...process.env, 
-      CGO_ENABLED: '0', 
-      GOOS: platformConfig.GOOS, 
-      GOARCH: platformConfig.GOARCH 
+    env: {
+      ...process.env,
+      CGO_ENABLED: '0',
+      GOOS: platformConfig.GOOS,
+      GOARCH: platformConfig.GOARCH
     }
   });
 
-  // Step 3: Build MCP server for current platform only
+  // Step 2: Build MCP server for current platform only
   console.log('\n=== Building MCP server ===');
   process.chdir(path.join(__dirname, '..', 'clara-mcp'));
-  
+
   const mcpOutput = `../electron/services/python-mcp-server-${platformConfig.name}${platformConfig.suffix}`;
   await runCommand(goExecutable, ['build', '-ldflags="-s -w"', '-o', mcpOutput, '.'], {
-    env: { 
-      ...process.env, 
-      CGO_ENABLED: '0', 
-      GOOS: platformConfig.GOOS, 
-      GOARCH: platformConfig.GOARCH 
+    env: {
+      ...process.env,
+      CGO_ENABLED: '0',
+      GOOS: platformConfig.GOOS,
+      GOARCH: platformConfig.GOARCH
     }
   });
-  
+
   // Build alternative naming for macOS compatibility
   if (platform === 'darwin') {
     const altMcpOutput = `../electron/services/python-mcp-server-mac-${platformConfig.GOARCH}`;
     await runCommand(goExecutable, ['build', '-ldflags="-s -w"', '-o', altMcpOutput, '.'], {
-      env: { 
-        ...process.env, 
-        CGO_ENABLED: '0', 
-        GOOS: platformConfig.GOOS, 
-        GOARCH: platformConfig.GOARCH 
+      env: {
+        ...process.env,
+        CGO_ENABLED: '0',
+        GOOS: platformConfig.GOOS,
+        GOARCH: platformConfig.GOARCH
       }
     });
   }
@@ -197,82 +184,60 @@ async function buildCurrentPlatformServices() {
 
 async function buildAllPlatformsServices() {
   console.log('\n🌍 Building services for all platforms...');
-  
-  // Step 1: Build llama optimizer for all platforms
-  console.log('\n=== Building llama optimizer ===');
-  process.chdir(path.join(__dirname, '..', 'clara-core-optimiser'));
-  
-  // Windows
-  await runCommand(goExecutable, ['build', '-ldflags="-s -w"', '-o', '../electron/services/llama-optimizer-windows.exe', 'llama_optimizer.go']);
-  
-  // macOS AMD64
-  await runCommand(goExecutable, ['build', '-ldflags="-s -w"', '-o', '../electron/services/llama-optimizer-darwin-amd64', 'llama_optimizer.go'], {
-    env: { ...process.env, GOOS: 'darwin', GOARCH: 'amd64' }
-  });
-  
-  // macOS ARM64
-  await runCommand(goExecutable, ['build', '-ldflags="-s -w"', '-o', '../electron/services/llama-optimizer-darwin-arm64', 'llama_optimizer.go'], {
-    env: { ...process.env, GOOS: 'darwin', GOARCH: 'arm64' }
-  });
-  
-  // Linux
-  await runCommand(goExecutable, ['build', '-ldflags="-s -w"', '-o', '../electron/services/llama-optimizer-linux', 'llama_optimizer.go'], {
-    env: { ...process.env, GOOS: 'linux', GOARCH: 'amd64' }
-  });
 
-  // Step 2: Build widgets service for all platforms
+  // Step 1: Build widgets service for all platforms
   console.log('\n=== Building widgets service ===');
   process.chdir(path.join(__dirname, '..', 'widgets_service_app'));
-  
+
   // Windows
   await runCommand(goExecutable, ['build', '-ldflags="-s -w"', '-o', '../electron/services/widgets-service-windows.exe', 'main.go', 'enhanced_pdf_processor.go'], {
     env: { ...process.env, CGO_ENABLED: '0', GOOS: 'windows', GOARCH: 'amd64' }
   });
-  
+
   // Linux
   await runCommand(goExecutable, ['build', '-ldflags="-s -w"', '-o', '../electron/services/widgets-service-linux', 'main.go', 'enhanced_pdf_processor.go'], {
     env: { ...process.env, CGO_ENABLED: '0', GOOS: 'linux', GOARCH: 'amd64' }
   });
-  
+
   // macOS AMD64
   await runCommand(goExecutable, ['build', '-ldflags="-s -w"', '-o', '../electron/services/widgets-service-darwin-amd64', 'main.go', 'enhanced_pdf_processor.go'], {
     env: { ...process.env, CGO_ENABLED: '0', GOOS: 'darwin', GOARCH: 'amd64' }
   });
-  
+
   // macOS ARM64
   await runCommand(goExecutable, ['build', '-ldflags="-s -w"', '-o', '../electron/services/widgets-service-darwin-arm64', 'main.go', 'enhanced_pdf_processor.go'], {
     env: { ...process.env, CGO_ENABLED: '0', GOOS: 'darwin', GOARCH: 'arm64' }
   });
 
-  // Step 3: Build MCP server for all platforms
+  // Step 2: Build MCP server for all platforms
   console.log('\n=== Building MCP server ===');
   process.chdir(path.join(__dirname, '..', 'clara-mcp'));
-  
+
   // Windows
   await runCommand(goExecutable, ['build', '-ldflags="-s -w"', '-o', '../electron/services/python-mcp-server-windows.exe', '.'], {
     env: { ...process.env, CGO_ENABLED: '0', GOOS: 'windows', GOARCH: 'amd64' }
   });
-  
+
   // Linux
   await runCommand(goExecutable, ['build', '-ldflags="-s -w"', '-o', '../electron/services/python-mcp-server-linux', '.'], {
     env: { ...process.env, CGO_ENABLED: '0', GOOS: 'linux', GOARCH: 'amd64' }
   });
-  
+
   // macOS AMD64
   await runCommand(goExecutable, ['build', '-ldflags="-s -w"', '-o', '../electron/services/python-mcp-server-darwin-amd64', '.'], {
     env: { ...process.env, CGO_ENABLED: '0', GOOS: 'darwin', GOARCH: 'amd64' }
   });
-  
+
   // macOS ARM64
   await runCommand(goExecutable, ['build', '-ldflags="-s -w"', '-o', '../electron/services/python-mcp-server-darwin-arm64', '.'], {
     env: { ...process.env, CGO_ENABLED: '0', GOOS: 'darwin', GOARCH: 'arm64' }
   });
-  
+
   // macOS AMD64 (alternative naming)
   await runCommand(goExecutable, ['build', '-ldflags="-s -w"', '-o', '../electron/services/python-mcp-server-mac-amd64', '.'], {
     env: { ...process.env, CGO_ENABLED: '0', GOOS: 'darwin', GOARCH: 'amd64' }
   });
-  
+
   // macOS ARM64 (alternative naming)
   await runCommand(goExecutable, ['build', '-ldflags="-s -w"', '-o', '../electron/services/python-mcp-server-mac-arm64', '.'], {
     env: { ...process.env, CGO_ENABLED: '0', GOOS: 'darwin', GOARCH: 'arm64' }

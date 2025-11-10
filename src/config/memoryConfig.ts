@@ -57,7 +57,18 @@ export const MEMORY_CONFIG = {
     batchSize: 5,
     enableCaching: true,
     cacheExpiryMs: 5 * 60 * 1000, // 5 minutes
-    enableCompression: false // Compress stored data
+    enableCompression: true // AI-powered compression when memory is too large
+  },
+
+  // Compression settings
+  compression: {
+    warningThreshold: 5 * 1024, // 5KB - show warning dialog (optional)
+    maxSize: 10 * 1024, // 10KB - auto-compress without asking
+    targetSize: 3 * 1024, // 3KB - target after compression
+    provider: 'openai', // AI provider for compression
+    model: 'gpt-4o-mini', // Fast and cheap model
+    autoCompress: true, // Auto-compress when hitting maxSize (10KB)
+    showDialog: false // Don't show dialog, compress silently in background
   }
 };
 

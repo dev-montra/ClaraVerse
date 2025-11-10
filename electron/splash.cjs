@@ -12,11 +12,20 @@ class SplashScreen {
     let shouldStartFullscreen = false;
     try {
       const userDataPath = app.getPath('userData');
-      const settingsPath = path.join(userDataPath, 'settings.json');
-      
-      if (fs.existsSync(settingsPath)) {
-        const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf8'));
-        shouldStartFullscreen = settings.startup?.startFullscreen ?? settings.fullscreen_startup ?? false;
+      const startupSettingsPath = path.join(userDataPath, 'clara-startup-settings.json');
+      const legacySettingsPath = path.join(userDataPath, 'clara-settings.json');
+      const veryLegacySettingsPath = path.join(userDataPath, 'settings.json');
+
+      if (fs.existsSync(startupSettingsPath)) {
+        const startupSettings = JSON.parse(fs.readFileSync(startupSettingsPath, 'utf8'));
+        shouldStartFullscreen = !!startupSettings.startFullscreen;
+      } else if (fs.existsSync(legacySettingsPath)) {
+        const legacySettings = JSON.parse(fs.readFileSync(legacySettingsPath, 'utf8'));
+        const legacyStartup = legacySettings.startup || {};
+        shouldStartFullscreen = legacyStartup.startFullscreen ?? legacySettings.fullscreen_startup ?? false;
+      } else if (fs.existsSync(veryLegacySettingsPath)) {
+        const veryLegacySettings = JSON.parse(fs.readFileSync(veryLegacySettingsPath, 'utf8'));
+        shouldStartFullscreen = veryLegacySettings.startup?.startFullscreen ?? veryLegacySettings.fullscreen_startup ?? false;
       }
     } catch (error) {
       console.error('Error reading fullscreen startup preference:', error);

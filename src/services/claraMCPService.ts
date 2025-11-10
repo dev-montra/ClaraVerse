@@ -1,29 +1,100 @@
 /**
  * Clara MCP Service
- * 
+ *
  * This service handles Model Context Protocol (MCP) integration for Clara Assistant.
  * It manages MCP servers, discovers available tools and resources, and executes tool calls.
+ *
+ * HYBRID ARCHITECTURE:
+ * - Electron environment: Uses window.mcpService (IPC to Node.js backend)
+ * - Browser environment: Uses HTTP API (port 8092 MCP proxy service)
  */
 
-import { 
-  ClaraMCPServer, 
-  ClaraMCPTool, 
-  ClaraMCPResource, 
-  ClaraMCPToolCall, 
-  ClaraMCPToolResult 
+import {
+  ClaraMCPServer,
+  ClaraMCPTool,
+  ClaraMCPResource,
+  ClaraMCPToolCall,
+  ClaraMCPToolResult
 } from '../types/clara_assistant_types';
 
 /**
+ * Environment type for MCP service
+ */
+type MCPEnvironment = 'electron' | 'browser';
+
+/**
  * MCP Client for communicating with MCP servers
+ * Supports both Electron (via window.mcpService) and browser (via HTTP API)
  */
 export class ClaraMCPService {
   private servers: Map<string, ClaraMCPServer> = new Map();
   private tools: Map<string, ClaraMCPTool> = new Map();
   private resources: Map<string, ClaraMCPResource> = new Map();
   private isInitialized = false;
+  private environment: MCPEnvironment;
+  private mcpProxyUrl = 'http://127.0.0.1:8092';
 
   constructor() {
+    // Detect environment
+    this.environment = this.detectEnvironment();
+    console.log(`🌍 MCP Service running in ${this.environment} environment`);
+
     this.initialize();
+  }
+
+  /**
+   * Detect if running in Electron or browser environment
+   */
+  private detectEnvironment(): MCPEnvironment {
+    return typeof window !== 'undefined' && (window as any).mcpService ? 'electron' : 'browser';
+  }
+
+  /**
+   * Wrapper for MCP service calls - routes to Electron IPC or HTTP API
+   */
+  private async callMCPService<T>(
+    method: string,
+    electronCall: () => Promise<T>,
+    httpEndpoint: string,
+    httpMethod: 'GET' | 'POST' | 'PUT' | 'DELETE' = 'GET',
+    httpBody?: any
+  ): Promise<T> {
+    if (this.environment === 'electron') {
+      return electronCall();
+    } else {
+      // Browser environment - use HTTP API
+      try {
+        const url = `${this.mcpProxyUrl}${httpEndpoint}`;
+        const options: RequestInit = {
+          method: httpMethod,
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        };
+
+        if (httpBody && (httpMethod === 'POST' || httpMethod === 'PUT')) {
+          options.body = JSON.stringify(httpBody);
+        }
+
+        const response = await fetch(url, options);
+
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        }
+
+        const data = await response.json();
+
+        if (data.success === false) {
+          throw new Error(data.error || 'MCP proxy request failed');
+        }
+
+        // Extract the actual result from the response wrapper
+        return (data.servers || data.status || data.result || data) as T;
+      } catch (error) {
+        console.error(`❌ MCP HTTP call failed (${method}):`, error);
+        throw error;
+      }
+    }
   }
 
   /**
@@ -55,12 +126,13 @@ export class ClaraMCPService {
   public async refreshServers(): Promise<void> {
     try {
       console.log('🔄 Refreshing MCP servers...');
-      if (!window.mcpService) {
-        console.warn('⚠️ MCP service not available in window object');
-        return;
-      }
 
-      const servers = await window.mcpService.getServers();
+      const servers = await this.callMCPService<any[]>(
+        'getServers',
+        () => (window as any).mcpService.getServers(),
+        '/api/servers',
+        'GET'
+      );
       
       // Always ensure Clara's Python MCP server exists
       const hasPythonMCP = servers.some((server: any) => server.name === 'python-mcp');
@@ -109,12 +181,13 @@ export class ClaraMCPService {
   public async startServer(serverName: string): Promise<boolean> {
     try {
       console.log(`🚀 Starting MCP server: ${serverName}`);
-      if (!window.mcpService) {
-        console.warn('⚠️ MCP service not available in window object');
-        return false;
-      }
 
-      await window.mcpService.startServer(serverName);
+      await this.callMCPService<void>(
+        'startServer',
+        () => (window as any).mcpService.startServer(serverName),
+        `/api/servers/${serverName}/start`,
+        'POST'
+      );
       
       // Refresh the server state
       await this.refreshServers();
@@ -134,12 +207,13 @@ export class ClaraMCPService {
   public async stopServer(serverName: string): Promise<boolean> {
     try {
       console.log(`🛑 Stopping MCP server: ${serverName}`);
-      if (!window.mcpService) {
-        console.warn('⚠️ MCP service not available in window object');
-        return false;
-      }
 
-      await window.mcpService.stopServer(serverName);
+      await this.callMCPService<void>(
+        'stopServer',
+        () => (window as any).mcpService.stopServer(serverName),
+        `/api/servers/${serverName}/stop`,
+        'POST'
+      );
       
       // Refresh the server state
       await this.refreshServers();
@@ -230,9 +304,6 @@ export class ClaraMCPService {
   private async discoverServerCapabilities(server: ClaraMCPServer): Promise<void> {
     // Dynamic MCP tool discovery using the MCP protocol
     try {
-      if (!window.mcpService?.executeToolCall) {
-        throw new Error('MCP service not available in window object');
-      }
       // Compose a tool call for 'tools/list' (MCP standard)
       const callId = `list_tools_${server.name}_${Date.now()}`;
       const toolCall = {
@@ -242,7 +313,13 @@ export class ClaraMCPService {
         callId
       };
       // Send the request to the MCP server
-      const response = await window.mcpService.executeToolCall(toolCall);
+      const response = await this.callMCPService<ClaraMCPToolResult>(
+        'executeToolCall',
+        () => (window as any).mcpService.executeToolCall(toolCall),
+        '/api/tools/execute',
+        'POST',
+        toolCall
+      );
       if (response && response.success && Array.isArray(response.content)) {
         // The result should be an array of tool definitions
         const tools = response.content.find((c: any) => c.type === 'json' || c.type === 'object' || c.type === 'text');
@@ -678,28 +755,29 @@ export class ClaraMCPService {
       console.log(`✅ [MCP] Server is running:`, server);
 
       // Use the backend MCP service to execute the tool call
-      console.log(`🔍 [MCP] Checking window.mcpService:`, !!window.mcpService);
-      console.log(`🔍 [MCP] Checking executeToolCall method:`, !!window.mcpService?.executeToolCall);
-      
-      if (window.mcpService?.executeToolCall) {
-        try {
-          // Create corrected tool call object for fuzzy matches
-          const correctedToolCall = usedFuzzyMatch ? {
-            ...toolCall,
-            server: tool.server,
-            name: tool.name
-          } : toolCall;
-          
-          console.log(`📡 [MCP] Calling backend MCP service with:`, correctedToolCall);
-          const result = await window.mcpService.executeToolCall(correctedToolCall);
-          console.log(`📥 [MCP] Backend result:`, result);
-          return result;
-        } catch (error) {
-          console.error('❌ [MCP] Backend MCP execution failed, falling back to simulation:', error);
-          // Fall back to simulation if backend fails
-        }
-      } else {
-        console.warn('⚠️ [MCP] Backend MCP service not available, using simulation');
+      console.log(`🔍 [MCP] Environment:`, this.environment);
+
+      try {
+        // Create corrected tool call object for fuzzy matches
+        const correctedToolCall = usedFuzzyMatch ? {
+          ...toolCall,
+          server: tool.server,
+          name: tool.name
+        } : toolCall;
+
+        console.log(`📡 [MCP] Calling backend MCP service with:`, correctedToolCall);
+        const result = await this.callMCPService<ClaraMCPToolResult>(
+          'executeToolCall',
+          () => (window as any).mcpService.executeToolCall(correctedToolCall),
+          '/api/tools/execute',
+          'POST',
+          correctedToolCall
+        );
+        console.log(`📥 [MCP] Backend result:`, result);
+        return result;
+      } catch (error) {
+        console.error('❌ [MCP] Backend MCP execution failed, falling back to simulation:', error);
+        // Fall back to simulation if backend fails
       }
 
       // Fallback to simulation if backend is not available
@@ -1306,7 +1384,13 @@ export class ClaraMCPService {
       };
 
       try {
-        await window.mcpService.addServer(pythonMCPServerConfig);
+        await this.callMCPService<void>(
+          'addServer',
+          () => (window as any).mcpService.addServer(pythonMCPServerConfig),
+          '/api/servers',
+          'POST',
+          pythonMCPServerConfig
+        );
         console.log('✅ Python MCP server added successfully');
       } catch (error: any) {
         if (error.message?.includes('already exists')) {
@@ -1319,7 +1403,12 @@ export class ClaraMCPService {
       // Try to start the server
       try {
         console.log('🚀 Attempting to start Python MCP server...');
-        await window.mcpService.startServer('python-mcp');
+        await this.callMCPService<void>(
+          'startServer',
+          () => (window as any).mcpService.startServer('python-mcp'),
+          '/api/servers/python-mcp/start',
+          'POST'
+        );
         console.log('✅ Python MCP server started successfully');
       } catch (startError) {
         console.warn('⚠️ Failed to start Python MCP server:', startError);

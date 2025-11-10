@@ -26,6 +26,7 @@ import { claraMCPService } from '../services/claraMCPService';
 import { claraMemoryService } from '../services/claraMemoryService';
 import { addCompletionNotification, addBackgroundCompletionNotification, addErrorNotification, addInfoNotification, notificationService, clearErrorNotifications } from '../services/notificationService';
 import { claraBackgroundService } from '../services/claraBackgroundService';
+import { personaStorageService } from '../services/personaStorageService';
 
 // Import clear data utility
 import '../utils/clearClaraData';
@@ -48,25 +49,26 @@ import ClaraSweetMemory, { ClaraSweetMemoryAPI } from './ClaraSweetMemory';
 import ClaraMemoryToast from './Clara_Components/ClaraMemoryToast';
 import { claraMemoryToastService, type MemoryToastState } from '../services/claraMemoryToastService';
 
-// Import First Time Setup Modal
-import FirstTimeSetupModal from './FirstTimeSetupModal';
-
-// Import first-time setup utilities for testing
-import '../utils/firstTimeSetupUtils';
-
 // Import the new memory integration service
 import { claraMemoryIntegration } from '../services/ClaraMemoryIntegration';
 
 // Clara Memory Dashboard
 import ClaraBrainDashboard from './Clara_Components/ClaraBrainDashboard';
 
+// Memory compression now happens automatically in background - no dialog needed
+
 // Import clipboard test functions for development
 if (process.env.NODE_ENV === 'development') {
   import('../utils/clipboard.test');
 }
 
+// Import Artifact Pane components
+import { useArtifactPane } from '../contexts/ArtifactPaneContext';
+import ClaraArtifactPane from './Clara_Components/ClaraArtifactPane';
+
 interface ClaraAssistantProps {
   onPageChange: (page: string) => void;
+  onProcessingChange?: (isProcessing: boolean) => void;
 }
 
 /**
@@ -353,7 +355,7 @@ const toolsGuidance =  `
 Always use tools when needed. 
 When using tools, be thorough and explain your actions clearly.
 
-when you are asked for something always resort to writing a python script and running it.
+when you are asked for something and you don't have any direct tools to use,  always resort to running a python_mcp and run script if its calculation or something thats dynamic and requires real-time data (e.g. fetching user data, performing calculations but not giveing code to users its useless).
 `;
 
   switch (provider?.type) {
@@ -443,10 +445,92 @@ const useIsVisible = () => {
   return isVisible;
 };
 
-const ClaraAssistant: React.FC<ClaraAssistantProps> = ({ onPageChange }) => {
+const ClaraAssistant: React.FC<ClaraAssistantProps> = ({ onPageChange, onProcessingChange }) => {
   // Check if Clara is currently visible (for background operation)
   const isVisible = useIsVisible();
-  
+
+  // Artifact Pane state
+  const { isOpen: isArtifactPaneOpen, artifacts, closeArtifactPane, openArtifactPane, clearArtifacts } = useArtifactPane();
+
+  // TEST: Expose artifact pane test function to window (development only)
+  useEffect(() => {
+    if (process.env.NODE_ENV === 'development') {
+      (window as any).testArtifactPane = () => {
+        const testArtifacts = [
+          {
+            id: 'test-1',
+            type: 'code' as const,
+            title: 'React Counter Component',
+            content: `import React, { useState } from 'react';
+
+const Counter: React.FC = () => {
+  const [count, setCount] = useState(0);
+
+  return (
+    <div className="p-6 space-y-4">
+      <h2 className="text-2xl font-bold">Count: {count}</h2>
+      <div className="flex gap-2">
+        <button
+          onClick={() => setCount(count + 1)}
+          className="px-4 py-2 bg-blue-500 text-white rounded"
+        >
+          Increment
+        </button>
+        <button
+          onClick={() => setCount(count - 1)}
+          className="px-4 py-2 bg-red-500 text-white rounded"
+        >
+          Decrement
+        </button>
+      </div>
+    </div>
+  );
+};
+
+export default Counter;`,
+            language: 'typescript',
+            createdAt: new Date(),
+          },
+          {
+            id: 'test-2',
+            type: 'mermaid' as const,
+            title: 'Component Flow',
+            content: `graph TD
+    A[User Clicks Button] --> B{Update State}
+    B -->|Increment| C[count + 1]
+    B -->|Decrement| D[count - 1]
+    C --> E[Re-render]
+    D --> E`,
+            createdAt: new Date(),
+          },
+          {
+            id: 'test-3',
+            type: 'chart' as const,
+            title: 'Usage Stats',
+            content: JSON.stringify({
+              type: 'bar',
+              data: {
+                labels: ['Jan', 'Feb', 'Mar', 'Apr'],
+                datasets: [{
+                  label: 'Users',
+                  data: [65, 59, 80, 81],
+                  backgroundColor: 'rgba(59, 130, 246, 0.5)',
+                }]
+              }
+            }),
+            createdAt: new Date(),
+          }
+        ];
+
+        openArtifactPane(testArtifacts, 'test-message');
+        console.log('🎨 Artifact Pane opened with 3 test artifacts!');
+        console.log('Use ← → arrows to navigate between artifacts');
+      };
+
+      console.log('🧪 TEST: Run window.testArtifactPane() to open artifact pane with test data');
+    }
+  }, [openArtifactPane]);
+
   // User and session state
   const [userName, setUserName] = useState<string>('');
   const [userInfo, setUserInfo] = useState<{ name?: string; email?: string; timezone?: string } | null>(null);
@@ -470,7 +554,28 @@ const ClaraAssistant: React.FC<ClaraAssistantProps> = ({ onPageChange }) => {
     const saved = localStorage.getItem('clara-memory-enabled');
     return saved !== null ? JSON.parse(saved) : true;
   });
-  
+
+  // Listen for memory compression events (background auto-compression)
+  useEffect(() => {
+    const unsubscribe = claraMemoryIntegration.addEventListener((event) => {
+      if (event.type === 'compression_needed' && event.sizeInfo) {
+        console.log('🗜️ Compression needed (auto-compressing in background)');
+        // With autoCompress=true, compression happens automatically in background
+      } else if (event.type === 'compression_complete' && event.compressionResult) {
+        console.log('🗜️ Background compression complete:', event);
+
+        // Show success notification with compression stats
+        const ratio = event.compressionResult.compressionRatio.toFixed(0);
+        addInfoNotification(
+          'Memory Optimized',
+          `Clara automatically compressed her memories by ${ratio}%!`
+        );
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
   // Listen for memory settings changes from other components (like the dashboard)
   useEffect(() => {
     const handleStorageChange = (e: StorageEvent) => {
@@ -478,7 +583,7 @@ const ClaraAssistant: React.FC<ClaraAssistantProps> = ({ onPageChange }) => {
         setMemoryEnabled(JSON.parse(e.newValue));
       }
     };
-    
+
     window.addEventListener('storage', handleStorageChange);
     return () => window.removeEventListener('storage', handleStorageChange);
   }, []);
@@ -493,10 +598,6 @@ const ClaraAssistant: React.FC<ClaraAssistantProps> = ({ onPageChange }) => {
 
   // No models modal state
   const [showNoModelsModal, setShowNoModelsModal] = useState(false);
-
-  // First-time setup modal state
-  const [showFirstTimeSetup, setShowFirstTimeSetup] = useState(false);
-  const [isFirstTimeUser, setIsFirstTimeUser] = useState(false);
 
   // Service startup state tracking
   const [serviceStartupStatus, setServiceStartupStatus] = useState<{
@@ -525,6 +626,9 @@ const ClaraAssistant: React.FC<ClaraAssistantProps> = ({ onPageChange }) => {
     knowledgeLevel: 0,
     lastShownAt: 0
   });
+
+  // Scroll trigger for auto-scrolling when loading chat from history
+  const [scrollTrigger, setScrollTrigger] = useState(0);
 
   // Clara Brain tab state
   const [activeTab, setActiveTab] = useState<'chat' | 'brain'>('chat');
@@ -651,7 +755,7 @@ const ClaraAssistant: React.FC<ClaraAssistantProps> = ({ onPageChange }) => {
         maxToolCalls: 5
       },
       autonomousAgent: {
-        enabled: false,                 // **CHANGED**: Default to false for streaming mode
+        enabled: true,                  // **DEFAULT**: Align with agent mode toggle
         maxRetries: 3,
         retryDelay: 1000,
         enableSelfCorrection: true,
@@ -660,7 +764,8 @@ const ClaraAssistant: React.FC<ClaraAssistantProps> = ({ onPageChange }) => {
         maxToolCalls: 10,
         confidenceThreshold: 0.7,
         enableChainOfThought: true,
-        enableErrorLearning: true
+      enableErrorLearning: true,
+      enableDeepThinkingVerification: false
       }
     },
     contextWindow: 50 // Include last 50 messages in conversation history
@@ -670,14 +775,14 @@ const ClaraAssistant: React.FC<ClaraAssistantProps> = ({ onPageChange }) => {
   const checkProviderHealthCached = useCallback(async (provider: ClaraProvider): Promise<boolean> => {
     const now = Date.now();
     const cached = providerHealthCache.get(provider.id);
-    
+
     // Return cached result if still valid
     if (cached && (now - cached.timestamp < HEALTH_CHECK_CACHE_TIME)) {
       console.log(`✅ Using cached health status for ${provider.name}: ${cached.isHealthy}`);
       return cached.isHealthy;
     }
-    
-    // Perform actual health check
+
+    // Perform actual health check (with 5s timeout from APIClient)
     console.log(`🏥 Performing health check for ${provider.name}...`);
     try {
       const isHealthy = await claraApiService.testProvider(provider);
@@ -717,39 +822,7 @@ const ClaraAssistant: React.FC<ClaraAssistantProps> = ({ onPageChange }) => {
     serviceName: string | null;
     phase: string | null;
   }> => {
-    try {
-      // Check Clara's Pocket service status - check regardless of current provider setting
-      // since during startup the provider might not be set yet
-      if (window.llamaSwap) {
-        const status = await window.llamaSwap.getStatus?.();
-        console.log('🔍 Checking llamaSwap service status:', status);
-        
-        if (status?.isStarting) {
-          console.log(`🚀 Service starting detected: ${status.currentStartupPhase || 'Initializing...'}`);
-          return {
-            isStarting: true,
-            serviceName: "Clara's Core",
-            phase: status.currentStartupPhase || 'Initializing...'
-          };
-        }
-        
-        // Also check if service is running but models haven't loaded yet
-        if (status?.isRunning && models.length === 0) {
-          console.log('🔄 Service running but models not loaded yet, checking if it just started...');
-          // If service just started (within last 30 seconds), consider it still starting
-          if (status.startingTimestamp && (Date.now() - status.startingTimestamp) < 30000) {
-            return {
-              isStarting: true,
-              serviceName: "Clara's Core",
-              phase: 'Loading models...'
-            };
-          }
-        }
-      }
-      
-      // Check for other service startup indicators here if needed
-      // For example, check MCP services, other providers, etc.
-      
+    try {      
       return {
         isStarting: false,
         serviceName: null,
@@ -919,13 +992,33 @@ const ClaraAssistant: React.FC<ClaraAssistantProps> = ({ onPageChange }) => {
           console.debug('Mermaid error cleanup failed:', error);
         }
       };
-      
-      // Run error removal periodically
-      const errorCleanupInterval = setInterval(removeMermaidErrors, 1000);
-      
+
+      // Run error removal only when new content appears, not continuously
+      // Use MutationObserver to detect when Mermaid renders new content
+      let observer: MutationObserver | null = null;
+
+      try {
+        observer = new MutationObserver(() => {
+          removeMermaidErrors();
+        });
+
+        observer.observe(document.body, {
+          childList: true,
+          subtree: true
+        });
+      } catch (error) {
+        console.debug('Could not set up Mermaid error observer:', error);
+        // Fallback: run cleanup less frequently (every 10 seconds instead of every 1 second)
+        const errorCleanupInterval = setInterval(removeMermaidErrors, 10000);
+        return () => clearInterval(errorCleanupInterval);
+      }
+
+      // Initial cleanup
+      removeMermaidErrors();
+
       // Cleanup on unmount
       return () => {
-        clearInterval(errorCleanupInterval);
+        observer?.disconnect();
       };
     };
     
@@ -936,6 +1029,14 @@ const ClaraAssistant: React.FC<ClaraAssistantProps> = ({ onPageChange }) => {
       cleanup?.();
     };
   }, []);
+
+  // Notify parent component when processing state changes
+  // This keeps ClaraAssistant mounted in background when streaming/processing
+  useEffect(() => {
+    if (onProcessingChange) {
+      onProcessingChange(isLoading);
+    }
+  }, [isLoading, onProcessingChange]);
 
   // Load wallpaper from database
   useEffect(() => {
@@ -1074,27 +1175,22 @@ const ClaraAssistant: React.FC<ClaraAssistantProps> = ({ onPageChange }) => {
         const validProviderIds = loadedProviders.map(p => p.id);
         cleanInvalidProviderConfigs(validProviderIds);
 
-        // Load models from ALL providers to check availability
-        let allModels: ClaraModel[] = [];
-        for (const provider of loadedProviders) {
+        // Load models from ALL providers in parallel to check availability
+        console.log(`🚀 Loading models from ${loadedProviders.length} providers in parallel...`);
+        const modelLoadPromises = loadedProviders.map(async (provider) => {
           try {
-            // Special handling for Clara's Pocket provider - wait for service to be ready
-            if (provider.type === 'claras-pocket' && window.llamaSwap) {
-              const status = await window.llamaSwap.getStatus?.();
-              if (status?.isStarting) {
-                console.log(`⏳ Clara's Core is starting, skipping model loading for now...`);
-                // Don't load models yet, they will be loaded once startup completes
-                continue;
-              }
-            }
-            
             const providerModels = await claraApiService.getModels(provider.id);
-            allModels = [...allModels, ...providerModels];
-            console.log(`Loaded ${providerModels.length} models from provider: ${provider.name}`);
+            console.log(`✅ Loaded ${providerModels.length} models from provider: ${provider.name}`);
+            return providerModels;
           } catch (error) {
-            console.warn(`Failed to load models from provider ${provider.name}:`, error);
+            console.warn(`❌ Failed to load models from provider ${provider.name}:`, error);
+            return [] as ClaraModel[];
           }
-        }
+        });
+
+        // Wait for all provider model loads to complete (with timeout protection)
+        const modelResults = await Promise.all(modelLoadPromises);
+        const allModels: ClaraModel[] = modelResults.flat();
         
         // Set all models for the modal check
         setModels(allModels);
@@ -1111,54 +1207,7 @@ const ClaraAssistant: React.FC<ClaraAssistantProps> = ({ onPageChange }) => {
         // Get primary provider and set it in config
         const primaryProvider = loadedProviders.find(p => p.isPrimary) || loadedProviders[0];
         if (primaryProvider) {
-          // AUTO-START CLARA'S POCKET IF IT'S THE PRIMARY PROVIDER
-          if (primaryProvider.type === 'claras-pocket' && window.llamaSwap) {
-            try {
-              console.log("🚀 Checking Clara's Core status on startup...");
-              const status = await window.llamaSwap.getStatus?.();
-              if (!status?.isRunning) {
-                console.log("🔄 Clara's Core is not running, starting automatically...");
-                addInfoNotification(
-                  "Starting Clara's Core...",
-                  'Clara is starting up her local AI service for you. This may take a moment.',
-                  6000
-                );
-                
-                const result = await window.llamaSwap.start();
-                if (!result.success) {
-                  addErrorNotification(
-                    "Failed to Start Clara's Core",
-                    result.error || 'Could not start the local AI service. Please check your installation.',
-                    10000
-                  );
-                  console.error("❌ Failed to start Clara's Core:", result.error);
-                } else {
-                  console.log("✅ Clara's Core started successfully");
-                  addInfoNotification(
-                    "Clara's Core Ready",
-                    'Your local AI service is now running and ready to chat!',
-                    4000
-                  );
-                  // Wait a moment for service to be fully ready
-                  await new Promise(res => setTimeout(res, 2000));
-                }
-              } else {
-                console.log("✅ Clara's Core is already running");
-                addInfoNotification(
-                  "Clara's Core Online",
-                  'Your local AI service is ready and waiting for your messages.',
-                  3000
-                );
-              }
-            } catch (err) {
-              console.error("⚠️ Error checking/starting Clara's Core:", err);
-              addErrorNotification(
-                "Clara's Core Startup Error",
-                err instanceof Error ? err.message : 'Could not communicate with the local AI service.',
-                8000
-              );
-            }
-          }
+          console.log(`Setting primary provider: ${primaryProvider.name}`);
 
           // Update API service to use primary provider
           claraApiService.updateProvider(primaryProvider);
@@ -1242,7 +1291,7 @@ const ClaraAssistant: React.FC<ClaraAssistantProps> = ({ onPageChange }) => {
                 maxToolCalls: 5
               },
               autonomousAgent: {
-                enabled: false,               // **CHANGED**: Default to false for streaming mode
+                enabled: true,                // **DEFAULT**: Align with agent mode toggle
                 maxRetries: 3,
                 retryDelay: 1000,
                 enableSelfCorrection: true,
@@ -1251,7 +1300,8 @@ const ClaraAssistant: React.FC<ClaraAssistantProps> = ({ onPageChange }) => {
                 maxToolCalls: 10,
                 confidenceThreshold: 0.7,
                 enableChainOfThought: true,
-                enableErrorLearning: true
+              enableErrorLearning: true,
+              enableDeepThinkingVerification: false
               },
               contextWindow: 50 // Include last 50 messages in conversation history
             };
@@ -1274,38 +1324,6 @@ const ClaraAssistant: React.FC<ClaraAssistantProps> = ({ onPageChange }) => {
 
     loadProvidersAndModels();
   }, [userInfo]);
-
-  // Check if this is a first-time user and show setup modal when Clara Core is ready
-  useEffect(() => {
-    const checkFirstTimeUser = async () => {
-      try {
-        // Check if the user has completed setup before
-        const hasCompletedSetup = localStorage.getItem('clara-setup-completed');
-        
-        if (!hasCompletedSetup && !isLoadingProviders) {
-          // Check if Clara Core is running successfully
-          const llamaSwap = (window as any).llamaSwap;
-          if (llamaSwap) {
-            const configInfo = await llamaSwap.getConfigurationInfo();
-            if (configInfo.success && configInfo.serviceStatus?.isRunning) {
-              console.log('🎯 First-time user detected with Clara Core running - showing setup modal');
-              setIsFirstTimeUser(true);
-              setShowFirstTimeSetup(true);
-            } else {
-              console.log('⏳ Clara Core not ready yet, waiting...');
-            }
-          }
-        }
-      } catch (error) {
-        console.error('Error checking first-time user status:', error);
-      }
-    };
-
-    // Only check after providers are loaded and not during loading
-    if (!isLoadingProviders) {
-      checkFirstTimeUser();
-    }
-  }, [isLoadingProviders, models.length]);
 
   // Monitor models availability to show/hide no models modal
   useEffect(() => {
@@ -1337,18 +1355,17 @@ const ClaraAssistant: React.FC<ClaraAssistantProps> = ({ onPageChange }) => {
     checkModelsAndServices();
   }, [models, isLoadingProviders, checkServiceStartupStatus]);
 
-  // Poll for service startup status changes when a service is starting OR when we have no models
+  // Poll for service startup status changes when a service is starting
   useEffect(() => {
     let pollInterval: NodeJS.Timeout | null = null;
     
-    // Start polling if service is starting OR if we have no models and llamaSwap is available
-    const shouldPoll = serviceStartupStatus.isStarting || 
-                      (models.length === 0 && window.llamaSwap && !isLoadingProviders);
+    // Start polling if service is starting
+    const shouldPoll = serviceStartupStatus.isStarting;
     
     if (shouldPoll) {
       const reason = serviceStartupStatus.isStarting ? 
         `${serviceStartupStatus.serviceName} status` : 
-        'potential service startup (no models detected)';
+        'service startup';
       console.log(`🔄 Starting polling for ${reason}...`);
       
       pollInterval = setInterval(async () => {
@@ -1433,7 +1450,7 @@ const ClaraAssistant: React.FC<ClaraAssistantProps> = ({ onPageChange }) => {
     originalUserQuestion: string,
     streamingMessageId: string,
     enforcedConfig: ClaraAIConfig,
-    conversationHistory: ClaraMessage[],
+  _conversationHistory: ClaraMessage[],
     providersArray: ClaraProvider[]
   ): Promise<string | null> => {
     try {
@@ -1620,7 +1637,8 @@ Now tell me what is the result "`;
           maxToolCalls: sessionConfig.aiConfig.autonomousAgent?.maxToolCalls || 10,
           confidenceThreshold: sessionConfig.aiConfig.autonomousAgent?.confidenceThreshold || 0.7,
           enableChainOfThought: sessionConfig.aiConfig.autonomousAgent?.enableChainOfThought || true,
-          enableErrorLearning: sessionConfig.aiConfig.autonomousAgent?.enableErrorLearning || true
+          enableErrorLearning: sessionConfig.aiConfig.autonomousAgent?.enableErrorLearning || true,
+          enableDeepThinkingVerification: sessionConfig.aiConfig.autonomousAgent?.enableDeepThinkingVerification ?? false
         }
       };
 
@@ -1652,8 +1670,7 @@ Now tell me what is the result "`;
     const isVoiceMessage = content.startsWith(voiceModePrefix);
     
     // **NEW**: Check if content is a JSON API request with duplicate user messages
-    let processedContent = content;
-    let isJsonApiRequest = false;
+  let processedContent = content;
     
     try {
       // Try to parse as JSON to detect API request format
@@ -1661,7 +1678,6 @@ Now tell me what is the result "`;
       
       // Check if this looks like an API request with messages array
       if (parsed && typeof parsed === 'object' && Array.isArray(parsed.messages)) {
-        isJsonApiRequest = true;
         console.log('🔍 Detected JSON API request format');
         
         // Extract unique user messages to prevent duplication
@@ -1684,13 +1700,11 @@ Now tell me what is the result "`;
         } else {
           // No user messages found, treat as regular content
           processedContent = content;
-          isJsonApiRequest = false;
         }
       }
     } catch (parseError) {
       // Not valid JSON, treat as regular message
       processedContent = content;
-      isJsonApiRequest = false;
     }
     
     // For display purposes, use the processed content without voice prefix
@@ -1742,8 +1756,11 @@ Now tell me what is the result "`;
     };
 
     // Add user message to state and get current conversation
-    const currentMessages = [...messages, userMessage];
-    setMessages(currentMessages);
+    let currentMessages: ClaraMessage[] = [];
+    setMessages(prev => {
+      currentMessages = [...prev, userMessage];
+      return currentMessages;
+    });
     setIsLoading(true);
 
     // Track background activity
@@ -1817,14 +1834,29 @@ Now tell me what is the result "`;
 
       console.log(`📚 Prepared ${conversationHistory.length} properly formatted history messages for AI service`);
 
-      // Get system prompt (provider-specific or fallback to default) and enhance with memory data
+      // Get active persona and use its system prompt
+      const activePersona = personaStorageService.getActivePersona();
       const currentProvider = providers.find(p => p.id === enforcedConfig.provider);
-      let baseSystemPrompt = enforcedConfig.systemPrompt || 
+
+      // Priority order: 1) Active persona prompt, 2) Session config prompt, 3) Default prompt
+      let baseSystemPrompt: string;
+      let shouldEnhanceWithMemory = true;
+
+      if (activePersona && activePersona.id !== 'default') {
+        // Use custom persona prompt
+        baseSystemPrompt = activePersona.systemPrompt;
+        shouldEnhanceWithMemory = activePersona.enableMemory;
+        console.log(`🎭 Using persona "${activePersona.name}" with memory ${activePersona.enableMemory ? 'enabled' : 'disabled'}`);
+      } else {
+        // Use session config or default prompt
+        baseSystemPrompt = enforcedConfig.systemPrompt ||
                           (currentProvider ? getDefaultSystemPrompt(currentProvider, enforcedConfig.artifacts, userInfo || undefined) : 'You are Clara, a helpful AI assistant.');
-      
+        shouldEnhanceWithMemory = enforcedConfig.features?.enableMemory !== false;
+      }
+
       // Enhance system prompt with memory data using new integration service (only if memory is enabled)
       let systemPrompt = baseSystemPrompt;
-      if (enforcedConfig.features?.enableMemory !== false) { // Default to true if not specified
+      if (shouldEnhanceWithMemory) {
         try {
           systemPrompt = await claraMemoryIntegration.enhanceSystemPromptWithMemory(baseSystemPrompt, userInfo || undefined);
           console.log('🧠 System prompt enhanced with user memory data via integration service');
@@ -1833,11 +1865,18 @@ Now tell me what is the result "`;
           // Continue with base system prompt
         }
       } else {
-        console.log('🧠 Memory enhancement disabled by user setting - using base system prompt only');
+        console.log('🧠 Memory enhancement disabled by persona/user setting - using base system prompt only');
       }
+      
+      // Track thinking tag state for filtering during streaming
+      let isInsideThinkingTag = false;
+      let rawStreamContent = ''; // Store raw content including thinking tags
       
       // Create enhanced streaming callback that updates both message content and status panel
       const enhancedStreamingCallback = (chunk: string) => {
+        // Always accumulate raw content (including thinking tags)
+        rawStreamContent += chunk;
+        
         // Parse status updates from chunk for autonomous agent first
         if (enforcedConfig.autonomousAgent?.enabled && chunk.includes('**')) {
           parseAndUpdateAgentStatus(chunk);
@@ -1874,6 +1913,42 @@ Now tell me what is the result "`;
           }
         }
 
+        // **FIX: Track thinking tag state to hide content during streaming**
+        // Check if this chunk contains thinking tag markers
+        const openThinkMatch = chunk.match(/<think>|<seed:think>/i);
+        const closeThinkMatch = chunk.match(/<\/think>|<\/seed:think>/i);
+        
+        if (openThinkMatch) {
+          isInsideThinkingTag = true;
+          console.log('🧠 Entered thinking mode - hiding content during stream');
+        }
+        
+        if (closeThinkMatch) {
+          isInsideThinkingTag = false;
+          console.log('💭 Exited thinking mode - resuming content display');
+        }
+        
+        // If we're inside thinking tags, don't display the chunk
+        // but still update the raw content for final processing
+        if (isInsideThinkingTag || openThinkMatch || closeThinkMatch) {
+          // Update message with raw content but don't display it
+          setMessages(prev => prev.map(msg => 
+            msg.id === streamingMessageId 
+              ? { 
+                  ...msg, 
+                  content: rawStreamContent, // Store complete raw content
+                  metadata: {
+                    ...msg.metadata,
+                    isStreaming: true,
+                    hasThinkingContent: true,
+                    hideStreamingContent: true // Flag to hide during streaming
+                  }
+                }
+              : msg
+          ));
+          return; // Don't show thinking content during streaming
+        }
+
         // Filter out ALL status messages from chat display when autonomous agent is active
         const isStatusMessage = enforcedConfig.autonomousAgent?.enabled && (
           chunk.includes('**AGENT_STATUS:') || 
@@ -1897,7 +1972,14 @@ Now tell me what is the result "`;
         if (!isStatusMessage) {
           setMessages(prev => prev.map(msg => 
             msg.id === streamingMessageId 
-              ? { ...msg, content: msg.content + chunk }
+              ? { 
+                  ...msg, 
+                  content: rawStreamContent, // Use raw content
+                  metadata: {
+                    ...msg.metadata,
+                    isStreaming: true
+                  }
+                }
               : msg
           ));
         }
@@ -2013,8 +2095,12 @@ Now tell me what is the result "`;
 
       // **FIX: Preserve tool execution blocks from streaming message**
       // Get the current streaming message to preserve any data added during streaming
-      const currentStreamingMessage = messages.find(msg => msg.id === streamingMessageId);
-      const preservedToolExecutionBlock = currentStreamingMessage?.metadata?.toolExecutionBlock;
+      let preservedToolExecutionBlock: any = undefined;
+      setMessages(prev => {
+        const currentStreamingMessage = prev.find(msg => msg.id === streamingMessageId);
+        preservedToolExecutionBlock = currentStreamingMessage?.metadata?.toolExecutionBlock;
+        return prev; // No state change, just reading
+      });
       
       if (preservedToolExecutionBlock) {
         console.log(`🔄 Preserving tool execution block with ${preservedToolExecutionBlock.tools?.length || 0} tools from streaming to final message`);
@@ -2478,22 +2564,29 @@ You can:
         }, 10000); // 10 second safety timeout (reduced from 30)
       }
     }
-  }, [currentSession, messages, sessionConfig, isVisible, models]);
+  }, [currentSession, sessionConfig, isVisible, models]);
 
   // Handle session selection
   const handleSelectSession = useCallback(async (sessionId: string) => {
     if (currentSession?.id === sessionId) return;
-    
+
+    // Clear artifacts when switching sessions to prevent persistence across chats
+    clearArtifacts();
+
     try {
       const session = await claraDB.getClaraSession(sessionId);
       if (session) {
         setCurrentSession(session);
         setMessages(session.messages);
+        
+        // Trigger scroll to bottom after messages render
+        setScrollTrigger(prev => prev + 1);
+        console.log('📜 Loaded session from history - will scroll to bottom');
       }
     } catch (error) {
       console.error('Failed to load session:', error);
     }
-  }, [currentSession]);
+  }, [currentSession, clearArtifacts]);
 
   // Ref to prevent multiple simultaneous new chat creations
   const isCreatingNewChatRef = useRef(false);
@@ -2503,30 +2596,39 @@ You can:
   const handleNewChat = useCallback(async () => {
     const now = Date.now();
     const timeSinceLastCall = now - lastNewChatTimeRef.current;
-    
+
     // If we're already processing or called too recently, ignore this call
     if (isCreatingNewChatRef.current || timeSinceLastCall < 500) {
       console.log('New chat request ignored - already processing or called too recently');
       return;
     }
-    
+
     // Update last call time
     lastNewChatTimeRef.current = now;
-    
+
+    // Clear artifacts when creating new chat to prevent persistence across chats
+    clearArtifacts();
+
+    // Switch back to chat tab if we're on brain/memories tab
+    if (activeTab !== 'chat') {
+      console.log('Switching from brain/memories tab to chat tab');
+      setActiveTab('chat');
+    }
+
     // Check if current session is already empty (new chat)
-    if (currentSession && 
-        (currentSession.title === 'New Chat' || currentSession.title.trim() === '') && 
+    if (currentSession &&
+        (currentSession.title === 'New Chat' || currentSession.title.trim() === '') &&
         messages.length === 0) {
       console.log('Already in empty chat session, not creating new one');
       return;
     }
-    
+
     // Check if there's already an empty session in the sessions list
-    const existingEmptySession = sessions.find(session => 
-      (session.title === 'New Chat' || session.title.trim() === '') && 
+    const existingEmptySession = sessions.find(session =>
+      (session.title === 'New Chat' || session.title.trim() === '') &&
       session.messages.length === 0
     );
-    
+
     if (existingEmptySession) {
       console.log('Found existing empty chat session, switching to it');
       setCurrentSession(existingEmptySession);
@@ -2535,10 +2637,10 @@ You can:
       autonomousAgentStatus.reset();
       return;
     }
-    
+
     // Set processing flag
     isCreatingNewChatRef.current = true;
-    
+
     try {
       // No empty session found, create a new one
       console.log('Creating new chat session');
@@ -2553,7 +2655,7 @@ You can:
         isCreatingNewChatRef.current = false;
       }, 100);
     }
-  }, [createNewSession, autonomousAgentStatus, currentSession, messages, sessions]);
+  }, [createNewSession, autonomousAgentStatus, currentSession, messages, sessions, clearArtifacts, activeTab, setActiveTab]);
 
   // Handle session actions
   const handleSessionAction = useCallback(async (sessionId: string, action: 'star' | 'archive' | 'delete') => {
@@ -2614,52 +2716,6 @@ You can:
       console.log('=== Switching to provider ===');
       console.log('Provider:', provider.name, '(ID:', providerId, ')');
       
-      // POCKET PROVIDER AUTO-START LOGIC
-      if (provider.type === 'claras-pocket' && window.llamaSwap) {
-        try {
-          console.log("🚀 Switching to Clara's Core - checking status...");
-          // Check if running
-          const status = await window.llamaSwap.getStatus?.();
-          if (!status?.isRunning) {
-            console.log("🔄 Clara's Core is not running, starting for provider switch...");
-            addInfoNotification(
-              "Starting Clara's Core...",
-              'Clara is starting up her local AI service. Please wait a moment.',
-              6000
-            );
-            const result = await window.llamaSwap.start();
-            if (!result.success) {
-              addErrorNotification(
-                "Failed to Start Clara's Core",
-                result.error || 'Could not start the local AI service. Please check your installation.',
-                10000
-              );
-              console.error("❌ Failed to start Clara's Core for provider switch:", result.error);
-              setIsLoadingProviders(false);
-              return;
-            }
-            console.log("✅ Clara's Core started successfully for provider switch");
-            addInfoNotification(
-              "Clara's Core Ready",
-              'Local AI service is now running and ready!',
-              3000
-            );
-            // Wait a moment for service to be ready
-            await new Promise(res => setTimeout(res, 2000));
-          } else {
-            console.log("✅ Clara's Core is already running for provider switch");
-          }
-        } catch (err) {
-          console.error("⚠️ Error starting Clara's Core for provider switch:", err);
-          addErrorNotification(
-            "Clara's Core Startup Error",
-            err instanceof Error ? err.message : 'Could not communicate with the local AI service.',
-            8000
-          );
-          setIsLoadingProviders(false);
-          return;
-        }
-      }
       // STEP 1: Health check the provider before proceeding (with caching)
       console.log('🏥 Testing provider health...');
       
@@ -2762,7 +2818,8 @@ You can:
             maxToolCalls: 10,
             confidenceThreshold: 0.7,
             enableChainOfThought: true,
-            enableErrorLearning: true
+            enableErrorLearning: true,
+            enableDeepThinkingVerification: false
           },
           contextWindow: savedConfig.contextWindow || 50
         };
@@ -2832,7 +2889,7 @@ You can:
             maxToolCalls: 5
           },
           autonomousAgent: {
-            enabled: false,               // **CHANGED**: Default to false for streaming mode
+            enabled: true,                // **DEFAULT**: Align with agent mode toggle
             maxRetries: 3,
             retryDelay: 1000,
             enableSelfCorrection: true,
@@ -2841,7 +2898,8 @@ You can:
             maxToolCalls: 10,
             confidenceThreshold: 0.7,
             enableChainOfThought: true,
-            enableErrorLearning: true
+            enableErrorLearning: true,
+            enableDeepThinkingVerification: false
           },
           contextWindow: 50 // Include last 50 messages in conversation history
         };
@@ -3038,178 +3096,17 @@ You can:
     setIsLoading(false);
   }, []);
 
-  // Simple preload - only if server is down
+  // Simple preload - treat all providers equally
   const handlePreloadModel = useCallback(async () => {
     if (!sessionConfig.aiConfig) return;
     
-    // Only preload for local services that might be down
-    if (sessionConfig.aiConfig.provider === 'claras-pocket') {
-      try {
-        const status = await window.llamaSwap?.getStatus();
-        if (!status?.isRunning) {
-          console.log('🚀 Starting local server...');
-          await claraApiService.preloadModel(sessionConfig.aiConfig, messages);
-        }
-        // If server is running, no preload needed - it handles automatically
-      } catch (error) {
-        console.warn('⚠️ Simple preload check failed:', error);
-      }
-    }
-    // For cloud providers (OpenAI, etc.), no preload needed
-  }, [sessionConfig.aiConfig, messages]);
-
-  // Handle first-time setup completion
-  const handleFirstTimeSetupComplete = useCallback(async (config: {
-    backendType: string;
-    workloadProfile: string;
-    settings: any;
-  }) => {
-    console.log('🎯 First-time setup completed:', config);
-    
     try {
-      const llamaSwap = (window as any).llamaSwap;
-      if (!llamaSwap) {
-        throw new Error('LlamaSwap service not available');
-      }
-
-      // Step 1: Set the backend if not auto
-      if (config.backendType !== 'auto') {
-        console.log('🔄 Setting backend to:', config.backendType);
-        addInfoNotification(
-          'Configuring Backend',
-          `Setting up ${config.backendType} acceleration...`,
-          3000
-        );
-        const backendResult = await llamaSwap.setBackendOverride(config.backendType);
-        if (!backendResult.success) {
-          throw new Error(`Failed to set backend: ${backendResult.error}`);
-        }
-      }
-
-      // Step 2: Get current configuration and apply workload settings
-      addInfoNotification(
-        'Applying Workload Settings',
-        `Optimizing for ${config.workloadProfile} workloads...`,
-        3000
-      );
-      const configInfo = await llamaSwap.getConfigurationInfo();
-      if (!configInfo.success) {
-        throw new Error('Failed to get current configuration');
-      }
-
-      const currentConfig = configInfo.configuration;
-      if (currentConfig && currentConfig.models) {
-        // Apply workload settings to all models
-        for (const [, modelData] of Object.entries(currentConfig.models)) {
-          const data = modelData as any;
-          if (data.cmd) {
-            // Update model parameters based on workload profile
-            const settings = config.settings;
-            
-            // Create a clean command line with new parameters
-            let updatedCmd = data.cmd;
-            
-            // Update GPU layers (keep existing if present)
-            // Update context size
-            updatedCmd = updatedCmd.replace(/--ctx-size\s+\d+/g, '') + ` --ctx-size ${settings.contextSize}`;
-            
-            // Update batch size
-            updatedCmd = updatedCmd.replace(/--batch-size\s+\d+/g, '') + ` --batch-size ${settings.batchSize}`;
-            
-            // Update flash attention
-            if (settings.flashAttention) {
-              if (!updatedCmd.includes('--flash-attn')) {
-                updatedCmd += ' --flash-attn';
-              }
-            } else {
-              updatedCmd = updatedCmd.replace(/--flash-attn/g, '');
-            }
-            
-            // Update continuous batching
-            if (settings.continuousBatching) {
-              if (!updatedCmd.includes('--cont-batching')) {
-                updatedCmd += ' --cont-batching';
-              }
-            } else {
-              updatedCmd = updatedCmd.replace(/--cont-batching/g, '');
-            }
-            
-            // Update cache types
-            updatedCmd = updatedCmd.replace(/--cache-type-k\s+\w+/g, '') + ` --cache-type-k ${settings.cacheTypeK}`;
-            updatedCmd = updatedCmd.replace(/--cache-type-v\s+\w+/g, '') + ` --cache-type-v ${settings.cacheTypeV}`;
-            
-            // Clean up extra spaces
-            updatedCmd = updatedCmd.replace(/\s+/g, ' ').trim();
-            
-            data.cmd = updatedCmd;
-          }
-        }
-
-        // Step 3: Save the updated configuration
-        console.log('💾 Saving optimized configuration...');
-        addInfoNotification(
-          'Saving Configuration',
-          'Finalizing your personalized settings...',
-          3000
-        );
-        const saveResult = await llamaSwap.saveConfigFromJson(JSON.stringify(currentConfig));
-        if (!saveResult.success) {
-          throw new Error(`Failed to save configuration: ${saveResult.error}`);
-        }
-
-        // Step 4: Restart the service with new configuration
-        console.log('🔄 Restarting Clara Core with new configuration...');
-        addInfoNotification(
-          'Restarting Clara Core',
-          'Applying your configuration and starting optimized AI service...',
-          5000
-        );
-        const restartResult = await llamaSwap.restartWithOverrides();
-        if (!restartResult.success) {
-          throw new Error(`Failed to restart service: ${restartResult.error}`);
-        }
-
-        // Mark setup as completed
-        localStorage.setItem('clara-setup-completed', 'true');
-        localStorage.setItem('clara-setup-timestamp', new Date().toISOString());
-        localStorage.setItem('clara-setup-config', JSON.stringify(config));
-
-        console.log('✅ First-time setup completed successfully!');
-        addInfoNotification(
-          'Setup Complete!',
-          `Clara has been optimized for ${config.workloadProfile} workloads and is ready to go!`,
-          5000
-        );
-      }
+      console.log('🚀 Preloading model...');
+      await claraApiService.preloadModel(sessionConfig.aiConfig, messages);
     } catch (error) {
-      console.error('❌ First-time setup failed:', error);
-      addErrorNotification(
-        'Setup Failed',
-        error instanceof Error ? error.message : 'Failed to complete setup. You can configure Clara manually in Backend Configuration.',
-        8000
-      );
-      // Re-throw the error so the modal can handle the loading state
-      throw error;
-    } finally {
-      setShowFirstTimeSetup(false);
-      setIsFirstTimeUser(false);
+      console.warn('⚠️ Preload failed:', error);
     }
-  }, []);
-
-  // Handle first-time setup skip
-  const handleFirstTimeSetupSkip = useCallback(() => {
-    console.log('⏭️ First-time setup skipped by user');
-    localStorage.setItem('clara-setup-completed', 'skipped');
-    localStorage.setItem('clara-setup-timestamp', new Date().toISOString());
-    setShowFirstTimeSetup(false);
-    setIsFirstTimeUser(false);
-    
-    addInfoNotification(
-      'Setup Skipped',
-      'You can configure Clara anytime in Backend Configuration settings.',
-      4000
-    );
-  }, []);
+  }, [sessionConfig.aiConfig, messages]);
 
   // Handle session config changes
   const handleConfigChange = useCallback((newConfig: Partial<ClaraSessionConfig>) => {
@@ -4466,13 +4363,6 @@ ${data.timezone ? `• **Timezone:** ${data.timezone}` : ''}`;
 
   return (
     <div className="flex h-screen w-full relative" data-clara-container>
-      {/* First-Time Setup Modal */}
-      <FirstTimeSetupModal
-        isOpen={showFirstTimeSetup}
-        onComplete={handleFirstTimeSetupComplete}
-        onSkip={handleFirstTimeSetupSkip}
-      />
-      
       {/* Wallpaper */}
       {wallpaperUrl && (
         <div 
@@ -4481,7 +4371,7 @@ ${data.timezone ? `• **Timezone:** ${data.timezone}` : ''}`;
             backgroundImage: `url(${wallpaperUrl})`,
             backgroundSize: 'cover',
             backgroundPosition: 'center',
-            opacity: 0.1,
+            opacity: 0.3,
             filter: 'blur(1px)',
             pointerEvents: 'none'
           }}
@@ -4519,9 +4409,15 @@ ${data.timezone ? `• **Timezone:** ${data.timezone}` : ''}`;
                     userName={userName}
                     isLoading={isLoading}
                     isInitializing={isLoadingSessions || isLoadingProviders}
+                    scrollTrigger={scrollTrigger}
                     onRetryMessage={handleRetryMessage}
                     onCopyMessage={handleCopyMessage}
                     onEditMessage={handleEditMessage}
+                    onSendExamplePrompt={(prompt) => {
+                      // Autonomous agent activates automatically based on prompt content
+                      // No need to switch tabs
+                      handleSendMessage(prompt);
+                    }}
                   />
               
               {/* Autonomous Agent Status Panel - Above Advanced Options */}
@@ -4607,7 +4503,8 @@ ${data.timezone ? `• **Timezone:** ${data.timezone}` : ''}`;
                         maxToolCalls: newConfig.autonomousAgent.maxToolCalls ?? currentConfig.autonomousAgent?.maxToolCalls ?? 10,
                         confidenceThreshold: newConfig.autonomousAgent.confidenceThreshold ?? currentConfig.autonomousAgent?.confidenceThreshold ?? 0.7,
                         enableChainOfThought: newConfig.autonomousAgent.enableChainOfThought ?? currentConfig.autonomousAgent?.enableChainOfThought ?? true,
-                        enableErrorLearning: newConfig.autonomousAgent.enableErrorLearning ?? currentConfig.autonomousAgent?.enableErrorLearning ?? true
+                        enableErrorLearning: newConfig.autonomousAgent.enableErrorLearning ?? currentConfig.autonomousAgent?.enableErrorLearning ?? true,
+                        enableDeepThinkingVerification: newConfig.autonomousAgent.enableDeepThinkingVerification ?? currentConfig.autonomousAgent?.enableDeepThinkingVerification ?? false
                       } : currentConfig.autonomousAgent,
                       artifacts: newConfig.artifacts ? {
                         enableCodeArtifacts: newConfig.artifacts.enableCodeArtifacts ?? currentConfig.artifacts?.enableCodeArtifacts ?? true,
@@ -4670,8 +4567,35 @@ ${data.timezone ? `• **Timezone:** ${data.timezone}` : ''}`;
       )}
             </div>
 
+            {/* Artifact Pane - Claude-style (between chat and sidebar) */}
+            {isArtifactPaneOpen && activeTab === 'chat' && (
+              <div className={`
+                w-full md:w-[600px] lg:w-[700px] xl:w-[800px]
+                transition-all duration-300 ease-in-out
+                ${isArtifactPaneOpen ? 'translate-x-0' : 'translate-x-full'}
+                hidden md:block
+              `}>
+                <ClaraArtifactPane
+                  artifacts={artifacts}
+                  isOpen={isArtifactPaneOpen}
+                  onClose={closeArtifactPane}
+                />
+              </div>
+            )}
+
+            {/* Mobile Full-Screen Artifact Pane */}
+            {isArtifactPaneOpen && activeTab === 'chat' && (
+              <div className="md:hidden fixed inset-0 z-50 bg-white dark:bg-gray-900">
+                <ClaraArtifactPane
+                  artifacts={artifacts}
+                  isOpen={isArtifactPaneOpen}
+                  onClose={closeArtifactPane}
+                />
+              </div>
+            )}
+
             {/* Clara Chat History Sidebar on the right */}
-            <ClaraSidebar 
+            <ClaraSidebar
               sessions={sessions}
               currentSessionId={currentSession?.id}
               isLoading={isLoadingSessions}
@@ -4804,6 +4728,8 @@ ${data.timezone ? `• **Timezone:** ${data.timezone}` : ''}`;
         knowledgeLevel={memoryToastState.knowledgeLevel}
         duration={4000}
       />
+
+      {/* Memory compression now happens automatically in background - no dialog needed */}
     </div>
   );
 };

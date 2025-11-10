@@ -10,7 +10,8 @@ interface PythonStartupModalProps {
 interface ServiceStatus {
   isHealthy: boolean;
   serviceUrl: string | null;
-  mode: 'docker' | 'manual';
+  mode: 'docker' | 'manual' | 'remote';
+  error?: string;
 }
 
 interface StartupProgress {
@@ -168,21 +169,20 @@ const PythonStartupModal: React.FC<PythonStartupModalProps> = ({
       console.log('Python status:', pythonStatus);
 
       if (pythonStatus.isHealthy) {
-        setStatus('Python backend is running and healthy');
-        setTimeout(() => {
-          onStartupComplete();
-          onClose();
-        }, 1000);
+        setStatus(`Python backend is running and healthy (${pythonStatus.mode} mode)`);
+        // Close immediately when healthy
+        onStartupComplete();
+        onClose();
       } else {
+        // Show appropriate message based on deployment mode
         if (pythonStatus.mode === 'docker') {
-          setStatus('Python backend container is not running');
-          // Automatically check for updates when container is not running and Docker is available
-          if (dockerStatus.isRunning) {
-            console.log('Starting update check...');
-            setTimeout(() => {
-              checkForUpdates();
-            }, 500); // Small delay to let the UI update
-          }
+          setStatus(pythonStatus.error || 'Python backend container is not running');
+        } else if (pythonStatus.mode === 'remote') {
+          setStatus(pythonStatus.error || 'Remote Python backend is not responding');
+          setError('Remote server is unreachable. You can start the Docker container as a fallback.');
+        } else if (pythonStatus.mode === 'manual') {
+          setStatus(pythonStatus.error || 'Manual Python backend is not responding');
+          setError('Manual server is unreachable. You can start the Docker container as a fallback.');
         } else {
           setStatus('Python backend is not responding');
         }
@@ -211,10 +211,26 @@ const PythonStartupModal: React.FC<PythonStartupModalProps> = ({
       if (result.success) {
         setStatus('Python backend container started successfully');
         setStartupProgress(null);
-        // Wait a bit for the service to fully initialize
-        setTimeout(async () => {
-          await checkStatus();
-        }, 3000);
+        
+        // FIX: Use the status returned directly from start-python-container to avoid race condition
+        // Previously, we waited 3 seconds and called check-python-status, but CentralServiceManager
+        // state update wasn't guaranteed to propagate by then. Now start-python-container returns
+        // the status directly after updating CentralServiceManager, eliminating the race condition.
+        if (result.status) {
+          console.log('✅ Python backend status from start result:', result.status);
+          setServiceStatus(result.status);
+          
+          // If healthy, close the modal immediately
+          if (result.status.isHealthy) {
+            onStartupComplete();
+            onClose();
+          }
+        } else {
+          // Fallback: wait a bit for the service to fully initialize and check status
+          setTimeout(async () => {
+            await checkStatus();
+          }, 3000);
+        }
       } else {
         setError(result.error || 'Failed to start Python backend container');
         setStartupProgress(null);
@@ -339,8 +355,14 @@ const PythonStartupModal: React.FC<PythonStartupModalProps> = ({
 
               <div className="flex items-center space-x-2">
                 <span className="text-sm text-gray-600 dark:text-gray-400">Mode:</span>
-                <span className="text-sm text-gray-900 dark:text-white capitalize">
-                  {serviceStatus.mode}
+                <span className={`text-sm font-medium capitalize px-2 py-0.5 rounded ${
+                  serviceStatus.mode === 'docker'
+                    ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300'
+                    : serviceStatus.mode === 'remote'
+                    ? 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300'
+                    : 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
+                }`}>
+                  {serviceStatus.mode === 'docker' && '🐳 '}{serviceStatus.mode === 'remote' && '🌐 '}{serviceStatus.mode === 'manual' && '⚙️ '}{serviceStatus.mode}
                 </span>
               </div>
             </div>
@@ -512,6 +534,7 @@ const PythonStartupModal: React.FC<PythonStartupModalProps> = ({
           <div className="flex space-x-3 pt-4">
             {serviceStatus && !serviceStatus.isHealthy && (
               <>
+                {/* Docker mode - show start button */}
                 {serviceStatus.mode === 'docker' && dockerAvailable && (
                   <button
                     onClick={startPythonContainer}
@@ -521,8 +544,8 @@ const PythonStartupModal: React.FC<PythonStartupModalProps> = ({
                     {isLoading ? (
                       <>
                         <Loader2 className="w-4 h-4 animate-spin mr-2" />
-                        {startupProgress?.stage === 'pulling' 
-                          ? 'Downloading Docker Image...' 
+                        {startupProgress?.stage === 'pulling'
+                          ? 'Downloading Docker Image...'
                           : 'Starting...'}
                       </>
                     ) : (
@@ -530,13 +553,52 @@ const PythonStartupModal: React.FC<PythonStartupModalProps> = ({
                     )}
                   </button>
                 )}
-                
-                {(serviceStatus.mode === 'manual' || !dockerAvailable) && (
+
+                {/* Remote mode - show fallback option */}
+                {serviceStatus.mode === 'remote' && dockerAvailable && (
+                  <button
+                    onClick={startPythonContainer}
+                    disabled={isLoading}
+                    className="flex-1 bg-amber-600 hover:bg-amber-700 disabled:bg-amber-400 text-white px-4 py-2 rounded-md text-sm font-medium flex items-center justify-center"
+                  >
+                    {isLoading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                        Starting Fallback...
+                      </>
+                    ) : (
+                      <>
+                        🐳 Start Docker Container (Fallback)
+                      </>
+                    )}
+                  </button>
+                )}
+
+                {/* Manual mode - show fallback option */}
+                {serviceStatus.mode === 'manual' && dockerAvailable && (
+                  <button
+                    onClick={startPythonContainer}
+                    disabled={isLoading}
+                    className="flex-1 bg-amber-600 hover:bg-amber-700 disabled:bg-amber-400 text-white px-4 py-2 rounded-md text-sm font-medium flex items-center justify-center"
+                  >
+                    {isLoading ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin mr-2" />
+                        Starting Fallback...
+                      </>
+                    ) : (
+                      <>
+                        🐳 Start Docker Container (Fallback)
+                      </>
+                    )}
+                  </button>
+                )}
+
+                {/* No Docker available */}
+                {!dockerAvailable && (
                   <div className="flex-1 p-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-md">
                     <p className="text-sm text-yellow-800 dark:text-yellow-200">
-                      {serviceStatus.mode === 'manual' 
-                        ? 'Please start your Python backend service manually.'
-                        : 'Docker is not available. Please start your Python backend service manually or install Docker.'}
+                      Docker is not available. Please install Docker Desktop to use Python backend features.
                     </p>
                   </div>
                 )}

@@ -432,7 +432,10 @@ class MCPService {
       const processEnv = {
         ...process.env,
         PATH: this.getEnhancedPath(),
-        ...env
+        ...env,
+        // Add writable paths for Clara MCP workspace and SearXNG config
+        CLARA_MCP_WORKSPACE: path.join(app.getPath('userData'), 'mcp_workspace'),
+        CLARA_SEARXNG_CONFIG_DIR: path.join(app.getPath('userData'), 'searxng-config')
       };
 
       log.info(`Starting MCP server: ${name} with command: ${resolvedCommand} ${args.join(' ')}`);

@@ -1103,7 +1103,7 @@ const N8N: React.FC<N8NProps> = ({ onPageChange }) => {
     <div className="relative flex h-screen">
       {/* Wallpaper */}
       {wallpaperUrl && (
-        <div 
+        <div
           className="absolute top-0 left-0 right-0 bottom-0 z-0"
           style={{
             backgroundImage: `url(${wallpaperUrl})`,

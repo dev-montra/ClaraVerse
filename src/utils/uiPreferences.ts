@@ -16,7 +16,7 @@ export const DEFAULT_UI_PREFERENCES = {
   border_radius: 'normal' as 'sharp' | 'normal' | 'rounded' | 'soft',
   glassmorphism_strength: 'medium' as 'none' | 'subtle' | 'medium' | 'strong',
   // Enhanced wallpaper settings
-  wallpaper_opacity: 0.1,
+  wallpaper_opacity: 0.4,
   wallpaper_blur: 1,
   wallpaper_position: 'center' as 'center' | 'top' | 'bottom' | 'left' | 'right' | 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right',
   wallpaper_size: 'cover' as 'cover' | 'contain' | 'stretch' | 'tile',

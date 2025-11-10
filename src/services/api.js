@@ -33,19 +33,41 @@ class PythonApi {
   }
   
   setupPeriodicChecks() {
-    // Check backend status every 10 seconds
-    setInterval(async () => {
+    // Check backend status only when disconnected
+    // Use adaptive interval: more frequent when actively trying to connect, less when idle
+    let checkInterval = 30000; // Start with 30 seconds
+    let consecutiveFailures = 0;
+
+    const checkBackend = async () => {
+      // Only check if not initialized
       if (window.electron && !this.initialized) {
         try {
           const status = await window.electron.checkPythonBackend();
           if (status.status === 'running' && status.available && status.port) {
             this.updateBackendInfo(status.port);
+            consecutiveFailures = 0;
+            checkInterval = 30000; // Reset to 30 seconds
+          } else {
+            consecutiveFailures++;
+            // Back off exponentially up to 2 minutes max
+            checkInterval = Math.min(30000 * Math.pow(1.5, consecutiveFailures), 120000);
           }
         } catch (error) {
           console.warn('Failed to check backend status:', error);
+          consecutiveFailures++;
+          checkInterval = Math.min(30000 * Math.pow(1.5, consecutiveFailures), 120000);
         }
+      } else {
+        // If connected, check very infrequently (5 minutes) just to detect disconnects
+        checkInterval = 300000;
       }
-    }, 10000);
+
+      // Schedule next check with adaptive interval
+      setTimeout(checkBackend, checkInterval);
+    };
+
+    // Start the adaptive checking
+    setTimeout(checkBackend, 10000); // Initial check after 10 seconds
   }
   
   updateBackendInfo(port) {

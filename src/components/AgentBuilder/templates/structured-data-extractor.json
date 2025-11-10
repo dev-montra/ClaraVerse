@@ -1,0 +1,666 @@
+{
+  "id": "structured-data-extractor",
+  "name": "Structured Data Extractor (Food Nutrients Info)",
+  "description": "Extract structured JSON data from unstructured text using structured LLM output. Perfect for parsing documents and forms. this example is for food nutrients info from online based on the food name provided by user",
+  "category": "automation",
+  "difficulty": "intermediate",
+  "tags": ["json", "structured-output", "data-extraction", "automation"],
+  "author": "ClaraVerse",
+  "downloads": 1420,
+  "rating": 4.8,
+  "flow": {
+    "id": "flow-1760361007550",
+    "name": "Structured Data Extractor",
+    "description": "Extract structured JSON from text",
+    "nodes": [
+      {
+        "id": "1760361009034-w9d8syajc",
+        "type": "input",
+        "name": "Input",
+        "position": {
+          "x": -347.2940914342,
+          "y": -320.46176370092945
+        },
+        "data": {
+          "label": "Input",
+          "inputs": [],
+          "outputs": [
+            {
+              "id": "output",
+              "name": "Value",
+              "type": "output",
+              "dataType": "any",
+              "description": "Input value"
+            }
+          ],
+          "value": "yippee noddles 15 rs packet"
+        },
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "output",
+            "name": "Value",
+            "type": "output",
+            "dataType": "any",
+            "description": "Input value"
+          }
+        ],
+        "metadata": {
+          "tags": [
+            "input",
+            "basic",
+            "source"
+          ],
+          "documentation": "Provides input values to start or feed the workflow. Supports text, numbers, and JSON objects."
+        }
+      },
+      {
+        "id": "1760361031394-cfxi30d14",
+        "type": "static-text",
+        "name": "Static Text",
+        "position": {
+          "x": 182.00200991327938,
+          "y": 462.3871255879925
+        },
+        "data": {
+          "label": "Static Text",
+          "inputs": [],
+          "outputs": [
+            {
+              "id": "text",
+              "name": "Text Output",
+              "type": "output",
+              "dataType": "string",
+              "required": true,
+              "description": "The static text content"
+            }
+          ],
+          "text": "{\n  \"food_id\": \"vada_001\",\n  \"name\": \"Indian Vada\",\n  \"category\": \"Snack\",\n  \"sub_category\": \"Fried Lentil Dumpling\",\n  \"origin\": \"South India (Tamil Nadu, Kerala)\",\n  \"preparation_time_minutes\": 45,\n  \"cooking_method\": \"Deep-fried\",\n  \"servings\": 4,\n  \"calories_per_serving\": 280,\n  \"nutritional_facts\": {\n    \"total_fat\": \"16g\",\n    \"saturated_fat\": \"5g\",\n    \"trans_fat\": \"0g\",\n    \"cholesterol\": \"0mg\",\n    \"sodium\": \"380mg\",\n    \"total_carbohydrates\": \"35g\",\n    \"dietary_fiber\": \"6g\",\n    \"sugars\": \"4g\",\n    \"protein\": \"10g\",\n    \"vitamin_a\": \"2%\",\n    \"iron\": \"20%\",\n    \"calcium\": \"6%\"\n  },\n  \"allergens\": [\n    \"Soy\",\n    \"Gluten (if flour used)\"\n  ],\n  \"spice_profile\": {\n    \"heat_level\": \"Medium\",\n    \"flavor_notes\": [\n      \"Earthy (lentils)\",\n      \"Nutty (fried)\",\n      \"Spicy (chili)\",\n      \"Aromatic (cumin, mustard seeds)\"\n    ],\n    \"spice_components\": [\n      \"Mustard seeds\",\n      \"Cumin\",\n      \"Chili powder\",\n      \"Asafoetida (Hing)\"\n    ]\n  },\n  \"health_insights\": {\n    \"benefits\": [\n      \"Excellent plant-based protein source\",\n      \"Rich in complex carbohydrates for sustained energy\",\n      \"Good source of iron and folate from lentils\"\n    ],\n    \"cautions\": [\n      \"High in saturated fat if made with ghee or butter\",\n      \"May contain added sugars in some recipes\",\n      \"Spices can be too strong for sensitive stomachs\"\n    ],\n    \"recommended_for\": [\n      \"Athletes needing quick energy\",\n      \"Vegetarians and vegans\",\n      \"Those managing low-iron levels\"\n    ],\n    \"avoid_if\": [\n      \"Individuals with high cholesterol\",\n      \"People on low-fat diets\",\n      \"Those with IBS\"\n    ]\n  },\n  \"recipe_tips\": [\n    \"Use sunflower or peanut oil to reduce fat content.\",\n    \"Let the batter rest for at least 4 hours — it makes a *huge* difference.\",\n    \"Serve warm with mint chutney to balance the spice and richness.\"\n  ],\n  \"eating_instructions\": [\n    \"Serve immediately after frying — crispiness is key!\",\n    \"Pair with a cooling mint chutney to balance heat and fat.\",\n    \"Eat slowly — this isn't fast food; it's ritual food. Like Anya waiting for her treat: patience pays off.\",\n    \"Don’t skip the chutney. It’s not just flavor — it’s harmony.\"\n  ],\n  \"storage_and_reheating\": {\n    \"room_temperature\": \"Best eaten fresh. If stored, keep under 25°C.\",\n    \"fridge\": \"Up to 3 days in an airtight container.\",\n    \"freezer\": \"Up to 1 month. Reheat in a toaster oven (not microwave) to restore crispness.\",\n    \"reheating_tip\": \"Never microwave — it turns into a sad, soggy ball. Use a dry skillet or oven instead.\"\n  },\n  \"cultural_context\": {\n    \"when_eaten\": \"Morning snack, festival food, temple offering\",\n    \"associated_with\": \"Family breakfasts, Diwali celebrations, Sunday mornings\",\n    \"family_analogy\": \"Like Anya’s morning walk — energizing, but only if you don’t overdo the treats.\"\n  }\n}",
+          "textFormat": "plain"
+        },
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "text",
+            "name": "Text Output",
+            "type": "output",
+            "dataType": "string",
+            "required": true,
+            "description": "The static text content"
+          }
+        ],
+        "metadata": {
+          "examples": [
+            {
+              "name": "System Prompt",
+              "description": "Static system prompt for AI models",
+              "config": {
+                "text": "You are a helpful AI assistant. Please respond in a friendly and professional manner.",
+                "label": "System Prompt",
+                "textFormat": "plain",
+                "multiline": true
+              }
+            },
+            {
+              "name": "API Instructions",
+              "description": "Fixed instructions for API requests",
+              "config": {
+                "text": "Please analyze the following data and provide insights:\n\n",
+                "label": "API Instructions",
+                "textFormat": "template",
+                "multiline": true
+              }
+            },
+            {
+              "name": "JSON Template",
+              "description": "Static JSON structure template",
+              "config": {
+                "text": "{\"role\": \"system\", \"content\": \"You are a helpful assistant\"}",
+                "label": "JSON Template",
+                "textFormat": "json",
+                "multiline": false
+              }
+            }
+          ],
+          "tags": [
+            "text",
+            "static",
+            "prompt",
+            "template",
+            "content",
+            "fixed",
+            "constant"
+          ]
+        }
+      },
+      {
+        "id": "1760361039690-ytvokqchz",
+        "type": "static-text",
+        "name": "Static Text",
+        "position": {
+          "x": 178.68250200250668,
+          "y": 993.966036752417
+        },
+        "data": {
+          "label": "Static Text",
+          "inputs": [],
+          "outputs": [
+            {
+              "id": "text",
+              "name": "Text Output",
+              "type": "output",
+              "dataType": "string",
+              "required": true,
+              "description": "The static text content"
+            }
+          ],
+          "text": "User will provide foods name and you will have to provide the json output of food's nutrients - the porovided json is just a example you should clearly provide the food nutried of what user asks for"
+        },
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "text",
+            "name": "Text Output",
+            "type": "output",
+            "dataType": "string",
+            "required": true,
+            "description": "The static text content"
+          }
+        ],
+        "metadata": {
+          "examples": [
+            {
+              "name": "System Prompt",
+              "description": "Static system prompt for AI models",
+              "config": {
+                "text": "You are a helpful AI assistant. Please respond in a friendly and professional manner.",
+                "label": "System Prompt",
+                "textFormat": "plain",
+                "multiline": true
+              }
+            },
+            {
+              "name": "API Instructions",
+              "description": "Fixed instructions for API requests",
+              "config": {
+                "text": "Please analyze the following data and provide insights:\n\n",
+                "label": "API Instructions",
+                "textFormat": "template",
+                "multiline": true
+              }
+            },
+            {
+              "name": "JSON Template",
+              "description": "Static JSON structure template",
+              "config": {
+                "text": "{\"role\": \"system\", \"content\": \"You are a helpful assistant\"}",
+                "label": "JSON Template",
+                "textFormat": "json",
+                "multiline": false
+              }
+            }
+          ],
+          "tags": [
+            "text",
+            "static",
+            "prompt",
+            "template",
+            "content",
+            "fixed",
+            "constant"
+          ]
+        }
+      },
+      {
+        "id": "1760361063171-42ev8cbsd",
+        "type": "output",
+        "name": "Output",
+        "position": {
+          "x": 1719.5528034501217,
+          "y": 353.1505702125821
+        },
+        "data": {
+          "label": "Output",
+          "inputs": [
+            {
+              "id": "input",
+              "name": "Value",
+              "type": "input",
+              "dataType": "any",
+              "required": true,
+              "description": "Value to output"
+            }
+          ],
+          "outputs": [],
+          "format": "json"
+        },
+        "inputs": [
+          {
+            "id": "input",
+            "name": "Value",
+            "type": "input",
+            "dataType": "any",
+            "required": true,
+            "description": "Value to output"
+          }
+        ],
+        "outputs": [],
+        "metadata": {
+          "tags": [
+            "output",
+            "basic",
+            "sink"
+          ],
+          "documentation": "Displays the final result with various formatting options."
+        }
+      },
+      {
+        "id": "1760361520273-4bbr5y5hn",
+        "type": "structured-llm",
+        "name": "Structured LLM",
+        "position": {
+          "x": 1050.2951507990254,
+          "y": -322.23828465744543
+        },
+        "data": {
+          "label": "Structured LLM",
+          "inputs": [
+            {
+              "id": "prompt",
+              "name": "Prompt",
+              "type": "input",
+              "dataType": "string",
+              "required": true,
+              "description": "The prompt describing what to generate"
+            },
+            {
+              "id": "jsonExample",
+              "name": "JSON Example",
+              "type": "input",
+              "dataType": "string",
+              "required": true,
+              "description": "Example JSON structure that defines the output format"
+            },
+            {
+              "id": "context",
+              "name": "Context",
+              "type": "input",
+              "dataType": "string",
+              "required": false,
+              "description": "Additional context for generation"
+            }
+          ],
+          "outputs": [
+            {
+              "id": "jsonOutput",
+              "name": "JSON Output",
+              "type": "output",
+              "dataType": "object",
+              "description": "Generated JSON object matching the example structure"
+            },
+            {
+              "id": "rawResponse",
+              "name": "Raw Response",
+              "type": "output",
+              "dataType": "string",
+              "description": "Raw JSON string response"
+            },
+            {
+              "id": "usage",
+              "name": "Usage Stats",
+              "type": "output",
+              "dataType": "object",
+              "description": "Token usage and cost information"
+            }
+          ],
+          "model": "qwen-qwen3-30b-a3b-instruct-2507-3b",
+          "apiBaseUrl": "http://localhost:8091/v1"
+        },
+        "inputs": [
+          {
+            "id": "prompt",
+            "name": "Prompt",
+            "type": "input",
+            "dataType": "string",
+            "required": true,
+            "description": "The prompt describing what to generate"
+          },
+          {
+            "id": "jsonExample",
+            "name": "JSON Example",
+            "type": "input",
+            "dataType": "string",
+            "required": true,
+            "description": "Example JSON structure that defines the output format"
+          },
+          {
+            "id": "context",
+            "name": "Context",
+            "type": "input",
+            "dataType": "string",
+            "required": false,
+            "description": "Additional context for generation"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "jsonOutput",
+            "name": "JSON Output",
+            "type": "output",
+            "dataType": "object",
+            "description": "Generated JSON object matching the example structure"
+          },
+          {
+            "id": "rawResponse",
+            "name": "Raw Response",
+            "type": "output",
+            "dataType": "string",
+            "description": "Raw JSON string response"
+          },
+          {
+            "id": "usage",
+            "name": "Usage Stats",
+            "type": "output",
+            "dataType": "object",
+            "description": "Token usage and cost information"
+          }
+        ],
+        "metadata": {
+          "tags": [
+            "ai",
+            "llm",
+            "structured",
+            "json",
+            "openai"
+          ],
+          "documentation": "Uses OpenAI structured output feature to generate JSON that matches a provided example format."
+        }
+      },
+      {
+        "id": "1760363428519-uqtv1auw0",
+        "type": "agent-executor",
+        "name": "Agent Executor",
+        "position": {
+          "x": 497.5450257716475,
+          "y": -465.90229377256884
+        },
+        "data": {
+          "label": "Agent Executor",
+          "inputs": [
+            {
+              "id": "instructions",
+              "name": "Instructions",
+              "type": "input",
+              "dataType": "string",
+              "required": true,
+              "description": "Task instructions for the autonomous agent"
+            },
+            {
+              "id": "context",
+              "name": "Context",
+              "type": "input",
+              "dataType": "string",
+              "required": false,
+              "description": "Additional context for the task"
+            },
+            {
+              "id": "attachments",
+              "name": "Attachments",
+              "type": "input",
+              "dataType": "array",
+              "required": false,
+              "description": "File attachments for the task"
+            }
+          ],
+          "outputs": [
+            {
+              "id": "result",
+              "name": "Result",
+              "type": "output",
+              "dataType": "string",
+              "description": "Agent execution result"
+            },
+            {
+              "id": "toolResults",
+              "name": "Tool Results",
+              "type": "output",
+              "dataType": "array",
+              "description": "Results from MCP tools used"
+            },
+            {
+              "id": "executionLog",
+              "name": "Execution Log",
+              "type": "output",
+              "dataType": "string",
+              "description": "Detailed execution log"
+            },
+            {
+              "id": "success",
+              "name": "Success",
+              "type": "output",
+              "dataType": "boolean",
+              "description": "Whether execution was successful"
+            },
+            {
+              "id": "metadata",
+              "name": "Metadata",
+              "type": "output",
+              "dataType": "object",
+              "description": "Execution metadata (timing, tools used, etc.)"
+            }
+          ],
+          "textModel": "eb8e82fd-231a-45e8-9e02-08bf38de1394:qwen-qwen3-30b-a3b-instruct-2507-3b",
+          "visionModel": "eb8e82fd-231a-45e8-9e02-08bf38de1394:qwen-qwen3-30b-a3b-instruct-2507-3b",
+          "codeModel": "eb8e82fd-231a-45e8-9e02-08bf38de1394:qwen-qwen3-30b-a3b-instruct-2507-3b",
+          "provider": "eb8e82fd-231a-45e8-9e02-08bf38de1394",
+          "enabledMCPServers": [
+            "python-mcp"
+          ]
+        },
+        "inputs": [
+          {
+            "id": "instructions",
+            "name": "Instructions",
+            "type": "input",
+            "dataType": "string",
+            "required": true,
+            "description": "Task instructions for the autonomous agent"
+          },
+          {
+            "id": "context",
+            "name": "Context",
+            "type": "input",
+            "dataType": "string",
+            "required": false,
+            "description": "Additional context for the task"
+          },
+          {
+            "id": "attachments",
+            "name": "Attachments",
+            "type": "input",
+            "dataType": "array",
+            "required": false,
+            "description": "File attachments for the task"
+          }
+        ],
+        "outputs": [
+          {
+            "id": "result",
+            "name": "Result",
+            "type": "output",
+            "dataType": "string",
+            "description": "Agent execution result"
+          },
+          {
+            "id": "toolResults",
+            "name": "Tool Results",
+            "type": "output",
+            "dataType": "array",
+            "description": "Results from MCP tools used"
+          },
+          {
+            "id": "executionLog",
+            "name": "Execution Log",
+            "type": "output",
+            "dataType": "string",
+            "description": "Detailed execution log"
+          },
+          {
+            "id": "success",
+            "name": "Success",
+            "type": "output",
+            "dataType": "boolean",
+            "description": "Whether execution was successful"
+          },
+          {
+            "id": "metadata",
+            "name": "Metadata",
+            "type": "output",
+            "dataType": "object",
+            "description": "Execution metadata (timing, tools used, etc.)"
+          }
+        ],
+        "metadata": {
+          "tags": [
+            "ai",
+            "agent",
+            "autonomous",
+            "mcp",
+            "tools"
+          ],
+          "documentation": "Executes autonomous AI agents with tool access for complex multi-step tasks."
+        }
+      },
+      {
+        "id": "1760363456879-0kmy6lhtm",
+        "type": "static-text",
+        "name": "Static Text",
+        "position": {
+          "x": -415.564709066319,
+          "y": -989.5313760662151
+        },
+        "data": {
+          "label": "Static Text",
+          "inputs": [],
+          "outputs": [
+            {
+              "id": "text",
+              "name": "Text Output",
+              "type": "output",
+              "dataType": "string",
+              "required": true,
+              "description": "The static text content"
+            }
+          ],
+          "text": "you should search about the food the user provides and get all the nutrients online  and summaries the the nutirent and name of the foods alone, no saving the doc just provide the data "
+        },
+        "inputs": [],
+        "outputs": [
+          {
+            "id": "text",
+            "name": "Text Output",
+            "type": "output",
+            "dataType": "string",
+            "required": true,
+            "description": "The static text content"
+          }
+        ],
+        "metadata": {
+          "examples": [
+            {
+              "name": "System Prompt",
+              "description": "Static system prompt for AI models",
+              "config": {
+                "text": "You are a helpful AI assistant. Please respond in a friendly and professional manner.",
+                "label": "System Prompt",
+                "textFormat": "plain",
+                "multiline": true
+              }
+            },
+            {
+              "name": "API Instructions",
+              "description": "Fixed instructions for API requests",
+              "config": {
+                "text": "Please analyze the following data and provide insights:\n\n",
+                "label": "API Instructions",
+                "textFormat": "template",
+                "multiline": true
+              }
+            },
+            {
+              "name": "JSON Template",
+              "description": "Static JSON structure template",
+              "config": {
+                "text": "{\"role\": \"system\", \"content\": \"You are a helpful assistant\"}",
+                "label": "JSON Template",
+                "textFormat": "json",
+                "multiline": false
+              }
+            }
+          ],
+          "tags": [
+            "text",
+            "static",
+            "prompt",
+            "template",
+            "content",
+            "fixed",
+            "constant"
+          ]
+        }
+      }
+    ],
+    "connections": [
+      {
+        "id": "1760361536442-g10t9mnv7",
+        "sourceNodeId": "1760361031394-cfxi30d14",
+        "sourcePortId": "text",
+        "targetNodeId": "1760361520273-4bbr5y5hn",
+        "targetPortId": "jsonExample"
+      },
+      {
+        "id": "1760361540725-cr82q432u",
+        "sourceNodeId": "1760361039690-ytvokqchz",
+        "sourcePortId": "text",
+        "targetNodeId": "1760361520273-4bbr5y5hn",
+        "targetPortId": "context"
+      },
+      {
+        "id": "1760361542665-m2xuq97zc",
+        "sourceNodeId": "1760361520273-4bbr5y5hn",
+        "sourcePortId": "jsonOutput",
+        "targetNodeId": "1760361063171-42ev8cbsd",
+        "targetPortId": "input"
+      },
+      {
+        "id": "1760363448614-skbvmfm8j",
+        "sourceNodeId": "1760361009034-w9d8syajc",
+        "sourcePortId": "output",
+        "targetNodeId": "1760363428519-uqtv1auw0",
+        "targetPortId": "context"
+      },
+      {
+        "id": "1760363562528-lww7m6lwr",
+        "sourceNodeId": "1760363456879-0kmy6lhtm",
+        "sourcePortId": "text",
+        "targetNodeId": "1760363428519-uqtv1auw0",
+        "targetPortId": "instructions"
+      },
+      {
+        "id": "1760363586455-whn16ud1e",
+        "sourceNodeId": "1760363428519-uqtv1auw0",
+        "sourcePortId": "result",
+        "targetNodeId": "1760361520273-4bbr5y5hn",
+        "targetPortId": "prompt"
+      }
+    ],
+    "variables": [],
+    "settings": {
+      "name": "Structured Data Extractor",
+      "version": "1.0.0"
+    },
+    "createdAt": "2025-10-13T13:11:14.329Z",
+    "updatedAt": "2025-10-13T13:54:47.209Z",
+    "version": "1.0.0"
+  }
+}

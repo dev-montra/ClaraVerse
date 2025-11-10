@@ -15,15 +15,15 @@
  * - Theme support
  */
 
-import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { 
-  User, 
-  Bot, 
-  Copy, 
-  Check, 
-  Edit3, 
-  RotateCcw, 
-  FileText, 
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import {
+  User,
+  Bot,
+  Copy,
+  Check,
+  Edit3,
+  RotateCcw,
+  FileText,
   Image as ImageIcon,
   File,
   Code,
@@ -39,27 +39,37 @@ import {
   Volume2,
   VolumeX,
   Loader2,
-  Activity
+  Activity,
+  Layout,
+  BarChart,
+  Table,
+  Box
 } from 'lucide-react';
 
 // Import types and components
-import { 
-  ClaraMessage, 
+import {
+  ClaraMessage,
   ClaraMessageBubbleProps,
-  ClaraFileAttachment
+  ClaraFileAttachment,
+  ClaraArtifact
 } from '../../types/clara_assistant_types';
 
 import MessageContentRenderer from './MessageContentRenderer';
 import ToolExecutionBlock from './ToolExecutionBlock';
 
 import { copyToClipboard } from '../../utils/clipboard';
-import { useSmoothScroll } from '../../hooks/useSmoothScroll';
+// REMOVED: import { useSmoothScroll } from '../../hooks/useSmoothScroll';
+// No longer needed - scroll is handled by parent chat window component
 
 // Import TTS service
 import { claraTTSService, AudioControlState } from '../../services/claraTTSService';
 
 // Import ExecutionDetailsModal
 import ExecutionDetailsModal from './ExecutionDetailsModal';
+
+// Import Artifact Pane context and detection service
+import { useArtifactPane } from '../../contexts/ArtifactPaneContext';
+import ArtifactDetectionService from '../../services/artifactDetectionService';
 
 // Import ExtractedImagesRenderer
 import ExtractedImagesRenderer from './ExtractedImagesRenderer';
@@ -240,9 +250,126 @@ const ThinkingDisplay: React.FC<{
 };
 
 /**
+ * Artifact preview buttons - show when artifact pane is closed
+ */
+const ArtifactPreviewButtons: React.FC<{
+  artifacts: ClaraArtifact[];
+  onOpenArtifacts: () => void;
+  isPaneClosed: boolean;
+  isDetecting?: boolean;
+  hasArtifacts?: boolean;
+}> = ({ artifacts, onOpenArtifacts, isPaneClosed, isDetecting = false, hasArtifacts = false }) => {
+  if (!isPaneClosed) return null;
+
+  const getArtifactIcon = (type: string) => {
+    switch (type) {
+      case 'html':
+      case 'react':
+        return Layout;
+      case 'mermaid':
+        return Box;
+      case 'chart':
+        return BarChart;
+      case 'table':
+        return Table;
+      case 'code':
+        return Code;
+      default:
+        return FileCode;
+    }
+  };
+
+  const getArtifactLabel = (type: string) => {
+    switch (type) {
+      case 'html':
+        return 'Open HTML Preview';
+      case 'react':
+        return 'Open React Component';
+      case 'mermaid':
+        return 'Open Diagram';
+      case 'chart':
+        return 'Open Chart';
+      case 'table':
+        return 'Open Table';
+      case 'code':
+        return 'Open Code';
+      default:
+        return 'Open Artifact';
+    }
+  };
+
+  // Group artifacts by type
+  const artifactGroups = artifacts.reduce((groups, artifact) => {
+    const type = artifact.type || 'code';
+    if (!groups[type]) {
+      groups[type] = [];
+    }
+    groups[type].push(artifact);
+    return groups;
+  }, {} as Record<string, any[]>);
+
+  // If artifacts haven't been detected yet, show a generic "View Artifacts" button
+  if (!hasArtifacts) {
+    return (
+      <div className="mt-4 flex flex-wrap gap-2">
+        <button
+          onClick={onOpenArtifacts}
+          disabled={isDetecting}
+          className="flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-900/30 dark:to-purple-900/30 hover:from-blue-100 hover:to-purple-100 dark:hover:from-blue-800/40 dark:hover:to-purple-800/40 border border-blue-200 dark:border-blue-700 rounded-lg transition-all duration-200 shadow-sm hover:shadow-md group disabled:opacity-50 disabled:cursor-not-allowed"
+          title="Click to detect and view artifacts"
+        >
+          {isDetecting ? (
+            <Loader2 className="w-4 h-4 text-blue-600 dark:text-blue-400 animate-spin" />
+          ) : (
+            <Box className="w-4 h-4 text-blue-600 dark:text-blue-400 group-hover:scale-110 transition-transform" />
+          )}
+          <span className="text-sm font-medium text-blue-700 dark:text-blue-300">
+            {isDetecting ? 'Detecting...' : 'View Artifacts if Available'}
+          </span>
+          {!isDetecting && (
+            <Eye className="w-3 h-3 text-blue-500 dark:text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+          )}
+        </button>
+      </div>
+    );
+  }
+
+  // Show specific artifact type buttons once detected
+  return (
+    <div className="mt-4 flex flex-wrap gap-2">
+      {Object.entries(artifactGroups).map(([type, artifactsOfType]) => {
+        const Icon = getArtifactIcon(type);
+        const label = getArtifactLabel(type);
+        const count = artifactsOfType.length;
+
+        return (
+          <button
+            key={type}
+            onClick={onOpenArtifacts}
+            className="flex items-center gap-2 px-3 py-2 bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-900/30 dark:to-purple-900/30 hover:from-blue-100 hover:to-purple-100 dark:hover:from-blue-800/40 dark:hover:to-purple-800/40 border border-blue-200 dark:border-blue-700 rounded-lg transition-all duration-200 shadow-sm hover:shadow-md group"
+            title={`Click to view ${count} ${label}${count > 1 ? 's' : ''}`}
+          >
+            <Icon className="w-4 h-4 text-blue-600 dark:text-blue-400 group-hover:scale-110 transition-transform" />
+            <span className="text-sm font-medium text-blue-700 dark:text-blue-300">
+              {label}
+            </span>
+            {count > 1 && (
+              <span className="text-xs px-1.5 py-0.5 bg-blue-200 dark:bg-blue-800 text-blue-700 dark:text-blue-300 rounded-full font-semibold">
+                {count}
+              </span>
+            )}
+            <Eye className="w-3 h-3 text-blue-500 dark:text-blue-400 opacity-0 group-hover:opacity-100 transition-opacity" />
+          </button>
+        );
+      })}
+    </div>
+  );
+};
+
+/**
  * File attachment display component
  */
-const FileAttachmentDisplay: React.FC<{ 
+const FileAttachmentDisplay: React.FC<{
   attachment: ClaraFileAttachment;
   onPreview?: (attachment: ClaraFileAttachment) => void;
 }> = ({ attachment, onPreview }) => {
@@ -926,7 +1053,108 @@ const ClaraMessageBubble: React.FC<ClaraMessageBubbleProps> = ({
   } | null>(null);
   const messageRef = useRef<HTMLDivElement>(null);
   const { Toast } = useCopyWithToast();
-  
+
+  // Artifact Pane integration
+  const { openArtifactPane, isOpen: isArtifactPaneOpen } = useArtifactPane();
+
+  // Track if we've already detected artifacts for this message to prevent duplicates
+  const artifactsDetectedRef = useRef<string | null>(null);
+
+  // Store detected artifacts for this message
+  const [detectedArtifacts, setDetectedArtifacts] = useState<ClaraArtifact[]>([]);
+  const [isDetecting, setIsDetecting] = useState(false);
+
+  // Check if message has potential artifacts (quick check, no heavy processing)
+  const hasPotentialArtifacts = useMemo(() => {
+    if (message.role !== 'assistant' || !message.content || message.content.length < 50) {
+      return false;
+    }
+
+    // Quick regex checks for common artifact patterns (very fast)
+    const content = message.content;
+    return (
+      /```(html|mermaid|json|jsx?|tsx?|python|java|cpp?|csharp|go|rust|sql)/.test(content) ||
+      content.includes('<!DOCTYPE') ||
+      content.includes('<html') ||
+      content.includes('graph ') ||
+      content.includes('flowchart ') ||
+      content.includes('sequenceDiagram')
+    );
+  }, [message.content, message.role]);
+
+  // State to show "no artifacts" feedback
+  const [showNoArtifactsFeedback, setShowNoArtifactsFeedback] = useState(false);
+
+  // On-demand artifact detection - only when user clicks the button
+  const detectArtifactsOnDemand = useCallback(() => {
+    // Skip if already detected or currently detecting
+    if (artifactsDetectedRef.current === message.id || isDetecting) {
+      // If already detected, just open the pane
+      if (detectedArtifacts.length > 0) {
+        openArtifactPane(detectedArtifacts, message.id);
+      }
+      return;
+    }
+
+    setIsDetecting(true);
+    artifactsDetectedRef.current = message.id; // Mark this message as detected
+
+    // Run detection
+    const detectionResult = ArtifactDetectionService.detectArtifacts({
+      messageContent: message.content,
+      userMessage: '',
+      conversationHistory: [],
+      attachments: message.attachments,
+      artifactConfig: {
+        enableInlineVisuals: false,
+        enableCodeArtifacts: true,
+        enableChartArtifacts: true,
+        enableTableArtifacts: true,
+        enableMermaidArtifacts: true,
+        enableHtmlArtifacts: true,
+        enableMarkdownArtifacts: true,
+        enableJsonArtifacts: true,
+        enableDiagramArtifacts: true,
+        autoDetectArtifacts: true,
+        maxArtifactsPerMessage: 10
+      }
+    });
+
+    // Store and open artifact pane if we detected artifacts
+    if (detectionResult.artifacts.length > 0) {
+      console.log('🎨 On-demand detected', detectionResult.artifacts.length, 'artifacts for message', message.id);
+      setDetectedArtifacts(detectionResult.artifacts);
+      openArtifactPane(detectionResult.artifacts, message.id);
+      setShowNoArtifactsFeedback(false);
+    } else {
+      // Show feedback when no artifacts are found
+      setShowNoArtifactsFeedback(true);
+      setTimeout(() => setShowNoArtifactsFeedback(false), 3000);
+    }
+
+    setIsDetecting(false);
+  }, [message.id, message.content, message.attachments, isDetecting, detectedArtifacts, openArtifactPane]);
+
+  // Auto-detect for NEW messages only (streaming just finished)
+  useEffect(() => {
+    // Only auto-detect for brand new messages (within 2 seconds of creation)
+    if (
+      message.role === 'assistant' &&
+      !message.metadata?.isStreaming &&
+      message.timestamp &&
+      (Date.now() - message.timestamp.getTime() < 2000) &&
+      artifactsDetectedRef.current !== message.id &&
+      hasPotentialArtifacts
+    ) {
+      // Small delay to let UI settle
+      const timer = setTimeout(() => {
+        detectArtifactsOnDemand();
+      }, 300);
+
+      return () => clearTimeout(timer);
+    }
+  }, [message.metadata?.isStreaming, message.timestamp, message.role, hasPotentialArtifacts, detectArtifactsOnDemand]);
+
   // TTS state
   const [isTTSHealthy, setIsTTSHealthy] = useState(false);
   const [isTTSLoading, setIsTTSLoading] = useState(false);
@@ -937,13 +1165,9 @@ const ClaraMessageBubble: React.FC<ClaraMessageBubbleProps> = ({
   const showTTSControls = isThisMessagePlaying && (audioState?.isPlaying || audioState?.isPaused);
   const isTTSPlaying = isThisMessagePlaying && audioState?.isPlaying;
 
-  // Use the smooth scroll hook for better streaming behavior
-  const { scrollToElementDebounced, scrollToElementImmediate } = useSmoothScroll({
-    debounceMs: 150,
-    behavior: 'smooth',
-    block: 'end',
-    adaptiveScrolling: true
-  });
+  // REMOVED: useSmoothScroll hook
+  // No longer needed - all scrolling is handled by the parent chat window component
+  // This eliminates the "twitching" issue and allows users to scroll freely
 
   const isUser = message.role === 'user';
   const isSystem = message.role === 'system';
@@ -1119,30 +1343,18 @@ const ClaraMessageBubble: React.FC<ClaraMessageBubbleProps> = ({
     setShowExecutionDetails(false);
   };
 
-  // Improved auto-scroll effect for streaming messages with better responsiveness
-  useEffect(() => {
-    if (!messageRef.current || message.role !== 'assistant') return;
-    
-    const isStreaming = message.metadata?.isStreaming;
-    const contentLength = message.content.length;
-    
-    if (isStreaming) {
-      if (contentLength < 20) {
-        // Scroll immediately when streaming starts
-        scrollToElementImmediate(messageRef.current);
-      } else {
-        // Use adaptive debounced scroll during streaming
-        scrollToElementDebounced(messageRef.current, 150);
-      }
-    } else if (contentLength > 0) {
-      // Scroll immediately when streaming completes
-      setTimeout(() => {
-        if (messageRef.current) {
-          scrollToElementImmediate(messageRef.current);
-        }
-      }, 50);
-    }
-  }, [message.metadata?.isStreaming, message.content.length, message.role, scrollToElementDebounced, scrollToElementImmediate]);
+  // REMOVED: Individual message auto-scroll effect
+  // This was causing the "twitching" and fighting with user scroll attempts
+  // The chat window component (clara_assistant_chat_window.tsx) now handles ALL scrolling
+  // via the SmoothAutoScroller class with proper user intent detection
+  //
+  // Problem: This useEffect was triggering on EVERY content change during streaming,
+  // causing the message bubble to constantly scroll into view, which:
+  // 1. Made the UI "twitch" as elements repositioned
+  // 2. Prevented users from scrolling up (scroll kept resetting)
+  // 3. Created a poor UX where users had to fight the auto-scroll
+  //
+  // Solution: Let the parent chat window handle scrolling with proper user detection
 
 
 
@@ -1212,11 +1424,12 @@ const ClaraMessageBubble: React.FC<ClaraMessageBubbleProps> = ({
         </div>
 
         {/* Message Bubble */}
-        <div className={`glassmorphic rounded-2xl px-5 py-4 ${
-          isUser 
-            ? 'bg-gradient-to-br from-sakura-50/80 to-pink-50/80 dark:from-sakura-900/30 dark:to-pink-900/30 border-sakura-200/50 dark:border-sakura-700/50 shadow-sakura-100/50 dark:shadow-sakura-900/20' 
+        <div className={`glassmorphic rounded-2xl px-5 py-4 break-words ${
+          isUser
+            ? 'bg-gradient-to-br from-sakura-50/80 to-pink-50/80 dark:from-sakura-900/30 dark:to-pink-900/30 border-sakura-200/50 dark:border-sakura-700/50 shadow-sakura-100/50 dark:shadow-sakura-900/20'
             : 'bg-white/60 dark:bg-gray-800/60'
-        } backdrop-blur-sm`}>
+        } backdrop-blur-sm`}
+        style={{ overflowWrap: 'break-word', wordBreak: 'break-word' }}>
           
           {/* File Attachments */}
           {isUser && displayAttachments.length > 0 ? (
@@ -1276,18 +1489,19 @@ const ClaraMessageBubble: React.FC<ClaraMessageBubbleProps> = ({
             />
           )}
 
-          {/* **NEW: Tool Execution Block for agent mode */}
-          {isAssistant && message.metadata?.toolExecutionBlock && (
+          {/* Tool execution is shown in the top-right status widget, not in message bubble */}
+          {/* {isAssistant && message.metadata?.toolExecutionBlock && (
             <div className="mb-4">
               <ToolExecutionBlock
                 data={message.metadata.toolExecutionBlock}
                 className="tool-execution-in-message"
               />
             </div>
-          )}
+          )} */}
 
           {/* Show response content */}
-          {responseContent && (
+          {/* Hide content during streaming if we're inside thinking tags to prevent glitchy text */}
+          {responseContent && !(message.metadata?.isStreaming && message.metadata?.hideStreamingContent) && (
             <MessageContentRenderer
               content={responseContent}
               isStreaming={message.metadata?.isStreaming}
@@ -1323,7 +1537,28 @@ const ClaraMessageBubble: React.FC<ClaraMessageBubbleProps> = ({
           {/* Streaming indicator */}
           {message.metadata?.isStreaming && <StreamingIndicator />}
 
-          {/* Artifacts are now handled inline within MessageContentRenderer - no separate artifact cards needed */}
+          {/* Artifact preview buttons - show when pane is closed and message has potential artifacts */}
+          {isAssistant && (detectedArtifacts.length > 0 || hasPotentialArtifacts) && (
+            <>
+              <ArtifactPreviewButtons
+                artifacts={detectedArtifacts}
+                onOpenArtifacts={detectArtifactsOnDemand}
+                isPaneClosed={!isArtifactPaneOpen}
+                isDetecting={isDetecting}
+                hasArtifacts={detectedArtifacts.length > 0}
+              />
+
+              {/* No artifacts feedback message */}
+              {showNoArtifactsFeedback && (
+                <div className="mt-3 p-3 bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-700 rounded-lg flex items-center gap-2 animate-in fade-in-0 slide-in-from-top-2">
+                  <AlertCircle className="w-4 h-4 text-gray-500 dark:text-gray-400" />
+                  <span className="text-sm text-gray-600 dark:text-gray-400">
+                    No artifacts found in this message
+                  </span>
+                </div>
+              )}
+            </>
+          )}
         </div>
 
         {/* TTS Control Panel - Show when audio is playing */}

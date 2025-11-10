@@ -45,14 +45,22 @@ export class AssistantAPIClient extends APIClient {
   ): Promise<any> {
     // Use tool model for tool calls, RAG model for RAG, or default model
     let model = defaultModel;
-    
+
     if (tools && tools.length > 0) {
       model = this.modelConfig.toolModel || defaultModel;
     } else if (options.useRag) {
       model = this.modelConfig.ragModel || defaultModel;
     }
 
-    return super.sendChat(model, messages, options, tools);
+    // Sanitize messages to remove <think> tags that cause MCP server template errors
+    const sanitizedMessages = messages.map(msg => ({
+      ...msg,
+      content: typeof msg.content === 'string'
+        ? msg.content.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
+        : msg.content
+    }));
+
+    return super.sendChat(model, sanitizedMessages, options, tools);
   }
 
   public async *streamChat(
@@ -63,13 +71,21 @@ export class AssistantAPIClient extends APIClient {
   ): AsyncGenerator<any> {
     // Use tool model for tool calls, RAG model for RAG, or default model
     let model = defaultModel;
-    
+
     if (tools && tools.length > 0) {
       model = this.modelConfig.toolModel || defaultModel;
     } else if (options.useRag) {
       model = this.modelConfig.ragModel || defaultModel;
     }
 
-    yield* super.streamChat(model, messages, options, tools);
+    // Sanitize messages to remove <think> tags that cause MCP server template errors
+    const sanitizedMessages = messages.map(msg => ({
+      ...msg,
+      content: typeof msg.content === 'string'
+        ? msg.content.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
+        : msg.content
+    }));
+
+    yield* super.streamChat(model, sanitizedMessages, options, tools);
   }
 } 

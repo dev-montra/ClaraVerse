@@ -259,29 +259,9 @@ const ServicesTab: React.FC = () => {
   // Llama-swap service management functions
   const fetchLlamaSwapStatus = async () => {
     try {
-      const llamaSwap = (window as any).llamaSwap;
-      if (llamaSwap?.getStatusWithHealth) {
-        const status = await llamaSwap.getStatusWithHealth();
-        console.log('LLM Service Status (with health check):', status);
-        setLlamaSwapStatus(status);
-        
-        // If running, fetch models
-        if (status.isRunning && llamaSwap?.getModels) {
-          const models = await llamaSwap.getModels();
-          setLlamaSwapModels(models);
-        }
-      } else if (llamaSwap?.getStatus) {
-        // Fallback to basic status
-        const status = await llamaSwap.getStatus();
-        console.log('LLM Service Status (basic):', status);
-        setLlamaSwapStatus(status);
-        
-        // If running, fetch models
-        if (status.isRunning && llamaSwap?.getModels) {
-          const models = await llamaSwap.getModels();
-          setLlamaSwapModels(models);
-        }
-      }
+      // LlamaSwap service has been removed
+      console.log('LLM Service has been removed from the application');
+      setLlamaSwapStatus({ isRunning: false, port: null, apiUrl: null });
     } catch (error) {
       console.error('Error fetching llama-swap status:', error);
     }

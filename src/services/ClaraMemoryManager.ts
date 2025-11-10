@@ -15,6 +15,13 @@
 import { UserMemoryProfile } from '../components/ClaraSweetMemory';
 import { indexedDBService } from './indexedDB';
 import type { ClaraMessage, ClaraAIConfig } from '../types/clara_assistant_types';
+import {
+  getMemorySize,
+  compressMemoryProfile,
+  MEMORY_SIZE_LIMITS,
+  type MemorySizeInfo,
+  type CompressionResult
+} from './claraMemoryCompression';
 
 // ==================== LOCAL INTERFACES ====================
 
@@ -28,12 +35,14 @@ interface MemoryExtractionResponse {
 // ==================== EVENTS & INTERFACES ====================
 
 export interface MemoryEvent {
-  type: 'memory_extracted' | 'profile_updated' | 'memory_error' | 'processing_started' | 'processing_completed';
+  type: 'memory_extracted' | 'profile_updated' | 'memory_error' | 'processing_started' | 'processing_completed' | 'compression_needed' | 'compression_complete';
   data?: any;
   timestamp: number;
   profileId?: string;
   confidence?: number;
   error?: string;
+  sizeInfo?: MemorySizeInfo;
+  compressionResult?: CompressionResult;
 }
 
 export type MemoryEventListener = (event: MemoryEvent) => void;
@@ -68,7 +77,10 @@ class ClaraMemoryManager {
   private listeners: Set<MemoryEventListener> = new Set();
   private processingQueue: Set<string> = new Set();
   private lastProcessedTime: number = 0;
+  private lastCompressionWarningTime: number = 0;
+  private readonly COMPRESSION_WARNING_COOLDOWN = 60000; // 1 minute cooldown
   private config: MemoryManagerConfig;
+  private lastUsedAiConfig: ClaraAIConfig | null = null; // 🔧 Track last used AI config for compression
 
   // Constants
   private readonly USER_ID = 'current_user'; // Single user app optimization
@@ -169,7 +181,7 @@ class ClaraMemoryManager {
     try {
       console.log(`🧠 DEBUG: Looking for memory profile with key: ${this.PROFILE_KEY}`);
       const result = await indexedDBService.get<{ key: string; value: UserMemoryProfile }>('settings', this.PROFILE_KEY);
-      
+
       if (result?.value) {
         console.log(`🧠 ✅ Retrieved user profile (version: ${result.value.version}, userId: ${result.value.userId})`);
         console.log(`🧠 Profile sections:`, {
@@ -180,6 +192,29 @@ class ClaraMemoryManager {
           context: Object.keys(result.value.context || {}).length,
           practical: Object.keys(result.value.practical || {}).length
         });
+
+        // 🗜️ CHECK SIZE AND AUTO-COMPRESS IF NEEDED
+        const sizeInfo = getMemorySize(result.value);
+
+        if (sizeInfo.needsCompression) {
+          // Over 5KB - auto-compress in background
+          const now = Date.now();
+          const timeSinceLastWarning = now - this.lastCompressionWarningTime;
+
+          if (timeSinceLastWarning >= this.COMPRESSION_WARNING_COOLDOWN) {
+            console.warn(`🗜️ Memory over 5KB (${(sizeInfo.totalBytes / 1024).toFixed(2)} KB) - AUTO-COMPRESSING...`);
+
+            // Trigger background compression (don't wait for it)
+            this.autoCompressInBackground(result.value).catch(err => {
+              console.error('🗜️ Background compression failed:', err);
+            });
+
+            this.lastCompressionWarningTime = now;
+          } else {
+            console.log(`🗜️ Compression needed but cooldown active (${Math.round(timeSinceLastWarning / 1000)}s since last)`);
+          }
+        }
+
         return result.value;
       }
       
@@ -230,20 +265,34 @@ class ClaraMemoryManager {
 
   public async saveUserProfile(profile: UserMemoryProfile): Promise<boolean> {
     try {
-      await indexedDBService.put('settings', { 
-        key: this.PROFILE_KEY, 
-        value: profile 
+      // Check memory size before saving
+      const sizeInfo = getMemorySize(profile);
+
+      await indexedDBService.put('settings', {
+        key: this.PROFILE_KEY,
+        value: profile
       });
-      
+
       console.log(`🧠 Saved user profile (version: ${profile.version})`);
-      
+
       this.emitEvent({
         type: 'profile_updated',
         data: profile,
         profileId: profile.id,
         confidence: profile.metadata.confidenceLevel
       });
-      
+
+      // Check if compression is needed
+      if (sizeInfo.needsCompression) {
+        console.warn(`🗜️ Memory size check: ${sizeInfo.totalBytes} bytes (${sizeInfo.isOverMaxSize ? 'CRITICAL' : 'WARNING'})`);
+        this.emitEvent({
+          type: 'compression_needed',
+          data: profile,
+          profileId: profile.id,
+          sizeInfo
+        });
+      }
+
       return true;
     } catch (error) {
       console.error('🧠 Failed to save user profile:', error);
@@ -340,6 +389,12 @@ class ClaraMemoryManager {
     const messageId = assistantMessage.id;
 
     try {
+      // 🔧 Store the current AI config for use in compression
+      if (aiConfig) {
+        this.lastUsedAiConfig = aiConfig;
+        console.log(`🧠 Stored AI config for compression: ${aiConfig.provider} / ${aiConfig.models.text}`);
+      }
+
       this.emitEvent({
         type: 'processing_started',
         data: { messageId, userMessage: userMessage.substring(0, 100) + '...' }
@@ -546,26 +601,164 @@ class ClaraMemoryManager {
       };
     }
 
-    // Merge with existing profile
+    // 🔧 REPLACE strategy: Extracted data IS the complete memory
+    // AI provides deduplicated, complete data - just replace everything
+    console.log('🧠 REPLACING old memory with newly extracted data (not merging)');
+
     return {
       ...existingProfile,
-      coreIdentity: { ...existingProfile.coreIdentity, ...extractedData.coreIdentity },
-      personalCharacteristics: { ...existingProfile.personalCharacteristics, ...extractedData.personalCharacteristics },
-      preferences: { ...existingProfile.preferences, ...extractedData.preferences },
-      relationship: { ...existingProfile.relationship, ...extractedData.relationship },
-      interactions: { ...existingProfile.interactions, ...extractedData.interactions },
-      context: { ...existingProfile.context, ...extractedData.context },
-      emotional: { ...existingProfile.emotional, ...extractedData.emotional },
-      practical: { ...existingProfile.practical, ...extractedData.practical },
+      // Replace each section entirely with extracted data
+      coreIdentity: extractedData.coreIdentity || existingProfile.coreIdentity,
+      personalCharacteristics: extractedData.personalCharacteristics || existingProfile.personalCharacteristics,
+      preferences: extractedData.preferences || existingProfile.preferences,
+      relationship: extractedData.relationship || existingProfile.relationship,
+      interactions: extractedData.interactions || existingProfile.interactions,
+      context: extractedData.context || existingProfile.context,
+      emotional: extractedData.emotional || existingProfile.emotional,
+      practical: extractedData.practical || existingProfile.practical,
       metadata: {
         ...existingProfile.metadata,
-        confidenceLevel: Math.max(existingProfile.metadata.confidenceLevel, confidence),
+        confidenceLevel: confidence,
         lastUpdated: now,
-        relevanceScore: Math.max(existingProfile.metadata.relevanceScore, confidence)
+        relevanceScore: confidence
       },
       version: existingProfile.version + 1,
       updatedAt: now
     };
+  }
+
+  // ==================== COMPRESSION METHODS ====================
+
+  /**
+   * Get current memory size information
+   */
+  public async getMemorySizeInfo(): Promise<MemorySizeInfo> {
+    try {
+      const profile = await this.getUserProfile();
+      return getMemorySize(profile);
+    } catch (error) {
+      console.error('🧠 Failed to get memory size info:', error);
+      return getMemorySize(null);
+    }
+  }
+
+  /**
+   * Compress the current memory profile
+   */
+  public async compressMemory(): Promise<CompressionResult> {
+    try {
+      const profile = await this.getUserProfile();
+      if (!profile) {
+        throw new Error('No profile to compress');
+      }
+
+      console.log('🗜️ Starting memory compression from ClaraMemoryManager...');
+      const result = await compressMemoryProfile(profile);
+
+      if (result.success) {
+        // Save compressed profile
+        await this.saveUserProfile(result.compressedProfile);
+
+        this.emitEvent({
+          type: 'compression_complete',
+          data: result.compressedProfile,
+          profileId: result.compressedProfile.id,
+          compressionResult: result
+        });
+      }
+
+      return result;
+    } catch (error) {
+      console.error('🗜️ Memory compression failed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Check if compression is needed
+   */
+  public async needsCompression(): Promise<boolean> {
+    const sizeInfo = await this.getMemorySizeInfo();
+    return sizeInfo.needsCompression;
+  }
+
+  /**
+   * Auto-compress in background without user intervention
+   * Uses the same AI config as the current chat (stored from last extraction)
+   */
+  private async autoCompressInBackground(profile: UserMemoryProfile): Promise<void> {
+    try {
+      console.log('🗜️ Starting background auto-compression...');
+
+      let provider;
+      let modelId;
+
+      // 🔧 Use the last used AI config (same model as current chat)
+      if (this.lastUsedAiConfig) {
+        const { claraProviderService } = await import('./claraProviderService');
+        const providers = await claraProviderService.getProviders();
+
+        // Find the provider that matches the stored config
+        provider = providers.find(p => p.id === this.lastUsedAiConfig!.provider);
+        modelId = this.lastUsedAiConfig.models.text;
+
+        if (provider) {
+          console.log(`🗜️ Using SAME model as chat: ${provider.name} / ${modelId}`);
+        } else {
+          console.warn(`🗜️ Could not find provider "${this.lastUsedAiConfig.provider}" - falling back to first available`);
+          provider = providers.find(p => p.isConfigured);
+          modelId = provider?.models?.[0] || 'default';
+        }
+      } else {
+        console.warn('🗜️ No AI config stored - using first available provider');
+        const { claraProviderService } = await import('./claraProviderService');
+        const providers = await claraProviderService.getProviders();
+        provider = providers.find(p => p.isConfigured);
+        modelId = provider?.models?.[0] || 'default';
+      }
+
+      if (!provider) {
+        console.warn('🗜️ No configured provider - using manual compression');
+        // Fallback to manual compression
+        const { manualCompression } = await import('./claraMemoryCompression');
+        const compressed = manualCompression(profile);
+        await this.saveUserProfile(compressed);
+        return;
+      }
+
+      const result = await compressMemoryProfile(profile, {
+        provider,
+        model: modelId,
+      });
+
+      if (result.success) {
+        await this.saveUserProfile(result.compressedProfile);
+        console.log(`🗜️ ✅ Background compression complete: ${(result.compressionRatio).toFixed(1)}% reduction`);
+
+        // Emit completion event
+        this.emitEvent({
+          type: 'compression_complete',
+          data: result.compressedProfile,
+          profileId: result.compressedProfile.id,
+          compressionResult: result
+        });
+      } else {
+        throw new Error(result.error || 'Compression failed');
+      }
+
+    } catch (error) {
+      console.error('🗜️ Background compression error:', error);
+
+      // Last resort: manual compression
+      try {
+        const { manualCompression } = await import('./claraMemoryCompression');
+        const compressed = manualCompression(profile);
+        await this.saveUserProfile(compressed);
+        console.log('🗜️ ✅ Fallback manual compression applied');
+      } catch (fallbackError) {
+        console.error('🗜️ Even manual compression failed:', fallbackError);
+      }
+    }
   }
 
   // ==================== UTILITY METHODS ====================
@@ -577,6 +770,7 @@ class ClaraMemoryManager {
     confidenceLevel: number;
     totalSections: number;
     completedSections: number;
+    memorySize?: MemorySizeInfo;
   }> {
     try {
       const profile = await this.getUserProfile();
@@ -588,7 +782,8 @@ class ClaraMemoryManager {
           lastUpdated: null,
           confidenceLevel: 0,
           totalSections: 8,
-          completedSections: 0
+          completedSections: 0,
+          memorySize: getMemorySize(null)
         };
       }
 
@@ -604,7 +799,7 @@ class ClaraMemoryManager {
         profile.practical
       ];
 
-      const completedSections = sections.filter(section => 
+      const completedSections = sections.filter(section =>
         section && Object.keys(section).length > 0
       ).length;
 
@@ -614,7 +809,8 @@ class ClaraMemoryManager {
         lastUpdated: profile.updatedAt,
         confidenceLevel: profile.metadata.confidenceLevel,
         totalSections: 8,
-        completedSections
+        completedSections,
+        memorySize: getMemorySize(profile)
       };
     } catch (error) {
       console.error('🧠 Failed to get memory stats:', error);
@@ -624,7 +820,8 @@ class ClaraMemoryManager {
         lastUpdated: null,
         confidenceLevel: 0,
         totalSections: 8,
-        completedSections: 0
+        completedSections: 0,
+        memorySize: getMemorySize(null)
       };
     }
   }

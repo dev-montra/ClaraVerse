@@ -360,10 +360,96 @@ interface MCPServerTemplate {
 }
 
 interface Electron {
-  getWorkflowsPath: () => Promise<string>;
+  // System Info
+  getAppPath: () => Promise<string>;
+  getAppVersion: () => string;
+  getElectronVersion: () => string;
+  getPlatform: () => string;
+  isDev: boolean;
+
+  // Permissions
+  requestMicrophonePermission: () => Promise<boolean>;
+
+  // Service Info
+  getServicePorts: () => Promise<any>;
   getPythonPort: () => Promise<number>;
   checkPythonBackend: () => Promise<{ port: number; status: string; available: boolean; }>;
+  checkDockerServices: () => Promise<any>;
+  getPythonBackendInfo: () => Promise<any>;
+  startDockerService: (serviceName: string) => Promise<any>;
+  stopDockerService: (serviceName: string) => Promise<any>;
+  restartDockerService: (serviceName: string) => Promise<any>;
+
+  // Docker Container Updates
+  checkDockerUpdates: () => Promise<any>;
+  updateDockerContainers: (containerNames: string[]) => Promise<any>;
+  getSystemInfo: () => Promise<any>;
+
+  // Updates
+  checkForUpdates: () => Promise<void>;
+  getUpdateInfo: () => Promise<any>;
+  startInAppDownload: (updateInfo: any) => Promise<any>;
+
+  // Llama.cpp Binary Updates
+  checkLlamacppUpdates: () => Promise<any>;
+  updateLlamacppBinaries: () => Promise<any>;
+
+  // Clipboard
+  clipboard: {
+    writeText: (text: string) => void;
+    readText: () => string;
+  };
+
+  // IPC Communication
+  send: (channel: string, data?: any) => void;
+  sendReactReady: () => void;
   receive: (channel: string, func: (data: any) => void) => void;
   removeListener: (channel: string, func: (data: any) => void) => void;
-  send: (channel: string, data?: any) => void;
+  removeAllListeners: (channel: string) => void;
+  on: (channel: string, callback: (data: any) => void) => void;
+
+  // Workflows
+  getWorkflowsPath: () => Promise<string>;
+
+  // Dialog
+  dialog: {
+    showOpenDialog: (options: any) => Promise<any>;
+  };
+
+  // Tray
+  hideToTray: () => void;
+  showFromTray: () => void;
+
+  // Startup Settings (Legacy)
+  setStartupSettings: (settings: any) => Promise<any>;
+  getStartupSettings: () => Promise<any>;
+
+  // Startup Settings (New)
+  startupSettings: {
+    get: () => Promise<any>;
+    update: (settings: any, userConsent?: boolean) => Promise<any>;
+    validate: (frontendChecksum: string) => Promise<any>;
+    reset: (confirmed?: boolean) => Promise<any>;
+    getFileStatus: () => Promise<any>;
+  };
+
+  // Fast Startup
+  getInitializationState: () => Promise<any>;
+  saveFeatureSelection: (features: any) => Promise<any>;
+  initializeService: (serviceName: string) => Promise<any>;
+
+  // Store
+  store: {
+    get: (key: string) => Promise<any>;
+    set: (key: string, value: any) => Promise<void>;
+    delete: (key: string) => Promise<void>;
+    has: (key: string) => Promise<boolean>;
+    clear: () => Promise<void>;
+  };
+
+  // Netlify OAuth
+  netlifyOAuth: {
+    authenticate: (authUrl: string) => Promise<{ success: boolean; accessToken?: string; error?: string }>;
+    cancel: () => Promise<{ success: boolean; error?: string }>;
+  };
 } 

@@ -9,7 +9,7 @@ class WidgetService {
     this.process = null;
     this.port = 8765;
     this.isStarting = false;
-    this.requiredWidgets = new Set(['gpu-monitor', 'system-monitor', 'process-monitor']);
+  this.requiredWidgets = new Set(['gpu-monitor', 'system-monitor', 'process-monitor', 'system-resources']);
     this.activeWidgets = new Set();
     this.healthCheckInterval = null;
     

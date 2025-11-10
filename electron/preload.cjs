@@ -138,14 +138,38 @@ contextBridge.exposeInMainWorld('electron', {
   hideToTray: () => ipcRenderer.send('hide-to-tray'),
   showFromTray: () => ipcRenderer.send('show-from-tray'),
   
-  // Update startup settings to use the new handle-based IPC
+  // DEPRECATED: Legacy startup settings APIs (use startupSettings instead)
   setStartupSettings: (settings) => ipcRenderer.invoke('set-startup-settings', settings),
   getStartupSettings: () => ipcRenderer.invoke('get-startup-settings'),
+  
+  // NEW: Isolated startup settings API with consent management
+  startupSettings: {
+    get: () => ipcRenderer.invoke('startup-settings:get'),
+    update: (settings, userConsent = false) => ipcRenderer.invoke('startup-settings:update', settings, userConsent),
+    validate: (frontendChecksum) => ipcRenderer.invoke('startup-settings:validate', frontendChecksum),
+    reset: (confirmed = false) => ipcRenderer.invoke('startup-settings:reset', confirmed),
+    getFileStatus: () => ipcRenderer.invoke('startup-settings:get-file-status')
+  },
   
   // Fast startup APIs for dashboard
   getInitializationState: () => ipcRenderer.invoke('get-initialization-state'),
   saveFeatureSelection: (features) => ipcRenderer.invoke('save-feature-selection', features),
   initializeService: (serviceName) => ipcRenderer.invoke('initialize-service', serviceName),
+
+  // electron-store API for persistent configuration
+  store: {
+    get: (key) => ipcRenderer.invoke('store:get', key),
+    set: (key, value) => ipcRenderer.invoke('store:set', key, value),
+    delete: (key) => ipcRenderer.invoke('store:delete', key),
+    has: (key) => ipcRenderer.invoke('store:has', key),
+    clear: () => ipcRenderer.invoke('store:clear')
+  },
+
+  // Netlify OAuth
+  netlifyOAuth: {
+    authenticate: (authUrl) => ipcRenderer.invoke('netlify-oauth:authenticate', authUrl),
+    cancel: () => ipcRenderer.invoke('netlify-oauth:cancel')
+  }
 });
 
 // Add Docker container management API
@@ -205,15 +229,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('service-status-update', subscription);
     return () => ipcRenderer.removeListener('service-status-update', subscription);
   },
-  
+
   // Request initialization
   requestInitialization: () => ipcRenderer.invoke('request-initialization'),
-  
+
   // Get initialization status
-  getInitializationStatus: () => ipcRenderer.invoke('get-initialization-status')
+  getInitializationStatus: () => ipcRenderer.invoke('get-initialization-status'),
+
+  // Get Python Backend URL (for dynamic service URL resolution)
+  getPythonBackendUrl: () => ipcRenderer.invoke('python-backend:get-url')
 });
 
-// Add llama-swap service API
+// Add llama-swap service API - REMOVED (service deprecated)
+/*
 contextBridge.exposeInMainWorld('llamaSwap', {
   start: () => ipcRenderer.invoke('start-llama-swap'),
   stop: () => ipcRenderer.invoke('stop-llama-swap'),
@@ -262,6 +290,7 @@ contextBridge.exposeInMainWorld('llamaSwap', {
   saveModelConfiguration: (modelName, modelConfig) => ipcRenderer.invoke('save-model-configuration', modelName, modelConfig),
   saveAllModelConfigurations: (modelConfigs) => ipcRenderer.invoke('save-all-model-configurations', modelConfigs)
 });
+*/
 
 // Add model management API
 contextBridge.exposeInMainWorld('modelManager', {
@@ -403,6 +432,24 @@ contextBridge.exposeInMainWorld('modelManager', {
   }
 });
 
+// Add ClaraCore Service API
+contextBridge.exposeInMainWorld('claraCore', {
+  // Local binary mode
+  start: () => ipcRenderer.invoke('claracore-start'),
+  stop: () => ipcRenderer.invoke('claracore-stop'),
+  restart: () => ipcRenderer.invoke('claracore-restart'),
+  getStatus: () => ipcRenderer.invoke('claracore-status'),
+  
+  // Docker mode
+  startDocker: (options) => ipcRenderer.invoke('claracore-docker-start', options),
+  stopDocker: () => ipcRenderer.invoke('claracore-docker-stop'),
+  restartDocker: () => ipcRenderer.invoke('claracore-docker-restart'),
+  getDockerStatus: () => ipcRenderer.invoke('claracore-docker-status'),
+  detectGPU: () => ipcRenderer.invoke('claracore-docker-detect-gpu'),
+  removeContainer: () => ipcRenderer.invoke('claracore-docker-remove'),
+  getLogs: (options) => ipcRenderer.invoke('claracore-docker-logs', options)
+});
+
 // Add MCP service API
 contextBridge.exposeInMainWorld('mcpService', {
   getServers: () => ipcRenderer.invoke('mcp-get-servers'),
@@ -451,6 +498,41 @@ contextBridge.exposeInMainWorld('electronScreenShare', {
   getDesktopSources: () => ipcRenderer.invoke('get-desktop-sources'),
   getScreenAccessStatus: () => ipcRenderer.invoke('get-screen-access-status'),
   requestScreenAccess: () => ipcRenderer.invoke('request-screen-access')
+});
+
+// Add remote server management API
+contextBridge.exposeInMainWorld('remoteServer', {
+  testConnection: (config) => ipcRenderer.invoke('remote-server:test-connection', config),
+  deploy: (config) => ipcRenderer.invoke('remote-server:deploy', config),
+  stopService: (config, serviceName) => ipcRenderer.invoke('remote-server:stop-service', { config, serviceName }),
+
+  // Listen for deployment logs
+  onLog: (callback) => {
+    const subscription = (event, data) => callback(data);
+    ipcRenderer.on('remote-server:log', subscription);
+    return () => ipcRenderer.removeListener('remote-server:log', subscription);
+  }
+});
+
+// Add ClaraCore remote deployment API
+contextBridge.exposeInMainWorld('claraCoreRemote', {
+  testSetup: (config) => ipcRenderer.invoke('claracore-remote-test-setup', config),
+  deploy: (config) => ipcRenderer.invoke('claracore-remote-deploy', config),
+  monitor: (config) => ipcRenderer.invoke('claracore-remote:monitor', config)
+});
+
+// Add unified service configuration API
+contextBridge.exposeInMainWorld('serviceConfig', {
+  // Get enhanced service status from central service manager
+  getEnhancedStatus: () => ipcRenderer.invoke('service-config:get-enhanced-status'),
+  // Get service configuration (mode, URL)
+  getServiceConfig: (serviceName) => ipcRenderer.invoke('service-config:get-config', serviceName),
+  // Update service configuration
+  updateServiceConfig: (serviceName, mode, url) => ipcRenderer.invoke('service-config:update', serviceName, mode, url),
+  // Test service connectivity
+  testService: (serviceName, url) => ipcRenderer.invoke('service-config:test-service', serviceName, url),
+  // Reset service to defaults
+  resetService: (serviceName) => ipcRenderer.invoke('service-config:reset', serviceName)
 });
 
 // Notify main process when preload script has loaded

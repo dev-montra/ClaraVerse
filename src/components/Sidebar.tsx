@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Home, Bot, Settings, HelpCircle, ImageIcon, Network, BrainCircuit, Download, X, Zap, Code2, BookOpen, Calendar, Users } from 'lucide-react';
+import { Home, Bot, Settings, HelpCircle, ImageIcon, Network, BrainCircuit, Download, X, Zap, BookOpen, Calendar, Users } from 'lucide-react';
 import logo from '../assets/logo.png';
 
 // interface HuggingFaceModel {
@@ -65,7 +65,7 @@ interface MenuItem {
   disabled?: boolean;
 }
 
-const Sidebar = ({ activePage = 'dashboard', onPageChange, alphaFeaturesEnabled = false }: SidebarProps) => {
+const Sidebar = ({ activePage = 'dashboard', onPageChange }: SidebarProps) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [activeDownloads, setActiveDownloads] = useState<Record<string, DownloadProgress>>({});
   const [claraBackgroundActivity, setClaraBackgroundActivity] = useState(false);
@@ -146,40 +146,19 @@ const Sidebar = ({ activePage = 'dashboard', onPageChange, alphaFeaturesEnabled 
     };
   }, []);
 
-  // Enhanced service status monitoring with watchdog integration
+  // Enhanced service status monitoring (uses service-aware health checks)
   useEffect(() => {
     const loadServiceStatus = async () => {
       try {
         if ((window as any).electronAPI?.invoke) {
-          // First get enhanced status from service config
+          // Get enhanced status from central service manager
+          // This includes proper health checks for remote/manual/docker services
           const enhancedStatus = await (window as any).electronAPI.invoke('service-config:get-enhanced-status');
-          
-          // Then get real-time status from watchdog service
-          const watchdogResult = await (window as any).electronAPI.invoke('watchdog-get-services-status');
-          
-          if (watchdogResult?.success && watchdogResult?.services) {
-            // Merge watchdog status with enhanced status for complete picture
-            const mergedStatus = { ...enhancedStatus };
-            
-            Object.entries(watchdogResult.services).forEach(([serviceName, watchdogData]: [string, any]) => {
-              if (mergedStatus[serviceName]) {
-                mergedStatus[serviceName] = {
-                  ...mergedStatus[serviceName],
-                  state: watchdogData.isHealthy ? 'running' : 'stopped',
-                  lastHealthCheck: watchdogData.lastCheck || Date.now(),
-                  uptime: watchdogData.uptime || 0
-                };
-              }
-            });
-            
-            console.log('🔍 Sidebar - Merged service status (enhanced + watchdog):', mergedStatus);
-            console.log('🔍 Sidebar - LlamaSwap specific status:', mergedStatus.llamaswap);
-            setEnhancedServiceStatus(mergedStatus);
-          } else {
-            // Fallback to enhanced status only
-            console.log('🔍 Sidebar - Enhanced service status only:', enhancedStatus);
-            setEnhancedServiceStatus(enhancedStatus || {});
-          }
+
+          // Use enhanced status directly - it already includes proper health checks
+          // for all deployment modes (docker, remote, manual)
+          console.log('🔍 Sidebar - Enhanced service status:', enhancedStatus);
+          setEnhancedServiceStatus(enhancedStatus || {});
         }
       } catch (error) {
         console.error('Failed to load service status:', error);
@@ -188,58 +167,14 @@ const Sidebar = ({ activePage = 'dashboard', onPageChange, alphaFeaturesEnabled 
     };
 
     loadServiceStatus();
-    
+
     // Set up periodic health checking every 30 seconds
     const healthCheckInterval = setInterval(() => {
-      console.log('🔄 Sidebar - Periodic health check refresh');
       loadServiceStatus();
     }, 30000);
 
-    // Also attempt direct health checks for critical services
-    const performDirectHealthChecks = async () => {
-      const servicesToCheck = [
-        { name: 'comfyui', url: 'http://localhost:8188/' },
-        { name: 'n8n', url: 'http://localhost:5678/' },
-        { name: 'python-backend', url: 'http://localhost:5001/health' }
-      ];
-
-      for (const service of servicesToCheck) {
-        try {
-          const controller = new AbortController();
-          const timeoutId = setTimeout(() => controller.abort(), 5000);
-          
-          const response = await fetch(service.url, { 
-            method: 'GET',
-            signal: controller.signal
-          });
-          
-          clearTimeout(timeoutId);
-          
-          if (response.ok) {
-            console.log(`✅ Direct health check: ${service.name} is responding (${response.status})`);
-            // Update the status to reflect the service is actually running
-            setEnhancedServiceStatus(prev => ({
-              ...prev,
-              [service.name]: {
-                ...prev[service.name],
-                state: 'running',
-                lastHealthCheck: Date.now()
-              }
-            }));
-          }
-        } catch (error) {
-          console.log(`❌ Direct health check: ${service.name} is not responding:`, error);
-        }
-      }
-    };
-
-    // Run direct health checks initially and then every 60 seconds
-    performDirectHealthChecks();
-    const directHealthCheckInterval = setInterval(performDirectHealthChecks, 60000);
-
     return () => {
       clearInterval(healthCheckInterval);
-      clearInterval(directHealthCheckInterval);
     };
   }, []);
 
@@ -370,9 +305,11 @@ const Sidebar = ({ activePage = 'dashboard', onPageChange, alphaFeaturesEnabled 
     { icon: Home, label: 'Dashboard', id: 'dashboard' },
     { icon: Bot, label: 'Chat', id: 'clara' },
     { icon: BrainCircuit, label: 'Agents', id: 'agents' },
+    { icon: Zap, label: 'App Builder (Beta)', id: 'lumaui' },
     { icon: BookOpen, label: 'RAG', id: 'notebooks' },
-    ...(alphaFeaturesEnabled ? [{ icon: Zap, label: 'Lumaui (Alpha)', id: 'lumaui' }] : []),
-    { icon: Code2, label: 'LumaUI (Beta)', id: 'lumaui-lite' },
+    // Unhide UI Builder (Beta) unconditionally
+    
+    // { icon: Code2, label: 'LumaUI (Beta)', id: 'lumaui-lite' }, // Hidden - using full Lumaui now
     // Show Image Gen if ComfyUI feature is enabled OR if ComfyUI service is running
     ...(featureConfig.comfyUI || isServiceResponding('comfyui') ? [{
       icon: ImageIcon, 
@@ -424,13 +361,14 @@ const Sidebar = ({ activePage = 'dashboard', onPageChange, alphaFeaturesEnabled 
           className="flex items-center gap-3 hover:opacity-80 transition-opacity"
         >
           <img src={logo} alt="Clara Logo" className="w-8 h-8 flex-shrink-0" />
-          <h1 
-            className={`text-2xl font-semibold text-gray-800 dark:text-gray-100 whitespace-nowrap overflow-hidden transition-all duration-300 ${
-              isExpanded ? 'opacity-100 w-auto' : 'opacity-0 w-0'
-            }`}
-          >
-            Clara
-          </h1>
+        <h2
+          className={`text-2xl font-bold text-gray-800 dark:text-gray-100 whitespace-nowrap overflow-hidden transition-all duration-300 ${
+            isExpanded ? 'opacity-100 w-auto' : 'opacity-0 w-0'
+          }`}
+          style={{ fontFamily: 'Quicksand, sans-serif' }}
+        >
+          Clara<span className="bg-gradient-to-r from-pink-400 via-purple-500 to-pink-400 bg-clip-text text-transparent">Verse</span>
+        </h2>
         </button>
       </div>
 

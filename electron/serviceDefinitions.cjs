@@ -6,6 +6,7 @@
 
 const path = require('path');
 const os = require('os');
+const log = require('electron-log');
 
 // Get platform info
 const platform = os.platform();
@@ -59,11 +60,30 @@ const SERVICE_DEFINITIONS = {
     autoRestart: true,
     priority: 2,
     dependencies: ['docker'],
-    
+
+    // NEW: Deployment mode support
+    deploymentModes: ['docker', 'manual', 'remote'],
+    platformSupport: {
+      docker: ['win32', 'darwin', 'linux'], // Docker supported on all platforms
+      manual: ['win32', 'darwin', 'linux'], // Manual/BYOS supported on all platforms
+      remote: ['win32', 'darwin', 'linux'] // Remote server supported on all platforms
+    },
+
+    // NEW: Manual service configuration
+    manual: {
+      urlRequired: true,
+      // On Linux (host network mode), use port 5000. On Windows/Mac (bridge mode), use port 5001
+      defaultUrl: `http://localhost:${isLinux ? 5000 : 5001}`,
+      healthEndpoint: '/health',
+      configKey: 'python_backend_url',
+      description: 'Bring Your Own Python Backend - Connect to external Python Backend instance'
+    },
+
     dockerContainer: {
       name: 'clara_python',
       image: 'clara17verse/clara-backend:latest',
-      ports: { '5001': '5000' },
+      // On Linux (host network mode), container runs on 5000 directly. On Windows/Mac, map 5001->5000
+      ports: isLinux ? { '5000': '5000' } : { '5001': '5000' },
       volumes: [
         `${pythonBackendDataPath}:/home/clara`,
         'clara_python_models:/app/models'
@@ -73,11 +93,15 @@ const SERVICE_DEFINITIONS = {
         'CLARA_ENV=production'
       ]
     },
-    
-    healthCheck: async () => {
+
+    healthCheck: async (serviceUrl = null) => {
       const http = require('http');
+      // On Linux (host network mode), use port 5000. On Windows/Mac (bridge mode), use port 5001
+      const defaultPort = isLinux ? 5000 : 5001;
+      const url = serviceUrl || `http://localhost:${defaultPort}`;
+      const endpoint = serviceUrl ? `${url}/health` : `http://localhost:${defaultPort}/health`;
       return new Promise((resolve) => {
-        const req = http.get('http://localhost:5001/health', (res) => {
+        const req = http.get(endpoint, (res) => {
           resolve(res.statusCode === 200);
         });
         req.on('error', () => resolve(false));
@@ -89,33 +113,91 @@ const SERVICE_DEFINITIONS = {
     }
   },
 
-  // LlamaSwap Service (Clara's AI model manager)
-  llamaswap: {
-    name: "Clara's Core AI Engine",
+  // ClaraCore Service (Core AI Engine)
+  claracore: {
+    name: 'Clara Core AI Engine',
     type: 'binary',
     critical: true,
     autoRestart: true,
     priority: 3,
-    dependencies: ['docker'],
-    
-    // NEW: Deployment mode support - native binary service
-    deploymentModes: ['native'],
+    dependencies: ['docker'], // Docker dependency for docker mode
+
+    // NEW: Deployment mode support
+    deploymentModes: ['local', 'remote', 'docker'],
     platformSupport: {
-      native: ['win32', 'darwin', 'linux'] // Native binary supported on all platforms
+      local: ['win32', 'darwin', 'linux'], // Native binary supported on all platforms
+      remote: ['win32', 'darwin', 'linux'], // Remote server supported on all platforms
+      docker: ['win32', 'linux'] // Docker supported on Windows and Linux (GPU support)
     },
-    
-    binaryPath: platform === 'darwin' 
-      ? './llamacpp-binaries/llamacpp-server-darwin-arm64'
+
+    // Binary paths for each platform
+    binaryPath: platform === 'win32'
+      ? './claracore/claracore-windows-amd64.exe'
+      : platform === 'darwin'
+      ? os.arch() === 'arm64'
+        ? './claracore/claracore-darwin-arm64'
+        : './claracore/claracore-darwin-amd64'
       : platform === 'linux'
-      ? './llamacpp-binaries/llamacpp-server-linux-x64'
-      : './llamacpp-binaries/llamacpp-server-win-x64.exe',
-    
-    ports: { main: 8091, proxy: 9999 },
-    
-    healthCheck: async () => {
+      ? os.arch() === 'arm64'
+        ? './claracore/claracore-linux-arm64'
+        : './claracore/claracore-linux-amd64'
+      : './claracore/claracore-linux-amd64',
+
+    // Service arguments
+    args: ['-listen', ':8091'],
+
+    ports: { main: 8091 },
+
+    // Docker container configuration
+    dockerContainer: {
+      name: 'clara_core',
+      imageBase: 'clara17verse/claracore', // Base image name, variant added based on GPU
+      ports: { '8091': '5890' }, // Host:Container (container runs on 5890, mapped to host 8091)
+      volumes: [
+        'claracore:/app/downloads' // Named volume for downloads persistence
+      ],
+      environment: [
+        'NODE_ENV=production',
+        'CLARA_PORT=5890' // Container internal port
+      ],
+      // GPU-specific configurations
+      gpuConfigs: {
+        cuda: {
+          image: 'clara17verse/claracore:cuda',
+          runtime: 'nvidia',
+          environment: [
+            'NVIDIA_VISIBLE_DEVICES=all',
+            'NVIDIA_DRIVER_CAPABILITIES=compute,utility'
+          ]
+        },
+        rocm: {
+          image: 'clara17verse/claracore:rocm',
+          devices: ['/dev/kfd', '/dev/dri'],
+          environment: [
+            'HSA_OVERRIDE_GFX_VERSION=10.3.0'
+          ]
+        },
+        vulkan: {
+          image: 'clara17verse/claracore:vulkan',
+          devices: ['/dev/dri'],
+          environment: [
+            'VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/nvidia_icd.json'
+          ]
+        },
+        cpu: {
+          image: 'clara17verse/claracore:cpu',
+          environment: []
+        }
+      }
+    },
+
+    // Health check
+    healthCheck: async (serviceUrl = null) => {
       const http = require('http');
+      const url = serviceUrl || 'http://localhost:8091';
+      const endpoint = serviceUrl ? `${url}/health` : 'http://localhost:8091/health';
       return new Promise((resolve) => {
-        const req = http.get('http://localhost:8091/health', (res) => {
+        const req = http.get(endpoint, (res) => {
           resolve(res.statusCode === 200);
         });
         req.on('error', () => resolve(false));
@@ -125,18 +207,29 @@ const SERVICE_DEFINITIONS = {
         });
       });
     },
-    
+
+    // Custom start method (for local mode)
     customStart: async () => {
-      const LlamaSwapService = require('./llamaSwapService.cjs');
-      const service = new LlamaSwapService();
+      const ClaraCoreService = require('./claraCoreService.cjs');
+      const service = new ClaraCoreService();
       await service.start();
       return service;
     },
-    
+
+    // Custom stop method (for local mode)
     customStop: async (service) => {
       if (service.instance && service.instance.stop) {
         await service.instance.stop();
       }
+    },
+
+    // Manual/Remote service configuration
+    manual: {
+      urlRequired: true,
+      defaultUrl: 'http://localhost:8091',
+      healthEndpoint: '/health',
+      configKey: 'claracore_url',
+      description: 'Connect to external ClaraCore instance (local, remote, or docker)'
     }
   },
 
@@ -148,12 +241,13 @@ const SERVICE_DEFINITIONS = {
     autoRestart: true,
     priority: 4,
     dependencies: ['docker', 'python-backend'],
-    
+
     // NEW: Deployment mode support
-    deploymentModes: ['docker', 'manual'],
+    deploymentModes: ['docker', 'manual', 'remote'],
     platformSupport: {
       docker: ['win32'], // Docker only supported on Windows
-      manual: ['win32', 'darwin', 'linux'] // Manual/BYOS supported on all platforms
+      manual: ['win32', 'darwin', 'linux'], // Manual/BYOS supported on all platforms
+      remote: ['win32', 'darwin', 'linux'] // Remote server supported on all platforms
     },
     
     // NEW: Manual service configuration
@@ -210,12 +304,13 @@ const SERVICE_DEFINITIONS = {
     autoRestart: true,
     priority: 5,
     dependencies: ['docker'],
-    
+
     // NEW: Deployment mode support
-    deploymentModes: ['docker', 'manual'],
+    deploymentModes: ['docker', 'manual', 'remote'],
     platformSupport: {
       docker: ['win32', 'darwin', 'linux'], // Docker supported on all platforms
-      manual: ['win32', 'darwin', 'linux'] // Manual/BYOS supported on all platforms
+      manual: ['win32', 'darwin', 'linux'], // Manual/BYOS supported on all platforms
+      remote: ['win32', 'darwin', 'linux'] // Remote server supported on all platforms
     },
     
     // NEW: Manual service configuration
@@ -266,24 +361,80 @@ const SERVICE_DEFINITIONS = {
     critical: false,
     autoRestart: true,
     priority: 6,
-    dependencies: ['llamaswap'],
-    
+    dependencies: ['python-backend'],
+
     customStart: async () => {
       const MCPService = require('./mcpService.cjs');
       const service = new MCPService();
       await service.start();
       return service;
     },
-    
+
     customStop: async (service) => {
       if (service.instance && service.instance.stop) {
         await service.instance.stop();
       }
     },
-    
+
     healthCheck: async () => {
       // MCP health check logic
       return true; // Placeholder
+    }
+  },
+
+  // MCP HTTP Proxy Service (for browser support)
+  'mcp-proxy': {
+    name: 'MCP HTTP Proxy',
+    type: 'http-service',
+    critical: false,
+    autoRestart: true,
+    priority: 7,
+    dependencies: ['mcp'],
+
+    ports: { main: 8092 },
+
+    customStart: async (mcpServiceInstance) => {
+      const MCPProxyService = require('./mcpProxyService.cjs');
+
+      // Get the MCP service instance from dependencies
+      // If not provided, create one (fallback)
+      let mcpService = mcpServiceInstance;
+      if (!mcpService) {
+        const MCPService = require('./mcpService.cjs');
+        mcpService = new MCPService();
+      }
+
+      const proxyService = new MCPProxyService(mcpService);
+      const result = await proxyService.start(8092);
+
+      return {
+        instance: proxyService,
+        url: result.url,
+        port: result.port,
+        healthCheck: result.healthCheck
+      };
+    },
+
+    customStop: async (service) => {
+      if (service.instance && service.instance.stop) {
+        await service.instance.stop();
+      }
+    },
+
+    healthCheck: async (serviceUrl = null) => {
+      const http = require('http');
+      const url = serviceUrl || 'http://localhost:8092';
+      const endpoint = serviceUrl ? `${url}/health` : 'http://localhost:8092/health';
+      return new Promise((resolve) => {
+        const req = http.get(endpoint, (res) => {
+          resolve(res.statusCode === 200);
+        });
+        req.on('error', () => resolve(false));
+        req.setTimeout(3000, () => {
+          req.destroy();
+          resolve(false);
+        });
+      });
     }
   }
 };
@@ -292,34 +443,9 @@ const SERVICE_DEFINITIONS = {
  * Platform-specific service configurations
  */
 const PLATFORM_OVERRIDES = {
-  darwin: {
-    llamaswap: {
-      binaryPath: './llamacpp-binaries/llamacpp-server-darwin-arm64',
-      environment: [
-        'METAL_PERFORMANCE_SHADERS_ENABLED=1',
-        'GGML_METAL=1'
-      ]
-    }
-  },
-  
-  linux: {
-    llamaswap: {
-      binaryPath: './llamacpp-binaries/llamacpp-server-linux-x64',
-      environment: [
-        'CUDA_VISIBLE_DEVICES=0',
-        'GGML_CUDA=1'
-      ]
-    }
-  },
-  
-  win32: {
-    llamaswap: {
-      binaryPath: './llamacpp-binaries/llamacpp-server-win-x64.exe',
-      environment: [
-        'CUDA_VISIBLE_DEVICES=0'
-      ]
-    }
-  }
+  darwin: {},
+  linux: {},
+  win32: {}
 };
 
 /**
@@ -330,12 +456,7 @@ function getEnabledServices(selectedFeatures = {}) {
   const enabledServices = {};
   
   // Core services (always enabled)
-  const coreServices = ['docker', 'python-backend'];
-  
-  // Clara Core AI (always enabled if selected)
-  if (selectedFeatures.claraCore !== false) {
-    coreServices.push('llamaswap', 'mcp');
-  }
+  const coreServices = ['docker', 'python-backend', 'claracore'];
   
   // Optional services based on user selection
   if (selectedFeatures.comfyUI) {

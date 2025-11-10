@@ -485,7 +485,7 @@ Requirements:
         model: actualModelId,
         messages: messages,
         temperature: 0.3,
-        max_tokens: 2000,
+        max_tokens: 10000,
         response_format: {
           type: "json_schema",
           json_schema: nodeSchema

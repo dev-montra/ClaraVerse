@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   MessageSquare, Send, Bot, User, Copy, Check, FileText, ExternalLink,
-  AlertTriangle, Upload
+  AlertTriangle, Upload, MessageCircle, Quote
 } from 'lucide-react';
 import DocumentUpload from './DocumentUpload';
 
@@ -11,6 +11,7 @@ interface ChatMessage {
   content: string;
   timestamp: Date;
   role?: 'user' | 'assistant'; // Add role property for compatibility
+  mode?: 'chat' | 'citation'; // Track which mode was used
   citations?: Array<{
     file_path: string;
     title: string;
@@ -27,7 +28,7 @@ interface ProgressState {
 
 interface NotebookChatProps {
   messages?: ChatMessage[];
-  onSendMessage?: (message: string) => void;
+  onSendMessage?: (message: string, mode?: 'chat' | 'citation') => void;
   isLoading?: boolean;
   notebookId: string;
   documentCount?: number;
@@ -51,6 +52,7 @@ const NotebookChat: React.FC<NotebookChatProps> = ({
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [progressState, setProgressState] = useState<ProgressState | null>(null);
+  const [chatMode, setChatMode] = useState<'chat' | 'citation'>('chat');
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -152,13 +154,14 @@ const NotebookChat: React.FC<NotebookChatProps> = ({
         id: Date.now().toString(),
         type: 'user',
         content: inputMessage.trim(),
-        timestamp: new Date()
+        timestamp: new Date(),
+        mode: chatMode
       };
       
       // Add user message immediately
       setChatMessages(prev => [...prev, userMessage]);
       
-      onSendMessage(inputMessage.trim());
+      onSendMessage(inputMessage.trim(), chatMode);
       setInputMessage('');
     }
   };
@@ -306,17 +309,50 @@ const NotebookChat: React.FC<NotebookChatProps> = ({
             className={`flex gap-2 ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
           >
             {message.type === 'assistant' && (
-              <div className="flex-shrink-0 w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center shadow-xl ring-2 ring-white/10 backdrop-blur-sm">
-                <Bot className="w-5 h-5 text-white" />
+              <div className={`flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center shadow-xl ring-2 ring-white/10 backdrop-blur-sm ${
+                message.mode === 'citation'
+                  ? 'bg-gradient-to-br from-emerald-500 to-teal-600'
+                  : 'bg-gradient-to-br from-blue-500 to-purple-600'
+              }`}>
+                {message.mode === 'citation' ? (
+                  <Quote className="w-5 h-5 text-white" />
+                ) : (
+                  <Bot className="w-5 h-5 text-white" />
+                )}
               </div>
             )}
             
             <div className={`max-w-2xl ${message.type === 'user' ? 'order-1 min-w-80' : ''}`}>
+              {/* Mode Badge for user messages */}
+              {message.type === 'user' && message.mode && (
+                <div className="flex justify-end mb-1">
+                  <div className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${
+                    message.mode === 'citation'
+                      ? 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30'
+                      : 'bg-blue-500/20 text-blue-700 dark:text-blue-300 border border-blue-500/30'
+                  }`}>
+                    {message.mode === 'citation' ? (
+                      <>
+                        <Quote className="w-3 h-3" />
+                        <span>Citation</span>
+                      </>
+                    ) : (
+                      <>
+                        <MessageCircle className="w-3 h-3" />
+                        <span>Chat</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+              
               <div
                 className={`glassmorphic backdrop-blur-xl rounded-2xl p-4 shadow-xl transition-all duration-300 hover:shadow-2xl border ${
                   message.type === 'user'
                     ? 'bg-gradient-to-br from-blue-500/90 to-purple-600/90 text-white ml-auto border-blue-400/30 shadow-blue-500/20'
-                    : 'bg-white/70 dark:bg-gray-800/70 text-gray-900 dark:text-white border-white/30 dark:border-gray-700/30'
+                    : message.mode === 'citation'
+                      ? 'bg-white/70 dark:bg-gray-800/70 text-gray-900 dark:text-white border-emerald-300/50 dark:border-emerald-700/30 ring-2 ring-emerald-500/10'
+                      : 'bg-white/70 dark:bg-gray-800/70 text-gray-900 dark:text-white border-white/30 dark:border-gray-700/30'
                 }`}
               >
                 <div className={`prose-sm max-w-none break-words ${
@@ -335,24 +371,56 @@ const NotebookChat: React.FC<NotebookChatProps> = ({
                 
                 {/* Citations section for assistant messages */}
                 {message.type === 'assistant' && message.citations && message.citations.length > 0 && (
-                  <div className="mt-4 pt-4 border-t border-white/20 dark:border-gray-700/30">
-                    <h4 className="text-sm font-semibold text-gray-600 dark:text-gray-400 mb-3 flex items-center gap-2">
+                  <div className={`mt-4 pt-4 border-t ${
+                    message.mode === 'citation'
+                      ? 'border-emerald-300/30 dark:border-emerald-700/30'
+                      : 'border-white/20 dark:border-gray-700/30'
+                  }`}>
+                    <h4 className={`text-sm font-semibold mb-3 flex items-center gap-2 ${
+                      message.mode === 'citation'
+                        ? 'text-emerald-700 dark:text-emerald-400'
+                        : 'text-gray-600 dark:text-gray-400'
+                    }`}>
                       <FileText className="w-4 h-4" />
-                      Sources ({message.citations.length})
+                      {message.mode === 'citation' ? 'Citations' : 'Sources'} ({message.citations.length})
                     </h4>
                     <div className="space-y-1.5">
-                      {message.citations.slice(0, 5).map((citation, index) => (
-                        <div key={index} className="flex items-center gap-2 glassmorphic bg-white/50 dark:bg-gray-700/50 p-2.5 rounded-lg border border-white/20 dark:border-gray-600/20 text-sm hover:bg-white/70 dark:hover:bg-gray-700/70 transition-all">
-                          <FileText className="w-3.5 h-3.5 flex-shrink-0 text-blue-500" />
+                      {message.citations.slice(0, message.mode === 'citation' ? 10 : 5).map((citation, index) => (
+                        <div key={index} className={`flex items-center gap-2 glassmorphic p-2.5 rounded-lg border text-sm transition-all ${
+                          message.mode === 'citation'
+                            ? 'bg-emerald-50/70 dark:bg-emerald-900/30 border-emerald-200/50 dark:border-emerald-700/30 hover:bg-emerald-100/70 dark:hover:bg-emerald-900/40'
+                            : 'bg-white/50 dark:bg-gray-700/50 border-white/20 dark:border-gray-600/20 hover:bg-white/70 dark:hover:bg-gray-700/70'
+                        }`}>
+                          <div className={`flex-shrink-0 w-6 h-6 rounded-md flex items-center justify-center text-xs font-bold ${
+                            message.mode === 'citation'
+                              ? 'bg-emerald-500 text-white'
+                              : 'bg-blue-500 text-white'
+                          }`}>
+                            {index + 1}
+                          </div>
+                          <FileText className={`w-3.5 h-3.5 flex-shrink-0 ${
+                            message.mode === 'citation'
+                              ? 'text-emerald-600 dark:text-emerald-400'
+                              : 'text-blue-500'
+                          }`} />
                           <span className="truncate font-medium text-gray-800 dark:text-gray-200" title={citation.file_path}>
                             {citation.title}
                           </span>
+                          {citation.content && message.mode === 'citation' && (
+                            <div className="flex-shrink-0 text-xs text-emerald-600 dark:text-emerald-400 bg-emerald-100/50 dark:bg-emerald-900/30 px-1.5 py-0.5 rounded">
+                              excerpt
+                            </div>
+                          )}
                           <ExternalLink className="w-3.5 h-3.5 flex-shrink-0 opacity-50" />
                         </div>
                       ))}
-                      {message.citations.length > 5 && (
-                        <div className="text-sm text-gray-500 dark:text-gray-400 font-medium glassmorphic bg-white/40 dark:bg-gray-700/40 p-2 rounded-lg border border-white/20 dark:border-gray-600/20 text-center">
-                          +{message.citations.length - 5} more sources
+                      {message.citations.length > (message.mode === 'citation' ? 10 : 5) && (
+                        <div className={`text-sm font-medium glassmorphic p-2 rounded-lg border text-center ${
+                          message.mode === 'citation'
+                            ? 'text-emerald-700 dark:text-emerald-300 bg-emerald-50/60 dark:bg-emerald-900/20 border-emerald-200/50 dark:border-emerald-700/30'
+                            : 'text-gray-500 dark:text-gray-400 bg-white/40 dark:bg-gray-700/40 border-white/20 dark:border-gray-600/20'
+                        }`}>
+                          +{message.citations.length - (message.mode === 'citation' ? 10 : 5)} more {message.mode === 'citation' ? 'citations' : 'sources'}
                         </div>
                       )}
                     </div>
@@ -463,8 +531,37 @@ const NotebookChat: React.FC<NotebookChatProps> = ({
               style={{ minHeight: '56px', maxHeight: '120px' }}
             />
             
-            {/* Send Button */}
-            <div className="absolute right-2 bottom-2">
+            {/* Mode Toggle and Send Button */}
+            <div className="absolute right-2 bottom-2 flex items-center gap-2">
+              {/* Chat Mode Toggle */}
+              <div className="glassmorphic bg-white/80 dark:bg-gray-800/80 backdrop-blur-xl rounded-lg border border-white/30 dark:border-gray-700/30 shadow-md p-1 flex gap-1">
+                <button
+                  onClick={() => setChatMode('chat')}
+                  disabled={isLoading}
+                  title="Chat Mode - Conversational responses with history"
+                  className={`p-2 rounded-md transition-all duration-200 ${
+                    chatMode === 'chat'
+                      ? 'bg-gradient-to-r from-blue-500 to-purple-600 text-white shadow-md'
+                      : 'text-gray-500 dark:text-gray-400 hover:bg-white/50 dark:hover:bg-gray-700/50'
+                  }`}
+                >
+                  <MessageCircle className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => setChatMode('citation')}
+                  disabled={isLoading}
+                  title="Citation Mode - Fact-based responses with detailed sources"
+                  className={`p-2 rounded-md transition-all duration-200 ${
+                    chatMode === 'citation'
+                      ? 'bg-gradient-to-r from-emerald-500 to-teal-600 text-white shadow-md'
+                      : 'text-gray-500 dark:text-gray-400 hover:bg-white/50 dark:hover:bg-gray-700/50'
+                  }`}
+                >
+                  <Quote className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Send Button */}
               <button
                 onClick={handleSendMessage}
                 disabled={!inputMessage.trim() || isLoading || !isBackendHealthy || completedDocumentCount === 0}
@@ -481,9 +578,30 @@ const NotebookChat: React.FC<NotebookChatProps> = ({
           
           {/* Helper Text - Compact */}
           <div className="flex items-center justify-between mt-3 px-3">
-            <p className="text-xs text-gray-500 dark:text-gray-400 font-medium">
-              Press Enter to send, Shift+Enter for new line
-            </p>
+            <div className="flex items-center gap-3">
+              <p className="text-xs text-gray-500 dark:text-gray-400 font-medium">
+                Press Enter to send, Shift+Enter for new line
+              </p>
+              {/* Mode Indicator */}
+              <div className={`flex items-center gap-1.5 glassmorphic px-2 py-1 rounded-lg border shadow-sm ${
+                chatMode === 'chat'
+                  ? 'bg-blue-50/80 dark:bg-blue-900/30 border-blue-200/50 dark:border-blue-700/30'
+                  : 'bg-emerald-50/80 dark:bg-emerald-900/30 border-emerald-200/50 dark:border-emerald-700/30'
+              }`}>
+                {chatMode === 'chat' ? (
+                  <MessageCircle className="w-3 h-3 text-blue-600 dark:text-blue-400" />
+                ) : (
+                  <Quote className="w-3 h-3 text-emerald-600 dark:text-emerald-400" />
+                )}
+                <span className={`text-xs font-semibold ${
+                  chatMode === 'chat'
+                    ? 'text-blue-700 dark:text-blue-300'
+                    : 'text-emerald-700 dark:text-emerald-300'
+                }`}>
+                  {chatMode === 'chat' ? 'Chat Mode' : 'Citation Mode'}
+                </span>
+              </div>
+            </div>
             {isBackendHealthy && completedDocumentCount > 0 && (
               <div className="flex items-center gap-2 glassmorphic bg-emerald-50/80 dark:bg-emerald-900/30 px-3 py-1 rounded-xl border border-emerald-200/50 dark:border-emerald-700/30">
                 <div className="w-2 h-2 bg-emerald-500 rounded-full shadow-sm animate-pulse"></div>

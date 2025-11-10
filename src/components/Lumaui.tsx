@@ -1,32 +1,27 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Plus, Code, Play, Square, Loader2, ExternalLink, FolderOpen, MessageSquare, Eye, EyeOff } from 'lucide-react';
+import { Plus, Play, Square, Loader2, FolderOpen, Code } from 'lucide-react';
 import { WebContainer } from '@webcontainer/api';
 import { Terminal } from '@xterm/xterm';
 import { createLumaTools } from '../services/lumaTools';
+import { webContainerManager } from '../services/webContainerManager';
 
 // Components
 import CreateProjectModal from './lumaui_components/CreateProjectModal';
 import ProjectSelectionModal from './lumaui_components/ProjectSelectionModal';
-import FileExplorer from './lumaui_components/FileExplorer';
-import MonacoEditor from './lumaui_components/MonacoEditor';
-import TerminalComponent from './lumaui_components/TerminalComponent';
-
-import PreviewPane from './lumaui_components/PreviewPane';
+import ProjectManager from './lumaui_components/ProjectManager';
 import ChatWindow from './lumaui_components/ChatWindow';
-import ResizeHandle from './lumaui_components/ResizeHandle';
+import RightPanelWorkspace from './lumaui_components/RightPanelWorkspace';
 
 // Hooks
-import { useResizable } from '../hooks/useResizable';
-
 // Types and Data
 import { Project, FileNode } from '../types';
 import { useIndexedDB } from '../hooks/useIndexedDB';
-import { ProjectScaffolder, PROJECT_CONFIGS, ScaffoldProgress } from '../services/projectScaffolder';
-import { LumaUIAPIClient } from './lumaui_components/services/lumaUIApiClient';
+import { ProjectScaffolderV2, PROJECT_TEMPLATES, ScaffoldProgress } from '../services/projectScaffolderV2';
 import { useProviders } from '../contexts/ProvidersContext';
 import { db } from '../db';
 import { getDefaultWallpaper } from '../utils/uiPreferences';
 import ChatPersistence from './lumaui_components/ChatPersistence';
+import ProjectLoadingOverlay, { ProjectLoadingState } from './lumaui_components/ProjectLoadingOverlay';
 
 // Providers
 import { ProvidersProvider } from '../contexts/ProvidersContext';
@@ -41,70 +36,189 @@ const LumaUICore: React.FC = () => {
   const [selectedProject, setSelectedProject] = useState<Project | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [isProjectSelectionModalOpen, setIsProjectSelectionModalOpen] = useState(false);
+  const [showManagerPage, setShowManagerPage] = useState(true); // Show manager by default
   const [webContainer, setWebContainer] = useState<WebContainer | null>(null);
   const [isStarting, setIsStarting] = useState(false);
   const [files, setFiles] = useState<FileNode[]>([]);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [selectedFileContent, setSelectedFileContent] = useState<string>('');
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['']));
-  const [activeTab, setActiveTab] = useState<'editor' | 'preview' | 'terminal'>('editor');
+  const [rightPanelMode, setRightPanelMode] = useState<'editor' | 'preview' | 'settings'>('editor');
   const [scaffoldProgress, setScaffoldProgress] = useState<ScaffoldProgress | null>(null);
   const [wallpaperUrl, setWallpaperUrl] = useState<string | null>(null);
+  const [projectViewMode, setProjectViewMode] = useState<'play' | 'edit'>('edit'); // Track if user wants play-only or full IDE
+  const [terminalOutput, setTerminalOutput] = useState<Array<{id: string; text: string; timestamp: Date}>>([]);
 
-  
-  // Resizable panels (using percentages)
-  const leftPanel = useResizable({ 
-    initialPercentage: 25, 
-    minPercentage: 15, 
-    maxPercentage: 50, 
-    direction: 'horizontal' 
+  // Console messages from preview iframe for error detection
+  const [previewConsoleMessages, setPreviewConsoleMessages] = useState<Array<{
+    level: string;
+    args: any[];
+    timestamp: Date;
+  }>>([]);
+
+  // Project loading state for showing loader overlay
+  const [projectLoadingState, setProjectLoadingState] = useState<ProjectLoadingState>({
+    isLoading: false,
+    phase: 'idle',
+    filesLoaded: false,
+    monacoReady: false,
+    webContainerReady: false,
+    error: null,
+    startedAt: null
   });
-  
-  const rightPanel = useResizable({ 
-    initialPercentage: 40, 
-    minPercentage: 25, 
-    maxPercentage: 60, 
-    direction: 'horizontal',
-    reverse: true // Right panel needs inverted drag behavior
-  });
 
-  // Debug logs for resize functionality
-  useEffect(() => {
-    console.log('🔧 RESIZE DEBUG - Left Panel:', {
-      percentage: leftPanel.percentage,
-      isResizing: leftPanel.isResizing
-    });
-  }, [leftPanel.percentage, leftPanel.isResizing]);
-
-  useEffect(() => {
-    console.log('🔧 RESIZE DEBUG - Right Panel:', {
-      percentage: rightPanel.percentage,
-      isResizing: rightPanel.isResizing
-    });
-  }, [rightPanel.percentage, rightPanel.isResizing]);
-  
-  // Removed terminal panel resizing since it's now integrated with tabs
-
-  // Calculate middle panel percentage
-  const middlePanelPercentage = 100 - leftPanel.percentage - rightPanel.percentage;
-  
-  // Debug middle panel calculation
-  useEffect(() => {
-    console.log('🔧 RESIZE DEBUG - Middle Panel:', {
-      percentage: middlePanelPercentage,
-      leftPanel: leftPanel.percentage,
-      rightPanel: rightPanel.percentage,
-      total: leftPanel.percentage + rightPanel.percentage + middlePanelPercentage
-    });
-  }, [middlePanelPercentage, leftPanel.percentage, rightPanel.percentage]);
-  
   // Refs
   const terminalRef = useRef<Terminal | null>(null);
   const runningProcessesRef = useRef<any[]>([]);
+  const shellProcessRef = useRef<any>(null); // Track shell process for interactive terminal
+  const terminalDataDisposableRef = useRef<{ dispose: () => void } | null>(null); // Track terminal event disposable
   const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Per-project output buffers to persist terminal output across switches
+  const projectOutputBuffers = useRef<Map<string, string[]>>(new Map());
 
   // Database hook
   const { saveProjectToDB, loadProjectsFromDB, loadProjectFilesFromDB, deleteProjectFromDB } = useIndexedDB();
+
+  // Initialize WebContainerManager and force cleanup on mount
+  useEffect(() => {
+    const init = async () => {
+      try {
+        console.log('[LumaUI] Initializing WebContainerManager...');
+
+        // Initialize manager
+        await webContainerManager.initialize();
+
+        // FORCE cleanup any stale containers - CRITICAL FOR ELECTRON!
+        console.log('[LumaUI] Force cleaning up any zombie WebContainer instances...');
+        await webContainerManager.forceCleanup();
+
+        // Set up callback for when container is destroyed
+        webContainerManager.setDestroyCallback(() => {
+          console.log('[LumaUI] WebContainer destroyed, updating all running projects to idle...');
+          // Update all projects that might be running back to idle
+          setProjects(prev => prev.map(p =>
+            p.status === 'running' ? { ...p, status: 'idle' as const, previewUrl: undefined } : p
+          ));
+          // Update selected project if it was running
+          setSelectedProject(prev =>
+            prev && prev.status === 'running'
+              ? { ...prev, status: 'idle' as const, previewUrl: undefined }
+              : prev
+          );
+          // Also clear the webContainer state
+          setWebContainer(null);
+        });
+
+        console.log('[LumaUI] ✅ WebContainerManager ready');
+
+        // Write to terminal if available
+        setTimeout(() => {
+          if (terminalRef.current) {
+            writeToTerminal('\x1b[32m✅ WebContainerManager initialized and ready\x1b[0m\n\n');
+          }
+        }, 100);
+      } catch (error) {
+        console.error('Failed to initialize WebContainerManager:', error);
+        
+        // Show error in terminal
+        setTimeout(() => {
+          if (terminalRef.current) {
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            writeToTerminal('\x1b[31m❌ WebContainer initialization failed:\x1b[0m\n');
+            writeToTerminal(`\x1b[33m${errorMsg}\x1b[0m\n\n`);
+            
+            if (errorMsg.includes('StackBlitz') || errorMsg.includes('ERR_NAME_NOT_RESOLVED')) {
+              writeToTerminal('\x1b[90m💡 LumaUI code builder is unavailable without internet access.\x1b[0m\n');
+              writeToTerminal('\x1b[90m   You can still use Clara AI chat and other features.\x1b[0m\n\n');
+            }
+          }
+        }, 100);
+      }
+    };
+    init();
+
+    // Cleanup on component unmount
+    return () => {
+      console.log('[LumaUI] Component unmounting, cleaning up WebContainer...');
+      webContainerManager.forceCleanup().catch(console.error);
+    };
+  }, []);
+
+  // CRITICAL FOR ELECTRON: Cleanup before window reload
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      console.log('[LumaUI] Window reloading/closing, cleaning up WebContainer...');
+
+      // Try to cleanup (Electron-specific behavior)
+      webContainerManager.forceCleanup().catch(console.error);
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, []);
+
+  // Listen for console messages from preview iframe
+  useEffect(() => {
+    const handleMessage = (event: MessageEvent) => {
+      // Only capture console messages (errors and warnings)
+      if (event.data.type === 'console-message') {
+        const { level, args, timestamp } = event.data;
+        
+        // Only track errors and warnings (ignore log, info, debug)
+        if (level === 'error' || level === 'warn') {
+          setPreviewConsoleMessages(prev => {
+            const newMessage = {
+              level,
+              args,
+              timestamp: new Date(timestamp)
+            };
+            
+            // Keep only last 60 seconds of messages to prevent memory buildup
+            const cutoffTime = new Date(Date.now() - 60000);
+            const recentMessages = prev.filter(msg => msg.timestamp > cutoffTime);
+            
+            return [...recentMessages, newMessage];
+          });
+        }
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, []);
+
+  // Function to check for console errors after a file operation
+  const checkPreviewConsoleErrors = useCallback(async (afterTimestamp: Date): Promise<{hasErrors: boolean; errors: string[]}> => {
+    // Wait 2 seconds for Vite HMR and preview reload to complete
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    // Check for errors/warnings that occurred after the given timestamp
+    const errorsAfterOperation = previewConsoleMessages.filter(msg => 
+      msg.timestamp > afterTimestamp
+    );
+    
+    if (errorsAfterOperation.length === 0) {
+      return { hasErrors: false, errors: [] };
+    }
+    
+    // Format error messages
+    const errorMessages = errorsAfterOperation.map(msg => {
+      const levelPrefix = msg.level === 'error' ? '❌' : '⚠️';
+      const argsStr = msg.args.map(arg => 
+        typeof arg === 'string' ? arg : JSON.stringify(arg)
+      ).join(' ');
+      return `${levelPrefix} ${argsStr}`;
+    });
+    
+    return {
+      hasErrors: true,
+      errors: errorMessages
+    };
+  }, [previewConsoleMessages]);
 
   // Load wallpaper from database
   useEffect(() => {
@@ -132,27 +246,81 @@ const LumaUICore: React.FC = () => {
     loadWallpaper();
   }, []);
 
-  // Load projects on mount
+  // Load projects on mount (runs once)
   useEffect(() => {
     const loadProjects = async () => {
       const savedProjects = await loadProjectsFromDB();
       setProjects(savedProjects);
-      
-      // Only show the project selection modal if no project is currently selected
-      // This prevents the modal from opening when a project is already loaded
-      if (!selectedProject) {
-        setIsProjectSelectionModalOpen(true);
-      }
     };
     loadProjects();
-  }, [loadProjectsFromDB, selectedProject]);
+  }, [loadProjectsFromDB]);
 
-  // Cleanup timeout on unmount
+  // Separate effect: Show manager page if no project selected (and not loading)
   useEffect(() => {
-    return () => {
+    // Only show manager if:
+    // 1. No project is selected
+    // 2. We're not currently loading a project
+    // 3. Manager page isn't already showing
+    if (!selectedProject && !projectLoadingState.isLoading && !showManagerPage) {
+      setShowManagerPage(true);
+    }
+  }, [selectedProject, projectLoadingState.isLoading, showManagerPage]);
+
+  // Cleanup on unmount and page unload
+  useEffect(() => {
+    // Cleanup function for when component unmounts or page is closed
+    const cleanup = async () => {
+      // Clear save timeout
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
       }
+
+      // Set all projects to idle status before closing
+      try {
+        const dbRequest = window.indexedDB.open('lumaui-projects', 1);
+        dbRequest.onsuccess = () => {
+          const transaction = dbRequest.result.transaction(['projects'], 'readwrite');
+          const store = transaction.objectStore('projects');
+
+          // Get all projects
+          const getAllRequest = store.getAll();
+          getAllRequest.onsuccess = () => {
+            const allProjects = getAllRequest.result;
+
+            // Update each project to idle
+            allProjects.forEach((project: Project) => {
+              if (project.status === 'running') {
+                store.put({
+                  ...project,
+                  status: 'idle',
+                  previewUrl: undefined
+                });
+              }
+            });
+          };
+        };
+      } catch (error) {
+        console.error('Error during cleanup:', error);
+      }
+    };
+
+    // Handle page unload/refresh
+    const handleBeforeUnload = () => {
+      // Synchronously update projects to idle in localStorage as backup
+      try {
+        localStorage.setItem('lumaui-cleanup-needed', 'true');
+      } catch (e) {
+        console.error('Failed to set cleanup flag:', e);
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      cleanup();
+      // Cleanup WebContainerManager
+      webContainerManager.cleanup(writeToTerminal);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
     };
   }, []);
     
@@ -160,6 +328,161 @@ const LumaUICore: React.FC = () => {
   const writeToTerminal = (data: string) => {
     if (terminalRef.current) {
       terminalRef.current.write(data);
+
+      // Buffer output for current project to persist across switches
+      if (selectedProject?.id) {
+        const buffer = projectOutputBuffers.current.get(selectedProject.id) || [];
+        buffer.push(data);
+
+        // Limit buffer size to prevent memory issues (keep last 1000 lines)
+        if (buffer.length > 1000) {
+          buffer.shift();
+        }
+
+        projectOutputBuffers.current.set(selectedProject.id, buffer);
+      }
+    }
+
+    // Also add to terminal output state for PreviewPane console
+    setTerminalOutput(prev => {
+      const newEntry = {
+        id: `terminal-${Date.now()}-${Math.random()}`,
+        text: data,
+        timestamp: new Date()
+      };
+
+      // Keep last 500 entries to prevent memory issues
+      const updated = [...prev, newEntry];
+      if (updated.length > 500) {
+        return updated.slice(-500);
+      }
+      return updated;
+    });
+  };
+
+  // Spawn and attach interactive shell to terminal
+  const attachShellToTerminal = async (container: WebContainer) => {
+    if (!terminalRef.current) {
+      console.warn('Terminal not ready for shell attachment');
+      return;
+    }
+
+    try {
+      // Dispose existing terminal data handler if any
+      if (terminalDataDisposableRef.current) {
+        try {
+          terminalDataDisposableRef.current.dispose();
+        } catch (e) {
+          console.warn('Error disposing previous terminal handler:', e);
+        }
+        terminalDataDisposableRef.current = null;
+      }
+
+      // Kill existing shell if any
+      if (shellProcessRef.current) {
+        try {
+          shellProcessRef.current.kill();
+          await new Promise(resolve => setTimeout(resolve, 100)); // Wait for kill
+        } catch (e) {
+          console.warn('Error killing previous shell:', e);
+        }
+        shellProcessRef.current = null;
+      }
+
+      const terminal = terminalRef.current;
+
+      writeToTerminal('\x1b[90m🐚 Spawning interactive shell (bash)...\x1b[0m\n');
+
+      // Spawn interactive shell (bash for better compatibility, fallback to jsh)
+      let shellCommand = 'bash';
+      let shellProcess;
+
+      try {
+        shellProcess = await container.spawn(shellCommand, [], {
+          terminal: {
+            cols: terminal.cols,
+            rows: terminal.rows,
+          },
+        });
+      } catch (error) {
+        // Fallback to jsh if bash doesn't exist
+        writeToTerminal('\x1b[90m  Bash not available, using jsh...\x1b[0m\n');
+        shellCommand = 'jsh';
+        shellProcess = await container.spawn(shellCommand, [], {
+          terminal: {
+            cols: terminal.cols,
+            rows: terminal.rows,
+          },
+        });
+      }
+
+      shellProcessRef.current = shellProcess;
+
+      // Pipe shell output to terminal
+      shellProcess.output.pipeTo(
+        new WritableStream({
+          write(data) {
+            terminal.write(data);
+          },
+        })
+      ).catch(err => {
+        console.warn('Shell output pipe error:', err);
+      });
+
+      // Create writable stream for shell input
+      const input = shellProcess.input.getWriter();
+
+      // Handle terminal input (send to shell)
+      const handleTerminalData = (data: string) => {
+        try {
+          input.write(data);
+        } catch (err) {
+          console.warn('Error writing to shell input:', err);
+        }
+      };
+
+      // Attach input handler and store disposable for cleanup
+      const disposable = terminal.onData(handleTerminalData);
+      terminalDataDisposableRef.current = disposable;
+
+      // Handle shell exit
+      shellProcess.exit.then((exitCode) => {
+        console.log(`Shell exited with code ${exitCode}`);
+        shellProcessRef.current = null;
+
+        // Clean up terminal data handler when shell exits
+        if (terminalDataDisposableRef.current) {
+          try {
+            terminalDataDisposableRef.current.dispose();
+          } catch (e) {
+            console.warn('Error disposing terminal handler on shell exit:', e);
+          }
+          terminalDataDisposableRef.current = null;
+        }
+        // Don't write to terminal here as it might be disposed
+      }).catch(err => {
+        console.warn('Shell exit error:', err);
+        shellProcessRef.current = null;
+
+        // Clean up terminal data handler on error too
+        if (terminalDataDisposableRef.current) {
+          try {
+            terminalDataDisposableRef.current.dispose();
+          } catch (e) {
+            console.warn('Error disposing terminal handler on shell error:', e);
+          }
+          terminalDataDisposableRef.current = null;
+        }
+      });
+
+      writeToTerminal('\x1b[32m✅ Interactive shell ready\x1b[0m\n\n');
+      console.log('✅ Interactive shell attached to terminal');
+    } catch (error) {
+      console.error('Failed to attach shell to terminal:', error);
+      const errorMsg = error instanceof Error ? error.message : String(error);
+      writeToTerminal(`\x1b[33m⚠️ Shell attachment skipped: ${errorMsg}\x1b[0m\n`);
+      writeToTerminal('\x1b[90m💡 Process output will still be shown in terminal\x1b[0m\n\n');
+      // Don't fail the entire boot process if shell fails
     }
   };
 
@@ -216,26 +539,26 @@ const LumaUICore: React.FC = () => {
     // Check WebContainer compatibility
     if (!window.crossOriginIsolated) {
       const errorMsg = `WebContainer requires cross-origin isolation to run properly.
-      
+
 For development, you can serve your app with:
 - npm run dev (if using Vite with proper headers)
 - Or serve with headers: Cross-Origin-Embedder-Policy: require-corp and Cross-Origin-Opener-Policy: same-origin
 
 This is a browser security requirement for WebContainer.`;
-      
+
       writeToTerminal('\x1b[31m❌ Cross-Origin Isolation Required\x1b[0m\n');
       writeToTerminal('\x1b[33m' + errorMsg + '\x1b[0m\n');
       alert(errorMsg);
       return;
     }
 
-    const config = PROJECT_CONFIGS[configId];
-    if (!config) {
-      throw new Error(`Unknown project configuration: ${configId}`);
+    const template = PROJECT_TEMPLATES[configId];
+    if (!template) {
+      throw new Error(`Unknown project template: ${configId}`);
     }
 
-    // Switch to terminal tab during creation
-    setActiveTab('terminal');
+    // Switch to editor mode during creation (no tabs anymore - terminal is in editor mode)
+    setRightPanelMode('editor');
 
     const newProject: Project = {
       id: `project-${Date.now()}`,
@@ -244,70 +567,37 @@ This is a browser security requirement for WebContainer.`;
       status: 'idle',
       createdAt: new Date()
     };
-    
+
     let container: WebContainer | null = null;
-    let previousContainer: WebContainer | null = webContainer;
-    
+
     try {
-      // Clear terminal and start fresh
-      if (terminalRef.current) {
-        terminalRef.current.clear();
+      // Don't clear terminal - add visual separator instead
+      writeToTerminal(`\n\x1b[90m${'═'.repeat(80)}\x1b[0m\n`);
+      writeToTerminal('\x1b[35m✨ Creating New Project\x1b[0m\n');
+      writeToTerminal(`\x1b[90m${'═'.repeat(80)}\x1b[0m\n\n`);
+
+      // Update current project status if any
+      if (selectedProject) {
+        const updatedProject = { ...selectedProject, status: 'idle' as const, previewUrl: undefined };
+        setProjects(prev => prev.map(p => p.id === selectedProject.id ? updatedProject : p));
+        setSelectedProject(updatedProject);
       }
-      
-      // Stop existing project if running (WebContainer can only have one instance)
-      if (previousContainer) {
-        writeToTerminal('\x1b[36m💡 Note: WebContainer allows only one instance at a time\x1b[0m\n');
-        writeToTerminal('\x1b[33m🛑 Stopping existing project to create new one...\x1b[0m\n');
-        
-        if (selectedProject) {
-          // Update the current project status
-          const updatedProject = { ...selectedProject, status: 'idle' as const, previewUrl: undefined };
-          setProjects(prev => prev.map(p => p.id === selectedProject.id ? updatedProject : p));
-          setSelectedProject(updatedProject);
-        }
-        
-        // Clean up running processes
-        if (runningProcessesRef.current.length > 0) {
-          writeToTerminal('\x1b[33m⏹️ Terminating existing processes...\x1b[0m\n');
-          for (const process of runningProcessesRef.current) {
-            try {
-              if (process && process.kill) {
-                process.kill();
-              }
-            } catch (error) {
-              console.log('Error killing process during project creation:', error);
-            }
-          }
-          runningProcessesRef.current = [];
-        }
-        
-        // Teardown existing container
-        try {
-          await previousContainer.teardown();
-          writeToTerminal('\x1b[32m✅ Previous WebContainer cleaned up\x1b[0m\n');
-        } catch (cleanupError) {
-          writeToTerminal('\x1b[33m⚠️ Warning: Error cleaning up previous container, proceeding anyway...\x1b[0m\n');
-        }
-        
-        setWebContainer(null);
-        
-        // Wait a moment for cleanup to complete
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
-      
+
       // Initialize WebContainer for scaffolding
-      writeToTerminal('\x1b[36m🚀 Initializing project scaffolder...\x1b[0m\n');
+      writeToTerminal('\x1b[36m🚀 Preparing WebContainer...\x1b[0m\n');
       writeToTerminal('\x1b[33m📋 Project: ' + name + '\x1b[0m\n');
-      writeToTerminal('\x1b[33m📋 Template: ' + config.name + '\x1b[0m\n');
+      writeToTerminal('\x1b[33m📋 Template: ' + template.name + '\x1b[0m\n');
       writeToTerminal('\x1b[90m📋 Cross-Origin Isolation: ✅ Available\x1b[0m\n\n');
-      
-      container = await WebContainer.boot();
-      writeToTerminal('\x1b[32m✅ WebContainer booted successfully\x1b[0m\n');
-      
+
+      // REUSE WebContainer if it exists! Much faster!
+      container = await webContainerManager.getOrBootContainer(writeToTerminal);
+
+      // Don't attach shell yet - wait until project is scaffolded
+
       // Create scaffolder and run project setup
-      const scaffolder = new ProjectScaffolder(container, writeToTerminal);
+      const scaffolder = new ProjectScaffolderV2(container, writeToTerminal);
       
-      const success = await scaffolder.scaffoldProject(config, name, (progress) => {
+      const success = await scaffolder.scaffoldProject(template, name, (progress: ScaffoldProgress) => {
         setScaffoldProgress(progress);
         writeToTerminal(`\x1b[36m📊 Progress: ${progress.currentStep}/${progress.totalSteps} - ${progress.stepName}\x1b[0m\n`);
       });
@@ -327,124 +617,286 @@ This is a browser security requirement for WebContainer.`;
       }
       
       writeToTerminal(`\x1b[32m✅ Found ${fileNodes.length} files/directories\x1b[0m\n`);
-      
+
+      // NOW attach shell after project is scaffolded
+      writeToTerminal('\n');
+      await attachShellToTerminal(container);
+
       // Save to database
       writeToTerminal('\x1b[33m💾 Saving project to database...\x1b[0m\n');
       await saveProjectToDB(newProject, fileNodes);
       
       // Update state
-    setProjects(prev => [newProject, ...prev]);
+      setProjects(prev => [newProject, ...prev]);
       setSelectedProject(newProject);
       setFiles(fileNodes);
       setSelectedFile(null);
       setSelectedFileContent('');
       setIsCreateModalOpen(false);
       setIsProjectSelectionModalOpen(false);
-      
+
+      // Hide manager page and open project in edit mode
+      setShowManagerPage(false);
+      setProjectViewMode('edit');
+
       writeToTerminal('\x1b[32m🎉 Project created and ready!\x1b[0m\n');
       writeToTerminal('\x1b[36m💡 You can now start the project using the Start button\x1b[0m\n\n');
-      
+
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       console.error('Failed to create project:', error);
       writeToTerminal(`\x1b[31m❌ Project creation failed: ${errorMessage}\x1b[0m\n`);
       writeToTerminal('\x1b[31m🔍 Check the error details above for more information\x1b[0m\n\n');
+
+      // Show error in modal too
+      alert(`Project creation failed: ${errorMessage}\n\nCheck the terminal for details.`);
       throw error;
     } finally {
-      // Clean up scaffolding container
-      if (container) {
-        try {
-          await container.teardown();
-          writeToTerminal('\x1b[33m🧹 Scaffolding container cleaned up\x1b[0m\n');
-        } catch (cleanupError) {
-          console.warn('Error cleaning up scaffolding container:', cleanupError);
-          writeToTerminal('\x1b[33m⚠️ Warning: Could not clean up scaffolding container\x1b[0m\n');
-        }
-      }
+      // NOTE: WebContainerManager handles cleanup automatically
+      // Container stays active for the project - will be cleaned up when switching projects
       setScaffoldProgress(null);
     }
   };
 
-  const handleProjectSelect = async (project: Project) => {
-    // Immediately close modal to prevent any UI flicker
-    setIsProjectSelectionModalOpen(false);
-    
-    // Clear terminal for new project
-    if (terminalRef.current) {
-      terminalRef.current.clear();
-    }
-    
-    writeToTerminal(`\x1b[36m🔄 Switching to project: ${project.name}\x1b[0m\n`);
-    
-    // Force cleanup any existing WebContainer instance before switching
-    if (webContainer || selectedProject) {
-      writeToTerminal('\x1b[33m🛑 Stopping current project and cleaning up containers...\x1b[0m\n');
-      
-      if (selectedProject) {
-        // Update the current project status to idle
-        const updatedCurrentProject = { ...selectedProject, status: 'idle' as const, previewUrl: undefined };
-        setProjects(prev => prev.map(p => p.id === selectedProject.id ? updatedCurrentProject : p));
+  // Handle Monaco editor readiness
+  const handleEditorReady = useCallback(() => {
+    console.log('✅ Monaco Editor is ready!');
+    writeToTerminal('\x1b[32m✅ Monaco Editor initialized successfully!\x1b[0m\n');
+    writeToTerminal('\x1b[32m✅ Project opened successfully!\x1b[0m\n\n');
+
+    // Set Monaco ready and mark phase as ready
+    setProjectLoadingState(prev => {
+      // Only update if we're still in the loading/initializing phase
+      if (prev.isLoading && prev.phase === 'initializing-monaco') {
+        return {
+          ...prev,
+          monacoReady: true,
+          phase: 'ready',
+          webContainerReady: true // Mark container as ready when Monaco is ready
+        };
       }
-      
-      // Clean up running processes
-      if (runningProcessesRef.current.length > 0) {
-        writeToTerminal('\x1b[33m⏹️ Terminating existing processes...\x1b[0m\n');
-        for (const process of runningProcessesRef.current) {
-          try {
-            if (process && process.kill) {
-              process.kill();
+      return prev;
+    });
+
+    // Switch to preview mode now that Monaco is ready
+    setRightPanelMode('preview');
+
+    // Clear loading state after brief delay (outside state updater for reliability)
+    setTimeout(() => {
+      console.log('🎉 Clearing loading overlay...');
+      setProjectLoadingState({
+        isLoading: false,
+        phase: 'idle',
+        filesLoaded: false,
+        monacoReady: false,
+        webContainerReady: false,
+        error: null,
+        startedAt: null
+      });
+    }, 500);
+  }, [writeToTerminal]);
+
+  const handleProjectSelect = useCallback(async (project: Project, viewMode: 'play' | 'edit' = 'edit') => {
+    // Initialize loading state and set project immediately to prevent flash
+    setProjectLoadingState({
+      isLoading: true,
+      phase: 'cleanup',
+      filesLoaded: false,
+      monacoReady: false,
+      webContainerReady: false,
+      error: null,
+      startedAt: Date.now()
+    });
+    setSelectedProject(project); // Set immediately so UI doesn't flash to manager page
+
+    try {
+      // PHASE 1: UI State Preparation
+      setShowManagerPage(false);
+      setIsProjectSelectionModalOpen(false);
+      setProjectViewMode(viewMode);
+      setRightPanelMode('editor'); // Start in editor mode
+
+      writeToTerminal(`\n\x1b[90m${'─'.repeat(80)}\x1b[0m\n`);
+      writeToTerminal(`\x1b[36m🔄 Opening project: ${project.name}\x1b[0m\n`);
+
+      // CRITICAL: Clear files IMMEDIATELY
+      setFiles([]);
+      setSelectedFile(null);
+      setSelectedFileContent('');
+
+      // PHASE 2: Cleanup Existing Resources
+      if (webContainer || selectedProject) {
+        writeToTerminal('\x1b[33m🛑 Cleaning up current project...\x1b[0m\n');
+
+        if (selectedProject) {
+          const updatedCurrentProject = { ...selectedProject, status: 'idle' as const, previewUrl: undefined };
+          setProjects(prev => prev.map(p => p.id === selectedProject.id ? updatedCurrentProject : p));
+        }
+
+        if (runningProcessesRef.current.length > 0) {
+          for (const process of runningProcessesRef.current) {
+            try {
+              if (process && process.kill) process.kill();
+            } catch (error) {
+              console.log('Error killing process:', error);
             }
-          } catch (error) {
-            console.log('Error killing process during project switch:', error);
           }
+          runningProcessesRef.current = [];
         }
-        runningProcessesRef.current = [];
-      }
-      
-      // Teardown existing container
-      if (webContainer) {
-        try {
-          await webContainer.teardown();
-          writeToTerminal('\x1b[32m✅ Previous WebContainer cleaned up\x1b[0m\n');
-        } catch (cleanupError) {
-          writeToTerminal('\x1b[33m⚠️ Warning: Error cleaning up previous container, proceeding anyway...\x1b[0m\n');
+
+        if (webContainer) {
+          try {
+            await webContainer.teardown();
+            writeToTerminal('\x1b[32m✅ Previous project cleaned up\x1b[0m\n');
+          } catch (cleanupError) {
+            writeToTerminal('\x1b[33m⚠️ Warning: Error cleaning up previous container\x1b[0m\n');
+          }
+          setWebContainer(null);
         }
-        setWebContainer(null);
+
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
-      
-      // Wait for cleanup to complete
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
-    
-    setSelectedProject(project);
-    
-    writeToTerminal(`\x1b[33m📂 Loading project files from database...\x1b[0m\n`);
-    
-    const savedFiles = await loadProjectFilesFromDB(project.id);
-    writeToTerminal(`\x1b[32m✅ Loaded ${savedFiles.length} files from database\x1b[0m\n`);
-    
-    if (savedFiles.length > 0) {
-      setFiles(savedFiles);
-      // Log some file details for debugging
+
+      // Update loading phase
+      setProjectLoadingState(prev => ({ ...prev, phase: 'loading-files' }));
+
+      // PHASE 3: Load Project Files
+      writeToTerminal(`\x1b[33m📂 Loading project files from database...\x1b[0m\n`);
+
+      const savedFiles = await loadProjectFilesFromDB(project.id);
+      writeToTerminal(`\x1b[32m✅ Loaded ${savedFiles.length} files from database\x1b[0m\n`);
+
+      if (savedFiles.length === 0) {
+        throw new Error('No files found in database for this project');
+      }
+
+      // Log file details
       const fileCount = savedFiles.filter(f => f.type === 'file').length;
       const dirCount = savedFiles.filter(f => f.type === 'directory').length;
-      writeToTerminal(`\x1b[90m   Files: ${fileCount}, Directories: ${dirCount}\x1b[0m\n`);
-      
-      // Check if package.json exists
       const hasPackageJson = savedFiles.some(f => f.name === 'package.json' && f.type === 'file');
-      writeToTerminal(`\x1b[90m   package.json present: ${hasPackageJson ? '✅' : '❌'}\x1b[0m\n`);
-    } else {
-      writeToTerminal(`\x1b[31m❌ No files found in database for project ${project.id}\x1b[0m\n`);
-      return;
-    }
-    
-    setSelectedFile(null);
-    setSelectedFileContent('');
-    
-    writeToTerminal('\x1b[36m💡 Project switched successfully. Use the Start button to run the project.\x1b[0m\n\n');
-  };
+      writeToTerminal(`\x1b[90m   Files: ${fileCount}, Directories: ${dirCount}\x1b[0m\n`);
+      writeToTerminal(`\x1b[90m   package.json: ${hasPackageJson ? '✅' : '❌'}\x1b[0m\n`);
 
-  const handleDeleteProject = async (project: Project) => {
+      // CRITICAL: Set files and WAIT for React to process
+      setFiles(savedFiles);
+
+      // Mark files as loaded
+      setProjectLoadingState(prev => ({ ...prev, filesLoaded: true, phase: 'mounting-ui' }));
+
+      // WAIT for state to propagate
+      await new Promise(resolve => setTimeout(resolve, 300));
+
+      // Auto-select a default file so Monaco has something to render
+      const findDefaultFile = (files: FileNode[]): FileNode | null => {
+        // Priority order: index.tsx, App.tsx, main.tsx, first .tsx, first .ts, first .jsx, first .js, any file
+        const priorities = ['index.tsx', 'src/index.tsx', 'App.tsx', 'src/App.tsx', 'main.tsx', 'src/main.tsx'];
+
+        // Check priority files first
+        for (const priority of priorities) {
+          const found = files.find(f => f.type === 'file' && f.path.endsWith(priority));
+          if (found) return found;
+        }
+
+        // Find first .tsx file
+        const firstTsx = files.find(f => f.type === 'file' && f.path.endsWith('.tsx'));
+        if (firstTsx) return firstTsx;
+
+        // Find first .ts file
+        const firstTs = files.find(f => f.type === 'file' && f.path.endsWith('.ts') && !f.path.endsWith('.d.ts'));
+        if (firstTs) return firstTs;
+
+        // Find first .jsx file
+        const firstJsx = files.find(f => f.type === 'file' && f.path.endsWith('.jsx'));
+        if (firstJsx) return firstJsx;
+
+        // Find first .js file
+        const firstJs = files.find(f => f.type === 'file' && f.path.endsWith('.js'));
+        if (firstJs) return firstJs;
+
+        // Find any file
+        return files.find(f => f.type === 'file') || null;
+      };
+
+      const defaultFile = findDefaultFile(savedFiles);
+      if (defaultFile) {
+        setSelectedFile(defaultFile.path);
+        setSelectedFileContent(defaultFile.content || '');
+        writeToTerminal(`\x1b[36m📄 Selected default file: ${defaultFile.path}\x1b[0m\n`);
+      } else {
+        setSelectedFile(null);
+        setSelectedFileContent('');
+      }
+
+      // Restore buffered output
+      const buffer = projectOutputBuffers.current.get(project.id);
+      if (buffer && buffer.length > 0) {
+        writeToTerminal(`\x1b[90m📋 Restoring ${buffer.length} previous output entries...\x1b[0m\n`);
+        writeToTerminal(`\x1b[90m${'─'.repeat(80)}\x1b[0m\n`);
+      }
+
+      writeToTerminal('\x1b[36m💡 Project files loaded. Initializing editor...\x1b[0m\n');
+
+      // Update phase - UI will mount now, Monaco will signal when ready
+      setProjectLoadingState(prev => ({ ...prev, phase: 'initializing-monaco', webContainerReady: true }));
+
+      writeToTerminal('\x1b[36m💡 Waiting for Monaco Editor to initialize...\x1b[0m\n');
+
+      // IMPORTANT: Start in EDITOR mode so Monaco can mount and signal ready
+      // Will switch to preview after Monaco calls onEditorReady
+      setRightPanelMode('editor');
+
+      // Fallback: If Monaco doesn't signal ready within 20 seconds, clear loading anyway
+      setTimeout(() => {
+        setProjectLoadingState(prev => {
+          if (prev.isLoading) {
+            console.warn('⚠️ Loading timeout - clearing overlay (Monaco may not have signaled ready)');
+            writeToTerminal('\x1b[33m⚠️ Editor took longer than expected, but project is ready\x1b[0m\n');
+
+            // Switch to preview mode even if Monaco didn't signal ready
+            setRightPanelMode('preview');
+
+            return {
+              isLoading: false,
+              phase: 'idle',
+              filesLoaded: false,
+              monacoReady: false,
+              webContainerReady: false,
+              error: null,
+              startedAt: null
+            };
+          }
+          return prev;
+        });
+      }, 20000); // 20 second fallback timeout
+
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('Failed to open project:', error);
+      writeToTerminal(`\x1b[31m❌ Failed to open project: ${errorMessage}\x1b[0m\n`);
+
+      setProjectLoadingState(prev => ({
+        ...prev,
+        isLoading: true, // Keep showing overlay with error
+        error: errorMessage,
+        phase: 'idle'
+      }));
+
+      // Clear error after 5 seconds
+      setTimeout(() => {
+        setProjectLoadingState({
+          isLoading: false,
+          phase: 'idle',
+          filesLoaded: false,
+          monacoReady: false,
+          webContainerReady: false,
+          error: null,
+          startedAt: null
+        });
+      }, 5000);
+    }
+  }, [webContainer, selectedProject, loadProjectFilesFromDB, writeToTerminal]);
+
+  const handleDeleteProject = useCallback(async (project: Project) => {
     try {
       writeToTerminal(`\x1b[33m🗑️ Deleting project: ${project.name}\x1b[0m\n`);
       
@@ -477,7 +929,7 @@ This is a browser security requirement for WebContainer.`;
           setWebContainer(null);
         }
         
-        // Clear UI state
+        // Clear UI state - CRITICAL: Clear all project-related state
         setSelectedProject(null);
         setFiles([]);
         setSelectedFile(null);
@@ -490,15 +942,18 @@ This is a browser security requirement for WebContainer.`;
       // Delete associated chat data
       ChatPersistence.deleteChatData(project.id);
       writeToTerminal(`\x1b[32m✅ Chat data cleared for project\x1b[0m\n`);
-      
+
+      // Clear output buffer for this project
+      projectOutputBuffers.current.delete(project.id);
+
       // Update projects list
       setProjects(prev => prev.filter(p => p.id !== project.id));
-      
+
       writeToTerminal(`\x1b[32m✅ Project "${project.name}" deleted successfully\x1b[0m\n`);
-      
-      // If no projects left, close the modal
-      if (projects.length === 1) {
-        setIsProjectSelectionModalOpen(false);
+
+      // If the deleted project was selected and it was the current one, show manager
+      if (selectedProject?.id === project.id) {
+        setShowManagerPage(true);
       }
       
     } catch (error) {
@@ -506,7 +961,15 @@ This is a browser security requirement for WebContainer.`;
       writeToTerminal(`\x1b[31m❌ Failed to delete project: ${error}\x1b[0m\n`);
       throw error; // Re-throw so the modal can handle the error
     }
-  };
+  }, [selectedProject, webContainer, writeToTerminal, deleteProjectFromDB]);
+
+  const handleCreateNewProject = useCallback(() => {
+    setIsCreateModalOpen(true);
+  }, []);
+
+  const handleCloseCreateModal = useCallback(() => {
+    setIsCreateModalOpen(false);
+  }, []);
 
   const startProject = async (project: Project, projectFiles?: FileNode[]) => {
     return startProjectWithFiles(project, projectFiles || files);
@@ -527,47 +990,86 @@ This is a browser security requirement for WebContainer.`;
       // Force cleanup any existing WebContainer instance
       if (webContainer) {
         writeToTerminal('\x1b[33m🧹 Cleaning up existing WebContainer instance...\x1b[0m\n');
+
+        // Kill shell process first
+        if (shellProcessRef.current) {
+          try {
+            shellProcessRef.current.kill();
+            shellProcessRef.current = null;
+            writeToTerminal('\x1b[90m⚡ Shell terminated\x1b[0m\n');
+          } catch (e) {
+            console.warn('Error killing shell during cleanup:', e);
+          }
+        }
+
+        // Kill running processes
+        if (runningProcessesRef.current.length > 0) {
+          for (const process of runningProcessesRef.current) {
+            try {
+              if (process && process.kill) {
+                process.kill();
+              }
+            } catch (e) {
+              console.warn('Error killing process:', e);
+            }
+          }
+          runningProcessesRef.current = [];
+        }
+
         try {
           await webContainer.teardown();
+          writeToTerminal('\x1b[32m✅ Cleanup complete\x1b[0m\n');
         } catch (cleanupError) {
           writeToTerminal('\x1b[33m⚠️ Warning: Error during cleanup, forcing new instance...\x1b[0m\n');
         }
         setWebContainer(null);
+
+        // Wait for WebContainer to fully release resources
+        writeToTerminal('\x1b[90m⏳ Waiting for resources to be released...\x1b[0m\n');
+        await new Promise(resolve => setTimeout(resolve, 2000));
       }
       
       // Try to boot new WebContainer with retry logic
-      let container: WebContainer;
+      let container: WebContainer | undefined;
       let retryCount = 0;
       const maxRetries = 3;
       
-      while (retryCount < maxRetries) {
+      while (retryCount < maxRetries && !container) {
         try {
-          writeToTerminal(`\x1b[33m🔧 Attempting to boot WebContainer (attempt ${retryCount + 1}/${maxRetries})...\x1b[0m\n`);
-          container = await WebContainer.boot();
+          writeToTerminal(`\x1b[33m🔧 Getting WebContainer instance...\x1b[0m\n`);
+          container = await webContainerManager.getOrBootContainer(writeToTerminal);
+          writeToTerminal('\x1b[32m✅ WebContainer instance ready\x1b[0m\n');
           break;
         } catch (bootError) {
           retryCount++;
-          writeToTerminal(`\x1b[31m❌ Boot attempt ${retryCount} failed: ${bootError}\x1b[0m\n, Try Hard Reshing Please`);
+          const errorMessage = bootError instanceof Error ? bootError.message : String(bootError);
+          writeToTerminal(`\x1b[31m❌ Boot attempt ${retryCount} failed: ${errorMessage}\x1b[0m\n`);
           
           if (retryCount < maxRetries) {
-            writeToTerminal('\x1b[33m⏳ Waiting 2 seconds before retry...\x1b[0m\n');
-            await new Promise(resolve => setTimeout(resolve, 2000));
+            writeToTerminal('\x1b[33m⏳ Waiting 3 seconds before retry...\x1b[0m\n');
+            await new Promise(resolve => setTimeout(resolve, 3000));
             
             // Force global cleanup if needed
             if (bootError instanceof Error && bootError.message.includes('single WebContainer instance')) {
-              writeToTerminal('\x1b[33m🔨 Attempting to force cleanup existing instances...\x1b[0m\n');
+              writeToTerminal('\x1b[33m🔨 Forcing extended cleanup time for existing instances...\x1b[0m\n');
+              writeToTerminal('\x1b[33m💡 If this keeps failing, try hard refreshing the page (Ctrl+Shift+R)\x1b[0m\n');
               // Give extra time for cleanup
-              await new Promise(resolve => setTimeout(resolve, 3000));
+              await new Promise(resolve => setTimeout(resolve, 2000));
             }
           } else {
-            throw new Error(`Failed to boot WebContainer after ${maxRetries} attempts: ${bootError}`);
+            throw new Error(`Failed to boot WebContainer after ${maxRetries} attempts. Please hard refresh the page (Ctrl+Shift+R) and try again.`);
           }
         }
       }
       
-      setWebContainer(container!);
-      writeToTerminal('\x1b[32m✅ WebContainer initialized successfully\x1b[0m\n');
-      
+      if (!container) {
+        throw new Error('Failed to initialize WebContainer. Please hard refresh the page (Ctrl+Shift+R) and try again.');
+      }
+
+      setWebContainer(container);
+
+      // Don't attach shell yet - wait until files are mounted
+
       // Debug: Check files array before creating structure
       writeToTerminal(`\x1b[90m🔍 Debug: projectFiles array contains ${projectFiles.length} items\x1b[0m\n`);
       if (projectFiles.length === 0) {
@@ -658,7 +1160,11 @@ This is a browser security requirement for WebContainer.`;
       };
       
       await verifyFiles();
-      
+
+      // NOW attach shell after files are mounted and verified
+      writeToTerminal('\n');
+      await attachShellToTerminal(container);
+
       // Install dependencies with retry logic
       writeToTerminal('\x1b[33m📦 Installing dependencies...\x1b[0m\n');
       
@@ -706,12 +1212,19 @@ This is a browser security requirement for WebContainer.`;
           write(data) { writeToTerminal(data); }
         }));
         
-        container!.on('server-ready', (port, url) => {
+        container!.on('server-ready', async (port, url) => {
           writeToTerminal(`\x1b[32m🌐 Server ready at: ${url}\x1b[0m\n`);
           writeToTerminal(`\x1b[36m💡 Framework: ${project.framework} running on port ${port}\x1b[0m\n`);
           const updatedProject = { ...project, status: 'running' as const, previewUrl: url };
           setProjects(prev => prev.map(p => p.id === project.id ? updatedProject : p));
           setSelectedProject(updatedProject);
+
+          // Save running status to database
+          try {
+            await saveProjectToDB(updatedProject, files);
+          } catch (error) {
+            console.error('Failed to save running status:', error);
+          }
         });
       } else {
         // For non-Vite projects (vanilla HTML, etc.)
@@ -723,14 +1236,31 @@ This is a browser security requirement for WebContainer.`;
           write(data) { writeToTerminal(data); }
         }));
         
-        // For static projects, construct URL (serve typically uses port 3000)
-        setTimeout(() => {
-          const url = `${window.location.protocol}//${window.location.hostname}:3000`;
-          writeToTerminal(`\x1b[32m🌐 Static server ready at: ${url}\x1b[0m\n`);
-          const updatedProject = { ...project, status: 'running' as const, previewUrl: url };
-          setProjects(prev => prev.map(p => p.id === project.id ? updatedProject : p));
-          setSelectedProject(updatedProject);
-        }, 3000);
+        // For static projects, wait for server-ready event or timeout
+        const serverReadyPromise = new Promise<{url: string; port: number}>((resolve) => {
+          container!.on('server-ready', (port, url) => {
+            resolve({ url, port });
+          });
+
+          // Fallback timeout for static servers that don't emit server-ready
+          setTimeout(() => {
+            const url = `${window.location.protocol}//${window.location.hostname}:3000`;
+            resolve({ url, port: 3000 });
+          }, 3000);
+        });
+
+        const { url } = await serverReadyPromise;
+        writeToTerminal(`\x1b[32m🌐 Static server ready at: ${url}\x1b[0m\n`);
+        const updatedProject = { ...project, status: 'running' as const, previewUrl: url };
+        setProjects(prev => prev.map(p => p.id === project.id ? updatedProject : p));
+        setSelectedProject(updatedProject);
+
+        // Save running status to database
+        try {
+          await saveProjectToDB(updatedProject, files);
+        } catch (error) {
+          console.error('Failed to save running status:', error);
+        }
       }
       
     } catch (error) {
@@ -763,7 +1293,18 @@ This is a browser security requirement for WebContainer.`;
     if (webContainer) {
       try {
         writeToTerminal('\x1b[33m⏹️ Terminating processes...\x1b[0m\n');
-        
+
+        // Kill shell process first
+        if (shellProcessRef.current) {
+          try {
+            shellProcessRef.current.kill();
+            shellProcessRef.current = null;
+            writeToTerminal('\x1b[33m⚡ Shell process terminated\x1b[0m\n');
+          } catch (error) {
+            console.log('Error killing shell:', error);
+          }
+        }
+
         if (runningProcessesRef.current.length > 0) {
           for (const process of runningProcessesRef.current) {
             try {
@@ -777,7 +1318,7 @@ This is a browser security requirement for WebContainer.`;
           }
           runningProcessesRef.current = [];
         }
-        
+
       await webContainer.teardown();
       setWebContainer(null);
         
@@ -793,8 +1334,16 @@ This is a browser security requirement for WebContainer.`;
     }
     
     const updatedProject = { ...project, status: 'idle' as const, previewUrl: undefined };
-      setProjects(prev => prev.map(p => p.id === project.id ? updatedProject : p));
-        setSelectedProject(updatedProject);
+    setProjects(prev => prev.map(p => p.id === project.id ? updatedProject : p));
+    setSelectedProject(updatedProject);
+
+    // Save updated status to database
+    try {
+      await saveProjectToDB(updatedProject, files);
+      writeToTerminal('\x1b[90m💾 Project status saved\x1b[0m\n');
+    } catch (error) {
+      console.error('Failed to save project status:', error);
+    }
   };
 
   // Function to refresh file tree from WebContainer
@@ -819,7 +1368,7 @@ This is a browser security requirement for WebContainer.`;
   }, [webContainer, selectedProject, saveProjectToDB, writeToTerminal]);
 
   // Debounced auto-save function
-  const debouncedSave = useCallback(async (content: string, filePath: string, projectFiles: FileNode[]) => {
+  const debouncedSave = useCallback(async (_content: string, filePath: string, projectFiles: FileNode[]) => {
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
     }
@@ -837,15 +1386,15 @@ This is a browser security requirement for WebContainer.`;
     }, 1000); // 1 second debounce
   }, [selectedProject, saveProjectToDB, writeToTerminal]);
 
-  // File handlers
-  const handleFileSelect = (path: string, content: string) => {
+  // File handlers - wrapped with useCallback for performance
+  const handleFileSelect = useCallback((path: string, content: string) => {
     setSelectedFile(path);
     setSelectedFileContent(content);
-  };
+  }, []);
 
-  const handleFileContentChange = async (content: string) => {
+  const handleFileContentChange = useCallback(async (content: string) => {
     setSelectedFileContent(content);
-    
+
     // Update WebContainer immediately
     if (webContainer && selectedFile) {
       try {
@@ -854,7 +1403,7 @@ This is a browser security requirement for WebContainer.`;
         console.warn('Failed to write to WebContainer:', error);
       }
     }
-    
+
     // Update local state
     const updateFileContent = (nodes: FileNode[]): FileNode[] => {
       return nodes.map(node => {
@@ -875,7 +1424,7 @@ This is a browser security requirement for WebContainer.`;
     if (selectedFile) {
       debouncedSave(content, selectedFile, updatedFiles);
     }
-  };
+  }, [webContainer, selectedFile, files, debouncedSave]);
 
   const handleToggleFolder = (path: string) => {
     setExpandedFolders(prev => {
@@ -1041,27 +1590,27 @@ This is a browser security requirement for WebContainer.`;
     try {
       // Read the current content
       const content = await webContainer.fs.readFile(path, 'utf-8');
-      
+
       // Generate new filename
       const pathParts = path.split('/');
       const fileName = pathParts.pop() || '';
       const dir = pathParts.join('/');
-      
+
       const nameParts = fileName.split('.');
       const ext = nameParts.length > 1 ? nameParts.pop() : '';
       const baseName = nameParts.join('.');
-      
+
       const newFileName = ext ? `${baseName}_copy.${ext}` : `${baseName}_copy`;
       const newPath = dir ? `${dir}/${newFileName}` : newFileName;
-      
+
       // Create the duplicate
       await webContainer.fs.writeFile(newPath, content);
-      
+
       writeToTerminal(`\x1b[32m✅ Duplicated: ${path} → ${newPath}\x1b[0m\n`);
-      
+
       // Refresh file tree
       await refreshFileTree();
-      
+
       // Auto-select the new file
       handleFileSelect(newPath, content);
     } catch (error) {
@@ -1070,7 +1619,176 @@ This is a browser security requirement for WebContainer.`;
     }
   };
 
+  const handleUploadFile = async (parentPath: string, files: FileList) => {
+    if (!webContainer) {
+      writeToTerminal('\x1b[31m❌ WebContainer not available\x1b[0m\n');
+      return;
+    }
+
+    try {
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const targetPath = parentPath ? `${parentPath}/${file.name}` : file.name;
+
+        // Read file content
+        const content = await file.text();
+
+        // Write to WebContainer
+        await webContainer.fs.writeFile(targetPath, content);
+
+        writeToTerminal(`\x1b[32m✅ Uploaded: ${file.name} → ${targetPath}\x1b[0m\n`);
+      }
+
+      // Refresh file tree
+      await refreshFileTree();
+
+      writeToTerminal(`\x1b[32m✅ Uploaded ${files.length} file(s) successfully\x1b[0m\n`);
+    } catch (error) {
+      writeToTerminal(`\x1b[31m❌ Failed to upload files: ${error}\x1b[0m\n`);
+      throw error;
+    }
+  };
+
+  const handleCopyFile = async (sourcePath: string, targetPath: string) => {
+    if (!webContainer) {
+      writeToTerminal('\x1b[31m❌ WebContainer not available\x1b[0m\n');
+      return;
+    }
+
+    try {
+      // Read source file
+      const content = await webContainer.fs.readFile(sourcePath, 'utf-8');
+
+      // Generate destination path
+      const fileName = sourcePath.split('/').pop() || '';
+      const destPath = targetPath ? `${targetPath}/${fileName}` : fileName;
+
+      // Check if file already exists
+      try {
+        await webContainer.fs.readFile(destPath, 'utf-8');
+        // File exists, create copy with _copy suffix
+        const nameParts = fileName.split('.');
+        const ext = nameParts.length > 1 ? nameParts.pop() : '';
+        const baseName = nameParts.join('.');
+        const newFileName = ext ? `${baseName}_copy.${ext}` : `${baseName}_copy`;
+        const finalPath = targetPath ? `${targetPath}/${newFileName}` : newFileName;
+        await webContainer.fs.writeFile(finalPath, content);
+        writeToTerminal(`\x1b[32m✅ Copied: ${sourcePath} → ${finalPath}\x1b[0m\n`);
+      } catch {
+        // File doesn't exist, use original name
+        await webContainer.fs.writeFile(destPath, content);
+        writeToTerminal(`\x1b[32m✅ Copied: ${sourcePath} → ${destPath}\x1b[0m\n`);
+      }
+
+      // Refresh file tree
+      await refreshFileTree();
+    } catch (error) {
+      writeToTerminal(`\x1b[31m❌ Failed to copy file: ${error}\x1b[0m\n`);
+      throw error;
+    }
+  };
+
+  const handleCutFile = async (sourcePath: string, targetPath: string) => {
+    if (!webContainer) {
+      writeToTerminal('\x1b[31m❌ WebContainer not available\x1b[0m\n');
+      return;
+    }
+
+    try {
+      // Read source file
+      const content = await webContainer.fs.readFile(sourcePath, 'utf-8');
+
+      // Generate destination path
+      const fileName = sourcePath.split('/').pop() || '';
+      const destPath = targetPath ? `${targetPath}/${fileName}` : fileName;
+
+      // Write to destination
+      await webContainer.fs.writeFile(destPath, content);
+
+      // Delete source
+      await webContainer.fs.rm(sourcePath);
+
+      writeToTerminal(`\x1b[32m✅ Moved: ${sourcePath} → ${destPath}\x1b[0m\n`);
+
+      // Refresh file tree
+      await refreshFileTree();
+
+      // Clear selection if the moved file was selected
+      if (selectedFile === sourcePath) {
+        setSelectedFile(null);
+        setSelectedFileContent('');
+      }
+    } catch (error) {
+      writeToTerminal(`\x1b[31m❌ Failed to move file: ${error}\x1b[0m\n`);
+      throw error;
+    }
+  };
+
+  // Reconnect shell handler for manual reconnection
+  const handleReconnectShell = async () => {
+    try {
+      writeToTerminal('\n\x1b[36m🔄 Manual shell reconnection triggered...\x1b[0m\n');
+
+      // Get or boot a fresh container
+      const activeContainer = await webContainerManager.getOrBootContainer(writeToTerminal);
+
+      // Attach shell
+      await attachShellToTerminal(activeContainer);
+
+      // Update webContainer state
+      setWebContainer(activeContainer);
+
+      writeToTerminal('\x1b[32m✅ Shell reconnected successfully!\x1b[0m\n\n');
+    } catch (error) {
+      console.error('Manual shell reconnection failed:', error);
+      writeToTerminal('\x1b[31m❌ Shell reconnection failed. Please try starting the project.\x1b[0m\n');
+      throw error;
+    }
+  };
+
+  // Clear chat handler - wrapped with useCallback for performance
+  const handleClearChat = useCallback(() => {
+    if (selectedProject) {
+      ChatPersistence.deleteChatData(selectedProject.id);
+      writeToTerminal('\x1b[32m✅ Chat history cleared\x1b[0m\n');
+      // Reload the page to reset chat UI
+      window.location.reload();
+    }
+  }, [selectedProject, writeToTerminal]);
+
+  // Reset project handler
+  const handleResetProject = useCallback(async () => {
+    if (selectedProject) {
+      try {
+        writeToTerminal('\n\x1b[33m🔄 Resetting project...\x1b[0m\n');
+
+        // Stop the project first
+        await stopProject(selectedProject);
+
+        // Force cleanup
+        await webContainerManager.forceCleanup(writeToTerminal);
+
+        writeToTerminal('\x1b[32m✅ Project reset complete. You can now start fresh.\x1b[0m\n\n');
+      } catch (error) {
+        console.error('Failed to reset project:', error);
+        writeToTerminal('\x1b[31m❌ Failed to reset project. Please try refreshing the page.\x1b[0m\n');
+      }
+    }
+  }, [selectedProject, webContainer, writeToTerminal]);
+
+  // Auto-save handler for tool operations
+  const handleAutoSaveProject = useCallback(async (updatedFiles: FileNode[]) => {
+    if (selectedProject) {
+      try {
+        await saveProjectToDB(selectedProject, updatedFiles);
+      } catch (error) {
+        console.error('Auto-save failed:', error);
+      }
+    }
+  }, [selectedProject, saveProjectToDB]);
+
   // Create LumaTools instance for AI operations (after all handlers are defined)
+  // IMPORTANT: Include selectedProject?.id to force recreation when switching projects
   const lumaTools = useMemo(() => {
     const tools = createLumaTools({
       webContainer,
@@ -1079,59 +1797,133 @@ This is a browser security requirement for WebContainer.`;
       onFileSelect: handleFileSelect,
       onTerminalWrite: writeToTerminal,
       workingDirectory: selectedProject?.name || '.',
-      onRefreshFileTree: refreshFileTree
+      onRefreshFileTree: refreshFileTree,
+      onSaveProject: handleAutoSaveProject
     });
-    
+
     return tools;
-  }, [webContainer, files, selectedProject?.name, handleFileSelect, writeToTerminal, refreshFileTree]);
+  }, [webContainer, files, selectedProject?.id, selectedProject?.name, handleFileSelect, writeToTerminal, refreshFileTree, handleAutoSaveProject]);
+
+  // Auto-start project preview after loading overlay closes
+  const wasLoadingRef = useRef(false);
+  const hasAutoStartedRef = useRef(false);
+
+  useEffect(() => {
+    const isCurrentlyLoading = projectLoadingState.isLoading;
+    const wasLoading = wasLoadingRef.current;
+
+    // Detect transition from loading -> not loading
+    const justFinishedLoading = wasLoading && !isCurrentlyLoading;
+
+    // Only auto-start once per project load
+    if (justFinishedLoading &&
+        selectedProject &&
+        selectedProject.status === 'idle' &&
+        !hasAutoStartedRef.current) {
+
+      console.log('🚀 Loading completed, auto-starting project:', selectedProject.name);
+
+      // Small delay to ensure overlay is completely dismissed
+      setTimeout(() => {
+        writeToTerminal('\x1b[36m🚀 Auto-starting project preview...\x1b[0m\n');
+        startProject(selectedProject);
+      }, 300);
+
+      // Mark that we've auto-started
+      hasAutoStartedRef.current = true;
+    }
+
+    // Update ref for next check
+    wasLoadingRef.current = isCurrentlyLoading;
+  }, [projectLoadingState.isLoading, selectedProject, writeToTerminal]);
+
+  // Reset auto-start flag when project changes
+  useEffect(() => {
+    hasAutoStartedRef.current = false;
+  }, [selectedProject?.id]);
+
+  // Render loading overlay at top level (always visible when loading)
+  const loadingOverlay = (
+    <ProjectLoadingOverlay
+      loadingState={projectLoadingState}
+      projectName={selectedProject?.name || 'Project'}
+    />
+  );
+
+  // Show manager page if no project selected or user clicked "Projects" button
+  // Don't show manager if we're loading (overlay will cover it, but project UI renders underneath)
+  if ((showManagerPage || !selectedProject) && !projectLoadingState.isLoading) {
+    return (
+      <div className="h-[calc(100vh-3rem)]  overflow-hidden">
+        <ProjectManager
+          projects={projects}
+          onSelectProject={handleProjectSelect}
+          onDeleteProject={handleDeleteProject}
+          onCreateNew={handleCreateNewProject}
+        />
+
+        {/* Create Project Modal */}
+        <CreateProjectModal
+          isOpen={isCreateModalOpen}
+          onClose={handleCloseCreateModal}
+          onCreateProject={handleCreateProject}
+          scaffoldProgress={scaffoldProgress}
+        />
+      </div>
+    );
+  }
 
   return (
-    <div className="h-[89vh] bg-gradient-to-br from-white to-sakura-50 dark:from-gray-900 dark:to-gray-800 overflow-hidden relative">
-      {/* Wallpaper Background */}
-      {wallpaperUrl && (
-        <div 
-          className="absolute top-0 left-0 right-0 bottom-0 z-0"
-          style={{
-            backgroundImage: `url(${wallpaperUrl})`,
-            backgroundSize: 'cover',
-            backgroundPosition: 'center',
-            opacity: 0.1,
-            filter: 'blur(1px)',
-            pointerEvents: 'none'
-          }}
-        />
-      )}
+    <>
+      {loadingOverlay}
+      {/* h-screen makes black empty space below since we have topbar - changed to h-[100vh] - w-screen - the side bar is 5rem wide */}
+      <div className="h-[calc(100vh-3rem)] w-[calc(100%)] overflow-hidden bg-gradient-to-br from-white to-sakura-50 dark:from-gray-900 dark:to-gray-800 relative">
+        {/* Wallpaper Background - Absolute positioned, doesn't affect layout */}
+        {wallpaperUrl && (
+          <div
+            className="absolute inset-0 z-0"
+            style={{
+              backgroundImage: `url(${wallpaperUrl})`,
+              backgroundSize: 'cover',
+              backgroundPosition: 'center',
+              opacity: 0.15,
+              filter: 'blur(2px)',
+              pointerEvents: 'none'
+            }}
+          />
+        )}
 
-      {/* Content with relative z-index */}
-      <div className="relative z-10 h-full">
-        {/* Scaffold Progress - Overlay */}
+      {/* Main Content Layer - Takes full height/width but width - 2rem for sidebar */}
+      <div className="relative z-10 h-[calc(100vh-3rem)] w-[calc(100%)] flex flex-col">
+        {/* Scaffold Progress Overlay - Positioned absolutely over content */}
         {scaffoldProgress && !scaffoldProgress.isComplete && (
-          <div className="absolute top-4 left-4 right-4 z-50 p-4 glassmorphic rounded-xl border border-white/30 dark:border-gray-700/50 shadow-xl backdrop-blur-lg">
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-sm font-semibold text-sakura-800 dark:text-sakura-200">
-                {scaffoldProgress.stepName}
-              </span>
-              <span className="text-xs px-2 py-1 bg-sakura-100 dark:bg-sakura-900/30 text-sakura-700 dark:text-sakura-300 rounded-full font-medium">
-                {scaffoldProgress.currentStep}/{scaffoldProgress.totalSteps}
-              </span>
+          <div className="absolute top-6 left-1/2 transform -translate-x-1/2 z-50 w-full max-w-xl px-4">
+            <div className="glassmorphic rounded-xl shadow-2xl p-4">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-sm font-semibold text-sakura-800 dark:text-sakura-200">
+                  {scaffoldProgress.stepName}
+                </span>
+                <span className="text-xs px-2 py-1 bg-sakura-100 dark:bg-sakura-900/30 text-sakura-700 dark:text-sakura-300 rounded-full font-medium">
+                  {scaffoldProgress.currentStep}/{scaffoldProgress.totalSteps}
+                </span>
+              </div>
+              <div className="w-full bg-sakura-100 dark:bg-sakura-900/20 rounded-full h-2 mb-2 overflow-hidden">
+                <div 
+                  className="bg-gradient-to-r from-sakura-500 to-pink-500 h-full rounded-full transition-all duration-500"
+                  style={{ width: `${(scaffoldProgress.currentStep / scaffoldProgress.totalSteps) * 100}%` }}
+                />
+              </div>
+              <p className="text-xs text-sakura-600 dark:text-sakura-400">
+                {scaffoldProgress.stepDescription}
+              </p>
             </div>
-            <div className="w-full bg-sakura-100 dark:bg-sakura-900/20 rounded-full h-2.5 mb-2 overflow-hidden">
-              <div 
-                className="bg-gradient-to-r from-sakura-500 to-pink-500 h-full rounded-full transition-all duration-500 ease-out shadow-sm"
-                style={{ width: `${(scaffoldProgress.currentStep / scaffoldProgress.totalSteps) * 100}%` }}
-              ></div>
-            </div>
-            <p className="text-xs text-sakura-600 dark:text-sakura-400 leading-relaxed">
-              {scaffoldProgress.stepDescription}
-            </p>
           </div>
         )}
       
-              {/* Main Layout */}
-        <div className="h-full flex flex-col">
-          {/* Enhanced Header - Glassmorphic Design */}
-          {selectedProject && (
-            <div className="glassmorphic border-b border-white/20 dark:border-gray-700/50 shrink-0 h-12 flex items-center justify-between px-4">
+        {/* Header - Fixed height, full width */}
+        {selectedProject && (
+          <header className="h-12 shrink-0 glassmorphic border-b border-white/10 dark:border-gray-800/50">
+            <div className="h-full px-4 flex items-center justify-between">
               <div className="flex items-center gap-3">
                 <div className="flex items-center gap-2">
                   <div className="w-2 h-2 bg-gradient-to-r from-sakura-500 to-pink-500 rounded-full animate-pulse"></div>
@@ -1144,23 +1936,38 @@ This is a browser security requirement for WebContainer.`;
                     </span>
                   )}
                 </div>
-                
+
                 <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => setIsProjectSelectionModalOpen(true)}
-                    className="flex items-center gap-1 px-2 py-1 text-xs glassmorphic-card border border-white/30 dark:border-gray-700/50 text-gray-700 dark:text-gray-300 hover:text-sakura-600 dark:hover:text-sakura-400 rounded-lg transition-colors"
-                  >
-                    <FolderOpen className="w-3 h-3" />
-                    Switch
-                  </button>
-                  
-                  <button
-                    onClick={() => setIsCreateModalOpen(true)}
-                    className="flex items-center gap-1 px-2 py-1 text-xs bg-gradient-to-r from-sakura-500 to-pink-500 text-white rounded-lg hover:from-sakura-600 hover:to-pink-600 transition-all shadow-sm"
-                  >
-                    <Plus className="w-3 h-3" />
-                    New
-                  </button>
+                  {projectViewMode === 'play' ? (
+                    <button
+                      onClick={() => {
+                        setProjectViewMode('edit');
+                        setRightPanelMode('editor');
+                      }}
+                      className="flex items-center gap-1 px-3 py-1.5 text-xs bg-gradient-to-r from-blue-500 to-blue-600 dark:from-sakura-500 dark:to-sakura-600 text-white rounded-lg hover:from-blue-600 hover:to-blue-700 dark:hover:from-sakura-600 dark:hover:to-sakura-700 transition-all shadow-lg"
+                    >
+                      <Code className="w-3 h-3" />
+                      Back to Editor
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => setShowManagerPage(true)}
+                        className="flex items-center gap-1 px-2 py-1 text-xs glassmorphic-card text-gray-700 dark:text-gray-300 hover:text-sakura-600 dark:hover:text-sakura-400 rounded-lg transition-colors"
+                      >
+                        <FolderOpen className="w-3 h-3" />
+                        Projects
+                      </button>
+
+                      <button
+                        onClick={() => setIsCreateModalOpen(true)}
+                        className="flex items-center gap-1 px-2 py-1 text-xs bg-gradient-to-r from-sakura-500 to-pink-500 text-white rounded-lg hover:from-sakura-600 hover:to-pink-600 transition-all shadow-lg"
+                      >
+                        <Plus className="w-3 h-3" />
+                        New
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
               
@@ -1168,7 +1975,7 @@ This is a browser security requirement for WebContainer.`;
                 {selectedProject.status === 'running' && (
                   <button
                     onClick={() => stopProject(selectedProject)}
-                    className="flex items-center gap-1 px-3 py-1.5 text-xs bg-gradient-to-r from-red-500 to-red-600 text-white rounded-lg hover:from-red-600 hover:to-red-700 transition-all shadow-sm"
+                    className="flex items-center gap-1 px-3 py-1.5 text-xs bg-gradient-to-r from-red-500 to-red-600 text-white rounded-lg hover:from-red-600 hover:to-red-700 transition-all shadow-lg"
                   >
                     <Square className="w-3 h-3" />
                     Stop
@@ -1179,7 +1986,7 @@ This is a browser security requirement for WebContainer.`;
                   <button
                     onClick={() => startProject(selectedProject)}
                     disabled={isStarting}
-                    className="flex items-center gap-1 px-3 py-1.5 text-xs bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg hover:from-green-600 hover:to-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm"
+                    className="flex items-center gap-1 px-3 py-1.5 text-xs bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg hover:from-green-600 hover:to-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg"
                   >
                     {isStarting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
                     {isStarting ? 'Starting...' : 'Start'}
@@ -1188,336 +1995,80 @@ This is a browser security requirement for WebContainer.`;
                   <button
                     onClick={() => startProject(selectedProject)}
                     disabled={isStarting}
-                    className="flex items-center gap-1 px-3 py-1.5 text-xs bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg hover:from-green-600 hover:to-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm"
+                    className="flex items-center gap-1 px-3 py-1.5 text-xs bg-gradient-to-r from-green-500 to-green-600 text-white rounded-lg hover:from-green-600 hover:to-green-700 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-lg"
                   >
                     {isStarting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Play className="w-3 h-3" />}
                     {isStarting ? 'Starting...' : 'Start'}
                   </button>
                 )}
-                
-                {selectedProject.previewUrl && (
-                  <button
-                    onClick={() => window.open(selectedProject.previewUrl, '_blank')}
-                    className="p-2 glassmorphic-card border border-white/30 dark:border-gray-700/50 text-gray-600 dark:text-gray-400 hover:text-sakura-500 dark:hover:text-sakura-400 rounded-lg transition-colors"
-                    title="Open in new tab"
-                  >
-                    <ExternalLink className="w-3 h-3" />
-                  </button>
-                )}
               </div>
             </div>
+          </header>
+        )}
+
+        {/* Main Content - Flex grow, contains chat and workspace */}
+        <main className="w-full flex-1 flex overflow-hidden min-h-0">
+          {/* Left Panel - Chat (25% width, fixed) - Hidden in play mode */}
+          {projectViewMode === 'edit' && (
+            <aside className="w-1/4 max-w-[25%] h-full shrink-0 overflow-hidden border-r border-white/10 dark:border-gray-800/50">
+              <ChatWindow
+                selectedFile={selectedFile}
+                fileContent={selectedFileContent}
+                files={files}
+                onFileContentChange={handleFileContentChange}
+                onFileSelect={handleFileSelect}
+                workingDirectory={selectedProject?.name || '.'}
+                lumaTools={lumaTools}
+                projectId={selectedProject?.id || 'no-project'}
+                projectName={selectedProject?.name || 'No Project'}
+                refreshFileTree={refreshFileTree}
+                onCheckConsoleErrors={checkPreviewConsoleErrors}
+              />
+            </aside>
           )}
 
-        {/* Main Content Area - Three Panel Layout */}
-        <div 
-          ref={(el) => {
-            // Store reference for resize calculations
-            if (el) {
-              el.setAttribute('data-resize-container', 'true');
-            }
-          }}
-          className={`flex overflow-hidden ${selectedProject ? 'h-[calc(89vh-2rem)]' : 'h-[89vh]'}`}
-        >
-          {/* Project Content */}
-          <div className="flex flex-1 overflow-hidden h-full">
-      {selectedProject ? (
-            <>
-              {/* Left Panel - File Explorer Only */}
-              <div 
-                className="flex flex-col glassmorphic border-r border-white/20 dark:border-gray-700/50 h-full"
-                style={{ 
-                  width: `${leftPanel.percentage}%`,
-                  backgroundColor: leftPanel.isResizing ? 'rgba(254, 226, 226, 0.3)' : '' // Debug: translucent red tint when resizing
-                }}
-                onMouseEnter={() => console.log('🔧 RESIZE DEBUG - Left panel hover, width:', `${leftPanel.percentage}%`)}
-              >
-                {/* Explorer Header */}
-                <div className="flex items-center gap-2 px-3 py-2 text-xs font-semibold text-gray-700 dark:text-gray-200 glassmorphic-card border-b border-white/20 dark:border-gray-700/50 shrink-0 h-10">
-                  <FolderOpen className="w-4 h-4 text-sakura-500" />
-                  <span>Explorer</span>
-                  <div className="ml-auto text-xs px-2 py-0.5 bg-sakura-100 dark:bg-sakura-900/30 text-sakura-700 dark:text-sakura-300 rounded-full">
-                    {files.length}
-                  </div>
-                </div>
-
-                {/* File Explorer Content */}
-                <div className="flex-1 overflow-auto min-h-0 p-2">
-                                  <FileExplorer
-                  files={files}
-                  selectedFile={selectedFile}
-                  onFileSelect={handleFileSelect}
-                  expandedFolders={expandedFolders}
-                  onToggleFolder={handleToggleFolder}
-                  onCreateFile={handleCreateFile}
-                  onCreateFolder={handleCreateFolder}
-                  onDeleteFile={handleDeleteFile}
-                  onDeleteFolder={handleDeleteFolder}
-                  onRenameFile={handleRenameFile}
-                  onDuplicateFile={handleDuplicateFile}
-                />
-                </div>
-              </div>
-
-              {/* Left Panel Resize Handle */}
-              <ResizeHandle
-                direction="horizontal"
-                onMouseDown={(e) => {
-                  console.log('🔧 RESIZE DEBUG - Left resize handle clicked', e);
-                  leftPanel.startResize(e);
-                }}
-                isResizing={leftPanel.isResizing}
-              />
-          
-          {/* Center Panel - Tabbed Interface */}
-              <div 
-                className="min-w-0 glassmorphic flex flex-col h-full"
-                style={{ width: `${middlePanelPercentage}%` }}
-              >
-                {/* Tab Headers */}
-                <div className="flex items-center border-b border-white/20 dark:border-gray-700/50 glassmorphic-card shrink-0 h-10">
-                  <button
-                    onClick={() => setActiveTab('editor')}
-                    className={`flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-t-lg border-b-2 h-full transition-all ${
-                      activeTab === 'editor'
-                        ? 'border-sakura-500 text-sakura-600 dark:text-sakura-400 bg-gradient-to-b from-sakura-50 to-transparent dark:from-sakura-900/20 dark:to-transparent'
-                        : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/30'
-                    }`}
-                  >
-                    <Code className="w-4 h-4" />
-                    <span>Editor</span>
-                  </button>
-                  
-                  {selectedProject && (
-                    <button
-                      onClick={() => setActiveTab('preview')}
-                      className={`flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-t-lg border-b-2 h-full transition-all ${
-                        activeTab === 'preview'
-                          ? 'border-sakura-500 text-sakura-600 dark:text-sakura-400 bg-gradient-to-b from-sakura-50 to-transparent dark:from-sakura-900/20 dark:to-transparent'
-                          : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/30'
-                      }`}
-                    >
-                      <Eye className="w-4 h-4" />
-                      <span>Preview</span>
-                      {selectedProject.status === 'running' && (
-                        <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse shadow-sm"></div>
-                      )}
-                    </button>
-                  )}
-                  
-                  <button
-                    onClick={() => setActiveTab('terminal')}
-                    className={`flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-t-lg border-b-2 h-full transition-all ${
-                      activeTab === 'terminal'
-                        ? 'border-sakura-500 text-sakura-600 dark:text-sakura-400 bg-gradient-to-b from-sakura-50 to-transparent dark:from-sakura-900/20 dark:to-transparent'
-                        : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/30'
-                    }`}
-                  >
-                    <MessageSquare className="w-4 h-4" />
-                    <span>Terminal</span>
-                  </button>
-                </div>
-                
-                {/* Tab Content */}
-                <div className="flex-1 overflow-hidden min-h-0">
-                  {activeTab === 'editor' && (
-                    <MonacoEditor
-                      content={selectedFileContent}
-                      fileName={selectedFile || 'No file selected'}
-                      onChange={handleFileContentChange}
-                      isPreviewVisible={false}
-                      onTogglePreview={() => setActiveTab('preview')}
-                      showPreviewToggle={selectedProject !== null}
-                      projectFiles={files}
-                      webContainer={webContainer}
-                    />
-                  )}
-                  
-                  {activeTab === 'preview' && selectedProject && (
-                    <PreviewPane
-                      project={selectedProject}
-                      isStarting={isStarting}
-                      onStartProject={startProject}
-                    />
-                  )}
-                  
-                  {activeTab === 'terminal' && (
-                    <TerminalComponent
-                      webContainer={webContainer}
-                      isVisible={true}
-                      onToggle={() => setActiveTab('editor')}
-                      terminalRef={terminalRef}
-                    />
-                  )}
-                </div>
-              </div>
-
-              {/* Right Panel Resize Handle */}
-              <ResizeHandle
-                direction="horizontal"
-                onMouseDown={(e) => {
-                  console.log('🔧 RESIZE DEBUG - Right resize handle clicked', e);
-                  rightPanel.startResize(e);
-                }}
-                isResizing={rightPanel.isResizing}
-              />
-          
-                        {/* Chat Panel */}
-              <div 
-                className="glassmorphic border-l border-white/20 dark:border-gray-700/50 h-full overflow-hidden"
-                style={{ 
-                  width: `${rightPanel.percentage}%`,
-                  backgroundColor: rightPanel.isResizing ? 'rgba(254, 226, 226, 0.3)' : '' // Debug: translucent red tint when resizing
-                }}
-                onMouseEnter={() => console.log('🔧 RESIZE DEBUG - Right panel hover, width:', `${rightPanel.percentage}%`)}
-              >
-                <ChatWindow
-                  selectedFile={selectedFile}
-                  fileContent={selectedFileContent}
-                  files={files}
-                  onFileContentChange={handleFileContentChange}
-                  onFileSelect={handleFileSelect}
-                  workingDirectory={selectedProject?.name || '.'}
-                  lumaTools={lumaTools}
-                  projectId={selectedProject?.id}
-                  projectName={selectedProject?.name}
-                  refreshFileTree={refreshFileTree}
-                />
-                </div>
-            </>
-            ) : (
-              <>
-                {/* Left Panel - Empty Explorer */}
-                <div 
-                  className="flex flex-col glassmorphic border-r border-white/20 dark:border-gray-700/50 h-full"
-                  style={{ width: `${leftPanel.percentage}%` }}
-                >
-                  <div className="flex items-center gap-2 px-3 py-2 text-xs font-semibold text-gray-700 dark:text-gray-200 glassmorphic-card border-b border-white/20 dark:border-gray-700/50 shrink-0 h-10">
-                    <FolderOpen className="w-4 h-4 text-gray-400" />
-                    <span>Explorer</span>
-                  </div>
-                  <div className="flex-1 flex items-center justify-center p-4 min-h-0">
-                    <div className="text-center">
-                      <div className="w-12 h-12 mx-auto mb-3 bg-gradient-to-br from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-600 rounded-full flex items-center justify-center opacity-50">
-                        <FolderOpen className="w-6 h-6 text-gray-400" />
-                      </div>
-                      <p className="text-xs text-gray-500 dark:text-gray-400 font-medium">
-                        No project open
-                      </p>
-                    </div>
-                  </div>
-                </div>
-                
-                {/* Left Panel Resize Handle */}
-                <ResizeHandle
-                  direction="horizontal"
-                  onMouseDown={(e) => {
-                    console.log('🔧 RESIZE DEBUG - Left resize handle clicked (no project)', e);
-                    leftPanel.startResize(e);
-                  }}
-                  isResizing={leftPanel.isResizing}
-                />
-                
-                {/* Center Welcome Area - Tabbed Interface */}
-                <div 
-                  className="min-w-0 glassmorphic flex flex-col h-full"
-                  style={{ width: `${middlePanelPercentage}%` }}
-                >
-                  {/* Tab Headers */}
-                  <div className="flex items-center border-b border-white/20 dark:border-gray-700/50 glassmorphic-card shrink-0 h-10">
-                    <button
-                      onClick={() => setActiveTab('editor')}
-                      className={`flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-t-lg border-b-2 h-full transition-all ${
-                        activeTab === 'editor'
-                          ? 'border-sakura-500 text-sakura-600 dark:text-sakura-400 bg-gradient-to-b from-sakura-50 to-transparent dark:from-sakura-900/20 dark:to-transparent'
-                          : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/30'
-                      }`}
-                    >
-                      <Code className="w-4 h-4" />
-                      <span>Editor</span>
-                    </button>
-                    
-                    <button
-                      onClick={() => setActiveTab('terminal')}
-                      className={`flex items-center gap-2 px-3 py-2 text-xs font-medium rounded-t-lg border-b-2 h-full transition-all ${
-                        activeTab === 'terminal'
-                          ? 'border-sakura-500 text-sakura-600 dark:text-sakura-400 bg-gradient-to-b from-sakura-50 to-transparent dark:from-sakura-900/20 dark:to-transparent'
-                          : 'border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700/30'
-                      }`}
-                    >
-                      <MessageSquare className="w-4 h-4" />
-                      <span>Terminal</span>
-                    </button>
-                  </div>
-                  
-                  {/* Tab Content */}
-                  <div className="flex-1 overflow-hidden min-h-0">
-                    {activeTab === 'editor' && (
-                      <div className="h-full flex items-center justify-center p-8">
-                        <div className="text-center max-w-md">
-                          <div className="w-20 h-20 mx-auto mb-6 bg-gradient-to-br from-sakura-100 to-sakura-200 dark:from-sakura-900/30 dark:to-sakura-800/30 rounded-full flex items-center justify-center shadow-lg">
-                            <Code className="w-10 h-10 text-sakura-600 dark:text-sakura-400" />
-                          </div>
-                          <h3 className="text-xl font-bold text-gray-800 dark:text-gray-100 mb-3">
-                            Welcome to LumaUI
-                          </h3>
-                          <p className="text-sm text-gray-600 dark:text-gray-400 mb-6 leading-relaxed">
-                            Create powerful web applications with our intuitive project builder. Get started by creating your first project.
-                          </p>
-                          <button
-                            onClick={() => setIsCreateModalOpen(true)}
-                            className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-sakura-500 to-pink-500 text-white rounded-xl hover:from-sakura-600 hover:to-pink-600 transition-all mx-auto text-sm font-semibold shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
-                          >
-                            <Plus className="w-4 h-4" />
-                            Create New Project
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                    
-                    {activeTab === 'terminal' && (
-                      <TerminalComponent
-                        webContainer={webContainer}
-                        isVisible={true}
-                        onToggle={() => setActiveTab('editor')}
-                        terminalRef={terminalRef}
-                      />
-                    )}
-                  </div>
-                </div>
-                
-                {/* Right Panel Resize Handle */}
-                <ResizeHandle
-                  direction="horizontal"
-                  onMouseDown={(e) => {
-                    console.log('🔧 RESIZE DEBUG - Right resize handle clicked (no project)', e);
-                    rightPanel.startResize(e);
-                  }}
-                  isResizing={rightPanel.isResizing}
-                />
-                
-                {/* Right Panel - Chat (even without project) */}
-                <div 
-                  className="glassmorphic border-l border-white/20 dark:border-gray-700/50 h-full overflow-hidden"
-                  style={{ width: `${rightPanel.percentage}%` }}
-                >
-                  <ChatWindow
-                    selectedFile={null}
-                    fileContent=""
-                    files={[]}
-                    onFileContentChange={() => {}}
-                    onFileSelect={() => {}}
-                    workingDirectory="."
-                    projectId="no-project"
-                    projectName="No Project"
-                  />
-                </div>
-              </>
-            )}
-          </div>
-        </div>
+          {/* Right Panel - Workspace (75% width in edit mode, 100% in play mode) */}
+          <section className={projectViewMode === 'play' ? 'w-full h-full min-w-0 max-w-full overflow-hidden' : 'w-3/4 h-full min-w-0 max-w-[75%] overflow-hidden'}>
+            <RightPanelWorkspace
+              mode={projectViewMode === 'play' ? 'preview' : rightPanelMode}
+              onModeChange={setRightPanelMode}
+              files={files}
+              selectedFile={selectedFile}
+              onFileSelect={handleFileSelect}
+              expandedFolders={expandedFolders}
+              onToggleFolder={handleToggleFolder}
+              onCreateFile={handleCreateFile}
+              onCreateFolder={handleCreateFolder}
+              onDeleteFile={handleDeleteFile}
+              onDeleteFolder={handleDeleteFolder}
+              onRenameFile={handleRenameFile}
+              onDuplicateFile={handleDuplicateFile}
+              onUploadFile={handleUploadFile}
+              onCopyFile={handleCopyFile}
+              onCutFile={handleCutFile}
+              selectedFileContent={selectedFileContent}
+              onFileContentChange={handleFileContentChange}
+              onEditorReady={handleEditorReady}
+              terminalRef={terminalRef}
+              webContainer={webContainer}
+              onReconnectShell={handleReconnectShell}
+              project={selectedProject}
+              isStarting={isStarting}
+              onStartProject={startProject}
+              filesReady={projectLoadingState.filesLoaded}
+              allowAutoStart={!projectLoadingState.isLoading}
+              onClearChat={handleClearChat}
+              onResetProject={handleResetProject}
+              viewMode={projectViewMode}
+              terminalOutput={terminalOutput}
+              onClearTerminal={() => setTerminalOutput([])}
+              writeToTerminal={writeToTerminal}
+            />
+          </section>
+        </main>
       </div>
 
-      {/* Project Selection Modal */}
+      {/* Modals - Outside main layout, positioned absolutely */}
       <ProjectSelectionModal
         isOpen={isProjectSelectionModalOpen}
         projects={projects}
@@ -1530,23 +2081,20 @@ This is a browser security requirement for WebContainer.`;
         onClose={() => setIsProjectSelectionModalOpen(false)}
       />
 
-      {/* Create Project Modal */}
       <CreateProjectModal
         isOpen={isCreateModalOpen}
         onClose={() => {
           setIsCreateModalOpen(false);
-          // Only reopen selection modal if user explicitly closed create modal 
-          // AND no project is currently selected AND there are existing projects
-          // Don't reopen if a project was just selected
           const shouldReopenSelection = !selectedProject && projects.length > 0 && !isProjectSelectionModalOpen;
           if (shouldReopenSelection) {
             setIsProjectSelectionModalOpen(true);
           }
         }}
         onCreateProject={handleCreateProject}
+        scaffoldProgress={scaffoldProgress}
       />
       </div>
-    </div>
+    </>
   );
 };
 

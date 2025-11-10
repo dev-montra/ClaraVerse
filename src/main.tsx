@@ -14,11 +14,12 @@ document.documentElement.classList.remove('dark');
 setupGlobalErrorHandlers();
 
 createRoot(document.getElementById('root')!).render(
-  <StrictMode>
+  // StrictMode disabled for battery optimization - causes double renders in dev mode
+  // <StrictMode>
     <ErrorBoundary>
       <App />
     </ErrorBoundary>
-  </StrictMode>
+  // </StrictMode>
 );
 
 // Signal to electron main process that React app is ready

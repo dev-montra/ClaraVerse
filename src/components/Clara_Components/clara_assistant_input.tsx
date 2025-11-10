@@ -51,15 +51,15 @@ import {
   Search,
 
   Monitor,
-  Cpu,
   RefreshCw,
   MessageSquare,
   MoreHorizontal,
-  BookOpen
+  BookOpen,
+  UserCircle2
 } from 'lucide-react';
 
 // Import types
-import { 
+import {
   ClaraInputProps,
   ClaraFileAttachment,
   ClaraFileType,
@@ -67,7 +67,8 @@ import {
   ClaraModel,
   ClaraAIConfig,
   ClaraMCPServer,
-  ClaraMessage
+  ClaraMessage,
+  ClaraPersona
 } from '../../types/clara_assistant_types';
 
 // Import PDF.js for PDF processing
@@ -97,6 +98,8 @@ import { claraApiService } from '../../services/claraApiService';
 // Import notebook service
 import { claraNotebookService } from '../../services/claraNotebookService';
 
+// Import persona service
+import { personaStorageService } from '../../services/personaStorageService';
 
 // Import notification service
 import { addErrorNotification, addInfoNotification } from '../../services/notificationService';
@@ -107,12 +110,14 @@ import { claraMemoryIntegration } from '../../services/ClaraMemoryIntegration';
 // Import image generation widget
 import ChatImageGenWidget from './ChatImageGenWidget';
 
+// Import persona components
+import PersonaDropdown from './PersonaDropdown';
+import PersonaModal from './PersonaModal';
+
 // Import command line parser types and utilities
 import { 
   ParsedModelConfig, 
   parseJsonConfiguration, 
-  updateCommandLineParameter, 
-  cleanCommandLine, 
   estimateModelTotalLayers,
   getModelMaxContextSize,
   getSafeContextSize,
@@ -537,6 +542,92 @@ const CompactProviderSelector: React.FC<{
 };
 
 /**
+ * DORMANT FUNCTION - NOT CURRENTLY USED
+ * 
+ * NOTE: Dynamic Understanding of the Model's Capability Feature
+ * 
+ * This function will be used in the future to dynamically understand and analyze
+ * the capabilities of models in Clara's Core provider. It fetches model information
+ * and properties to enable intelligent feature detection and optimization.
+ * 
+ * Future use cases:
+ * - Automatic capability detection (vision, code, tools support)
+ * - Dynamic model parameter optimization
+ * - Real-time model performance analysis
+ * - Intelligent model selection based on task requirements
+ * 
+ * Utility function to handle Clara's Core provider model selection
+ */
+const handleClarasCoreModelSelection = async (providers: ClaraProvider[], currentProvider: string, modelId: string) => {
+  // Find the current provider
+  const provider = providers.find(p => p.id === currentProvider);
+  
+  // Check if this is Clara's Core provider (by name)
+  if (!provider || provider.name !== "Clara's Core") {
+    return;
+  }
+
+  console.log('🎯 Clara\'s Core provider detected, handling model selection:', modelId);
+
+  try {
+    // Step 1: Get the /info endpoint to fetch all models
+    // Remove /v1 from baseUrl if present, then add /info
+    const baseUrlWithoutV1 = provider.baseUrl?.replace(/\/v1\/?$/, '') || provider.baseUrl;
+    const infoResponse = await fetch(`${baseUrlWithoutV1}/info`, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${provider.apiKey || 'clara-default'}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (!infoResponse.ok) {
+      console.warn('⚠️ Failed to fetch Clara\'s Core /info endpoint:', infoResponse.status);
+      return;
+    }
+
+    const infoData = await infoResponse.json();
+    console.log('📡 Clara\'s Core /info response:', infoData);
+
+    // Step 2: Find the selected model in the response
+    const selectedModelInfo = infoData.models?.find((model: any) => {
+      // Match by model name or model field
+      const cleanModelId = modelId.includes(':') ? modelId.split(':').slice(1).join(':') : modelId;
+      return model.model === cleanModelId || model.name === cleanModelId;
+    });
+
+    if (!selectedModelInfo) {
+      console.warn('⚠️ Selected model not found in Clara\'s Core response:', modelId);
+      return;
+    }
+
+    console.log('✅ Found selected model in Clara\'s Core:', selectedModelInfo);
+
+    // Step 3: Make the /props call to the model's proxy URL
+    const propsUrl = `${selectedModelInfo.proxy}/props`;
+    console.log('🔧 Making /props call to:', propsUrl);
+
+    const propsResponse = await fetch(propsUrl, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+
+    if (propsResponse.ok) {
+      const propsData = await propsResponse.json();
+      console.log('📊 Clara\'s Core model props:', propsData);
+    } else {
+      console.warn('⚠️ Failed to fetch model props:', propsResponse.status);
+    }
+
+  } catch (error) {
+    console.warn('⚠️ Error handling Clara\'s Core model selection:', error);
+    // Don't throw - this should not interrupt the normal flow
+  }
+};
+
+/**
  * Model selector component
  */
 const ModelSelector: React.FC<{
@@ -700,6 +791,7 @@ const ModelSelector: React.FC<{
                 <button
                   key={model.id}
                   onClick={() => {
+                    // Call the original model change handler
                     onModelChange(model.id);
                     setIsOpen(false);
                   }}
@@ -761,6 +853,9 @@ const OverflowMenu: React.FC<{
   // Settings
   showAdvancedOptionsPanel?: boolean;
   onAdvancedOptionsToggle?: (show?: boolean) => void;
+  // Deep thinking verification
+  deepThinkingEnabled?: boolean;
+  onDeepThinkingToggle?: () => void;
   // Trigger button ref for click-outside detection
   triggerRef?: React.RefObject<HTMLButtonElement>;
 }> = ({ 
@@ -778,6 +873,8 @@ const OverflowMenu: React.FC<{
   onNotebookModeToggle,
   showAdvancedOptionsPanel = false,
   onAdvancedOptionsToggle,
+  deepThinkingEnabled = false,
+  onDeepThinkingToggle,
   triggerRef
 }) => {
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -955,6 +1052,44 @@ const OverflowMenu: React.FC<{
             </div>
             {isNotebookMode && (
               <div className="w-2 h-2 bg-purple-500 rounded-full"></div>
+            )}
+          </button>
+
+          {/* Deep Thinking Agent */}
+          <button
+            onClick={() => {
+              onDeepThinkingToggle?.();
+              onClose();
+            }}
+            className={`w-full flex items-center gap-3 p-2 rounded-lg transition-colors text-left ${
+              deepThinkingEnabled
+                ? 'bg-blue-100 dark:bg-blue-900/30 hover:bg-blue-200 dark:hover:bg-blue-900/50'
+                : 'hover:bg-gray-100 dark:hover:bg-gray-700'
+            }`}
+          >
+            <div className={`flex-shrink-0 w-8 h-8 rounded-lg flex items-center justify-center ${
+              deepThinkingEnabled
+                ? 'bg-blue-200 dark:bg-blue-800/50'
+                : 'bg-blue-100 dark:bg-blue-900/30'
+            }`}>
+              <Brain className={`w-4 h-4 ${
+                deepThinkingEnabled
+                  ? 'text-blue-700 dark:text-blue-400'
+                  : 'text-blue-600 dark:text-blue-400'
+              }`} />
+            </div>
+            <div className="flex-1">
+              <div className="text-sm font-medium text-gray-900 dark:text-white">
+                Deep Thinking Agent {deepThinkingEnabled && (
+                  <span className="text-xs text-blue-600 dark:text-blue-400">(On)</span>
+                )}
+              </div>
+              <div className="text-xs text-gray-500 dark:text-gray-400">
+                Cross-verify completion before ending tasks
+              </div>
+            </div>
+            {deepThinkingEnabled && (
+              <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
             )}
           </button>
 
@@ -1791,7 +1926,6 @@ const AdvancedOptions: React.FC<{
     systemPrompt: false,
     models: false,
     parameters: false,
-    modelConfig: false,
     features: false,
     mcp: false,
     autonomous: false,
@@ -1803,32 +1937,6 @@ const AdvancedOptions: React.FC<{
 
   // State for advanced parameters visibility
   const [showAdvancedParameters, setShowAdvancedParameters] = useState(false);
-
-  // Model configuration state
-  const [modelConfigState, setModelConfigState] = useState<{
-    currentModel: string | null;
-    isEditing: boolean;
-    isLoading: boolean;
-    hasUnsavedChanges: boolean;
-    availableModels: ParsedModelConfig[];
-    modelMetadata: {[modelName: string]: {nativeContextSize?: number, estimatedLayers?: number}};
-    gpuInfo?: {
-      hasGPU: boolean;
-      gpuMemoryMB: number;
-      gpuMemoryGB: number;
-      gpuType: string;
-      systemMemoryGB: number;
-      platform: string;
-    };
-  }>({
-    currentModel: null,
-    isEditing: false,
-    isLoading: false,
-    hasUnsavedChanges: false,
-    availableModels: [],
-    modelMetadata: {},
-    gpuInfo: undefined
-  });
 
   // Load MCP servers when component mounts or when MCP is enabled
   useEffect(() => {
@@ -1849,195 +1957,6 @@ const AdvancedOptions: React.FC<{
 
     loadMcpServers();
   }, [aiConfig?.features.enableMCP]);
-
-  // Load model configuration information when component mounts
-  useEffect(() => {
-    const loadModelConfigInfo = async () => {
-      setModelConfigState(prev => ({ ...prev, isLoading: true }));
-      
-      try {
-        const llamaSwap = (window as any).llamaSwap;
-        if (!llamaSwap) {
-          console.warn('LlamaSwap service not available');
-          return;
-        }
-
-        // Get configuration info and model metadata
-        const [configResult, metadataResult] = await Promise.all([
-          llamaSwap.getConfigurationInfo(),
-          llamaSwap.getModelConfigurations()
-        ]);
-
-        if (configResult.success) {
-          // Parse available models from configuration
-          const availableModels = configResult.configuration?.models 
-            ? parseJsonConfiguration(configResult.configuration)
-            : [];
-
-          // Extract model metadata
-          const modelMetadata: {[modelName: string]: {nativeContextSize?: number, estimatedLayers?: number}} = {};
-          if (metadataResult.success && metadataResult.models) {
-            metadataResult.models.forEach((model: any) => {
-              modelMetadata[model.name] = {
-                nativeContextSize: model.nativeContextSize,
-                estimatedLayers: estimateModelTotalLayers(model.name, model.sizeGB)
-              };
-            });
-          }
-
-          setModelConfigState(prev => ({
-            ...prev,
-            availableModels,
-            modelMetadata,
-            gpuInfo: configResult.gpuInfo,
-            currentModel: aiConfig?.models.text || null
-          }));
-        }
-      } catch (error) {
-        console.error('Failed to load model configuration info:', error);
-      } finally {
-        setModelConfigState(prev => ({ ...prev, isLoading: false }));
-      }
-    };
-
-    loadModelConfigInfo();
-  }, [aiConfig?.models.text]);
-
-  // Model configuration handlers
-  const handleModelConfigEdit = useCallback((modelName: string) => {
-    setModelConfigState(prev => ({
-      ...prev,
-      currentModel: modelName,
-      isEditing: true,
-      hasUnsavedChanges: false
-    }));
-  }, []);
-
-  const handleModelConfigCancel = useCallback(() => {
-    setModelConfigState(prev => ({
-      ...prev,
-      isEditing: false,
-      hasUnsavedChanges: false
-    }));
-  }, []);
-
-  const handleModelConfigSave = useCallback(async (modelName: string, config: Partial<ParsedModelConfig>) => {
-    if (!modelName) return;
-    
-    setModelConfigState(prev => ({ ...prev, isLoading: true }));
-    
-    try {
-      const llamaSwap = (window as any).llamaSwap;
-      if (!llamaSwap) {
-        throw new Error('LlamaSwap service not available');
-      }
-
-      // Get current configuration
-      const configResult = await llamaSwap.getConfigurationInfo();
-      if (!configResult.success) {
-        throw new Error('Failed to get current configuration');
-      }
-
-      const currentConfig = configResult.configuration;
-      
-      // Helper function to extract clean model name
-      const getCleanModelName = (modelId: string): string => {
-        if (modelId.includes(':')) {
-          const parts = modelId.split(':');
-          if (parts.length >= 2 && parts[0].length === 36 && parts[0].includes('-')) {
-            return parts.slice(1).join(':');
-          }
-        }
-        return modelId;
-      };
-
-      // Try to find the model in configuration by multiple name variations
-      let foundModelKey = null;
-      let foundModelConfig = null;
-      const cleanModelName = getCleanModelName(modelName);
-
-      if (currentConfig?.models) {
-        // Try exact match first
-        if (currentConfig.models[modelName]) {
-          foundModelKey = modelName;
-          foundModelConfig = currentConfig.models[modelName];
-        }
-        // Try clean name match
-        else if (currentConfig.models[cleanModelName]) {
-          foundModelKey = cleanModelName;
-          foundModelConfig = currentConfig.models[cleanModelName];
-        }
-        // Try finding by cleaning all config model names
-        else {
-          for (const [configKey, configData] of Object.entries(currentConfig.models)) {
-            if (getCleanModelName(configKey) === cleanModelName) {
-              foundModelKey = configKey;
-              foundModelConfig = configData;
-              break;
-            }
-          }
-        }
-      }
-
-      if (!foundModelKey || !foundModelConfig) {
-        // List available models for debugging
-        const availableModels = currentConfig?.models ? Object.keys(currentConfig.models) : [];
-        console.error('Available models in config:', availableModels);
-        console.error('Looking for model:', modelName, 'or clean name:', cleanModelName);
-        throw new Error(`Model not found in configuration. Available models: ${availableModels.join(', ')}`);
-      }
-
-      // Update command line with new parameters
-      let updatedCmd = foundModelConfig.cmd;
-      
-      // Update each changed parameter
-      Object.entries(config).forEach(([field, value]) => {
-        if (value !== undefined && field !== 'name') {
-          updatedCmd = updateCommandLineParameter(updatedCmd, field as keyof ParsedModelConfig, value);
-        }
-      });
-
-      // Clean up the command line
-      updatedCmd = cleanCommandLine(updatedCmd);
-      
-      // Update the configuration
-      currentConfig.models[foundModelKey].cmd = updatedCmd;
-      
-      // Save the configuration and restart the model
-      const saveResult = await llamaSwap.saveConfigAndRestart(JSON.stringify(currentConfig, null, 2));
-      
-      if (saveResult.success) {
-        addInfoNotification('Model Configuration', `Model configuration updated successfully!`);
-        
-        // Reload model configuration info
-        const updatedConfigResult = await llamaSwap.getConfigurationInfo();
-        if (updatedConfigResult.success) {
-          const availableModels = updatedConfigResult.configuration?.models 
-            ? parseJsonConfiguration(updatedConfigResult.configuration)
-            : [];
-          
-          setModelConfigState(prev => ({
-            ...prev,
-            availableModels,
-            isEditing: false,
-            hasUnsavedChanges: false
-          }));
-        }
-      } else {
-        throw new Error(saveResult.error || 'Failed to save configuration');
-      }
-    } catch (error) {
-      console.error('Failed to save model configuration:', error);
-      addErrorNotification('Model Configuration Error', `Failed to save model configuration: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    } finally {
-      setModelConfigState(prev => ({ ...prev, isLoading: false }));
-    }
-  }, []);
-
-  const handleModelConfigParameterChange = useCallback((field: keyof ParsedModelConfig, value: any) => {
-    // Not used in simplified version, but keeping for compatibility
-    setModelConfigState(prev => ({ ...prev, hasUnsavedChanges: true }));
-  }, []);
 
   // Load default system prompt when provider or userInfo changes
   useEffect(() => {
@@ -2174,10 +2093,9 @@ graph TD: A-->B
 **CREATE ONLY WHEN:** Visual adds value, user requests charts/demos, data needs visualization` : '';
 
 const toolsGuidance =  `
-Always use tools when needed. 
-When using tools, be thorough and explain your actions clearly.
+Always use tools when needed, and narrate what you are doing.
 
-when you are asked for something always resort to writing a python script and running it.
+If the user request needs live data or calculations and no dedicated tool is available, fall back to the python-mcp server to run a script. Use it for things like fetching user data or performing computations, instead of returning sample code that cannot execute on the user's behalf.
 `;
 
 
@@ -2263,7 +2181,8 @@ Skip for: quick answers, simple lists
           maxToolCalls: aiConfig.autonomousAgent?.maxToolCalls || 10,
           confidenceThreshold: aiConfig.autonomousAgent?.confidenceThreshold || 0.7,
           enableChainOfThought: aiConfig.autonomousAgent?.enableChainOfThought || true,
-          enableErrorLearning: aiConfig.autonomousAgent?.enableErrorLearning || true
+          enableErrorLearning: aiConfig.autonomousAgent?.enableErrorLearning || true,
+          enableDeepThinkingVerification: aiConfig.autonomousAgent?.enableDeepThinkingVerification ?? false
         };
       } else {
         // Disabling tools: disable autonomous mode only if streaming is enabled
@@ -2279,7 +2198,8 @@ Skip for: quick answers, simple lists
             maxToolCalls: aiConfig.autonomousAgent?.maxToolCalls || 10,
             confidenceThreshold: aiConfig.autonomousAgent?.confidenceThreshold || 0.7,
             enableChainOfThought: aiConfig.autonomousAgent?.enableChainOfThought || true,
-            enableErrorLearning: aiConfig.autonomousAgent?.enableErrorLearning || true
+            enableErrorLearning: aiConfig.autonomousAgent?.enableErrorLearning || true,
+            enableDeepThinkingVerification: aiConfig.autonomousAgent?.enableDeepThinkingVerification ?? false
           };
         }
       }
@@ -2299,7 +2219,8 @@ Skip for: quick answers, simple lists
         maxToolCalls: aiConfig.autonomousAgent?.maxToolCalls || 10,
         confidenceThreshold: aiConfig.autonomousAgent?.confidenceThreshold || 0.7,
         enableChainOfThought: aiConfig.autonomousAgent?.enableChainOfThought || true,
-        enableErrorLearning: aiConfig.autonomousAgent?.enableErrorLearning || true
+        enableErrorLearning: aiConfig.autonomousAgent?.enableErrorLearning || true,
+        enableDeepThinkingVerification: aiConfig.autonomousAgent?.enableDeepThinkingVerification ?? false
       };
     }
 
@@ -2892,80 +2813,6 @@ Skip for: quick answers, simple lists
             )}
           </div>
 
-          {/* Model Configuration */}
-          <div className="space-y-2">
-            <SectionHeader
-              title="Model Configuration"
-              icon={<Cpu className="w-4 h-4 text-sakura-500" />}
-              isExpanded={expandedSections.modelConfig}
-              onToggle={() => toggleSection('modelConfig')}
-              badge={modelConfigState.currentModel ? 1 : 0}
-            />
-            
-            {expandedSections.modelConfig && (
-              <div className="p-3 bg-gray-50/50 dark:bg-gray-800/30 rounded-lg space-y-4">
-                {modelConfigState.isLoading ? (
-                  <div className="flex items-center justify-center py-4">
-                    <Loader2 className="w-5 h-5 animate-spin text-sakura-500 mr-2" />
-                    <span className="text-sm text-gray-600 dark:text-gray-400">Loading model configuration...</span>
-                  </div>
-                ) : modelConfigState.availableModels.length === 0 ? (
-                  <div className="text-center py-4">
-                    <AlertCircle className="w-8 h-8 text-gray-400 mx-auto mb-2" />
-                    <p className="text-sm text-gray-600 dark:text-gray-400">No models available for configuration</p>
-                    <p className="text-xs text-gray-500 dark:text-gray-500 mt-1">LlamaSwap service might not be running</p>
-                  </div>
-                ) : (
-                  <>
-                    {/* Current Model Display */}
-                    <div className="space-y-2">
-                      <label className="block text-xs font-medium text-gray-600 dark:text-gray-400">
-                        Selected Model - it alters the model's configuration - (Don't change it Unless you know what you are doing)
-                      </label>
-                      <div className="flex items-center gap-2">
-                        <div className="flex-1 p-2 bg-white dark:bg-gray-700 rounded text-sm text-gray-900 dark:text-white">
-                          {modelConfigState.currentModel ? 
-                            (() => {
-                              const modelId = modelConfigState.currentModel;
-                              if (modelId.includes(':')) {
-                                const parts = modelId.split(':');
-                                if (parts.length >= 2 && parts[0].length === 36 && parts[0].includes('-')) {
-                                  return parts.slice(1).join(':');
-                                }
-                              }
-                              return modelId;
-                            })() 
-                            : 'No model selected'
-                          }
-                        </div>
-                        {modelConfigState.currentModel && !modelConfigState.isEditing && (
-                          <button
-                            onClick={() => handleModelConfigEdit(modelConfigState.currentModel!)}
-                            className="px-3 py-2 bg-sakura-500 text-white rounded hover:bg-sakura-600 transition-colors text-xs"
-                          >
-                            Configure
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Show configuration for current model */}
-                    {modelConfigState.currentModel && (
-                      <SimpleModelConfig
-                        modelName={modelConfigState.currentModel}
-                        isEditing={modelConfigState.isEditing}
-                        isLoading={modelConfigState.isLoading}
-                        onEdit={() => handleModelConfigEdit(modelConfigState.currentModel!)}
-                        onSave={handleModelConfigSave}
-                        onCancel={handleModelConfigCancel}
-                      />
-                    )}
-                  </>
-                )}
-              </div>
-            )}
-          </div>
-
           {/* Features */}
           <div className="space-y-2">
             <SectionHeader
@@ -3181,7 +3028,8 @@ Skip for: quick answers, simple lists
                           maxToolCalls: 10,
                           confidenceThreshold: 0.8,
                           enableChainOfThought: false,
-                          enableErrorLearning: true
+                          enableErrorLearning: true,
+                          enableDeepThinkingVerification: false
                         };
                         
                         // When enabling autonomous agent, disable streaming mode
@@ -3311,7 +3159,8 @@ Skip for: quick answers, simple lists
                             maxToolCalls: 10,
                             confidenceThreshold: 0.8,
                             enableChainOfThought: false,
-                            enableErrorLearning: true
+                            enableErrorLearning: true,
+                            enableDeepThinkingVerification: false
                           };
                           
                           onConfigChange?.({
@@ -3346,7 +3195,8 @@ Skip for: quick answers, simple lists
                             maxToolCalls: 10,
                             confidenceThreshold: 0.8,
                             enableChainOfThought: false,
-                            enableErrorLearning: true
+                            enableErrorLearning: true,
+                            enableDeepThinkingVerification: false
                           };
                           
                           onConfigChange?.({
@@ -3377,7 +3227,8 @@ Skip for: quick answers, simple lists
                               maxToolCalls: 10,
                               confidenceThreshold: 0.8,
                               enableChainOfThought: false,
-                              enableErrorLearning: true
+                              enableErrorLearning: true,
+                              enableDeepThinkingVerification: false
                             };
                             
                             onConfigChange?.({
@@ -3407,7 +3258,8 @@ Skip for: quick answers, simple lists
                               maxToolCalls: 10,
                               confidenceThreshold: 0.8,
                               enableChainOfThought: false,
-                              enableErrorLearning: true
+                              enableErrorLearning: true,
+                              enableDeepThinkingVerification: false
                             };
                             
                             onConfigChange?.({
@@ -3437,7 +3289,8 @@ Skip for: quick answers, simple lists
                               maxToolCalls: 10,
                               confidenceThreshold: 0.8,
                               enableChainOfThought: false,
-                              enableErrorLearning: true
+                              enableErrorLearning: true,
+                              enableDeepThinkingVerification: false
                             };
                             
                             onConfigChange?.({
@@ -3871,19 +3724,82 @@ const ClaraAssistantInput: React.FC<ClaraInputProps> = ({
   const notebookDropdownRef = useRef<HTMLDivElement>(null); // For notebook dropdown click-outside detection
   const screenDropdownRef = useRef<HTMLDivElement>(null); // For screen dropdown click-outside detection
 
-  // Model preloading state
+  /**
+   * Model Preloading for llama-swap optimization
+   *
+   * llama-swap unloads models from VRAM when idle and loads them on-demand.
+   * This preloading mechanism loads the model while the user is typing,
+   * reducing perceived latency when they send the message.
+   *
+   * Protections:
+   * - 500ms debounce: Only triggers after user stops typing for 500ms
+   * - 30s cooldown: Prevents rapid successive preloads
+   * - Deduplication: Skips if preload already in progress
+   * - AbortController: Cancels preload if user sends message or clears input
+   * - Single trigger: Only debounced typing triggers preload (no onFocus/onInput)
+   */
   const [hasPreloaded, setHasPreloaded] = useState(false);
   const preloadTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const preloadCooldownRef = useRef<number>(0); // Timestamp of last preload
+  const isPreloadingRef = useRef<boolean>(false); // Track in-flight preload requests
+  const preloadAbortControllerRef = useRef<AbortController | null>(null); // Cancel in-flight preloads
+  const PRELOAD_COOLDOWN_MS = 30000; // 30 seconds cooldown between preloads
 
   // Streaming vs Tools mode state
   const [isStreamingMode, setIsStreamingMode] = useState(
     sessionConfig?.aiConfig?.features.enableStreaming ?? false
   );
 
+  // Deep thinking verification state
+  const [deepThinkingEnabled, setDeepThinkingEnabled] = useState(
+    sessionConfig?.aiConfig?.autonomousAgent?.enableDeepThinkingVerification ?? false
+  );
+
   // Voice chat state - simplified for transcription only
   const [showVoiceChat, setShowVoiceChat] = useState(false);
   const [isVoiceChatEnabled, setIsVoiceChatEnabled] = useState(false);
   const [isVoiceProcessing, setIsVoiceProcessing] = useState(false);
+
+  // Sync deep thinking state with external config changes
+  useEffect(() => {
+    setDeepThinkingEnabled(sessionConfig?.aiConfig?.autonomousAgent?.enableDeepThinkingVerification ?? false);
+  }, [sessionConfig?.aiConfig?.autonomousAgent?.enableDeepThinkingVerification]);
+
+  // Deep thinking toggle handler
+  const handleDeepThinkingToggle = useCallback(() => {
+    const existingAutonomous = sessionConfig?.aiConfig?.autonomousAgent;
+    const currentValue = existingAutonomous?.enableDeepThinkingVerification ?? false;
+    const newValue = !currentValue;
+    setDeepThinkingEnabled(newValue);
+
+    if (!sessionConfig?.aiConfig) {
+      return;
+    }
+
+    const baseAutonomous = existingAutonomous || {
+      enabled: true,
+      maxRetries: 3,
+      retryDelay: 1000,
+      enableSelfCorrection: true,
+      enableToolGuidance: true,
+      enableProgressTracking: true,
+      maxToolCalls: 10,
+      confidenceThreshold: 0.7,
+      enableChainOfThought: true,
+      enableErrorLearning: true,
+      enableDeepThinkingVerification: false,
+    };
+
+    onConfigChange?.({
+      aiConfig: {
+        ...sessionConfig.aiConfig,
+        autonomousAgent: {
+          ...baseAutonomous,
+          enableDeepThinkingVerification: newValue,
+        },
+      },
+    });
+  }, [sessionConfig?.aiConfig, onConfigChange]);
 
   // Overflow menu state
   const [showOverflowMenu, setShowOverflowMenu] = useState(false);
@@ -3922,7 +3838,7 @@ const ClaraAssistantInput: React.FC<ClaraInputProps> = ({
   const [showProviderOfflineModal, setShowProviderOfflineModal] = useState(false);
   const [providerOfflineMessage, setProviderOfflineMessage] = useState('');
   const [offlineProvider, setOfflineProvider] = useState<ClaraProvider | null>(null);
-  const [showClaraCoreOffer, setShowClaraCoreOffer] = useState(false);
+  const [alternativeProviders, setAlternativeProviders] = useState<ClaraProvider[]>([]);
 
   // Screen sharing state
   const [isScreenSharing, setIsScreenSharing] = useState(false);
@@ -3943,6 +3859,15 @@ const ClaraAssistantInput: React.FC<ClaraInputProps> = ({
   const [showNotebookDropdown, setShowNotebookDropdown] = useState(false);
   const [isLoadingNotebooks, setIsLoadingNotebooks] = useState(false);
   const [isQueryingNotebook, setIsQueryingNotebook] = useState(false);
+
+  // Persona state
+  const [personas, setPersonas] = useState<ClaraPersona[]>([]);
+  const [activePersonaId, setActivePersonaId] = useState<string>('default');
+  const [showPersonaDropdown, setShowPersonaDropdown] = useState(false);
+  const [showPersonaModal, setShowPersonaModal] = useState(false);
+  const [personaModalMode, setPersonaModalMode] = useState<'create' | 'edit'>('create');
+  const [editingPersona, setEditingPersona] = useState<ClaraPersona | undefined>(undefined);
+  const personaButtonRef = useRef<HTMLButtonElement>(null);
 
   // Progress tracking state for context loading feedback
   const [progressState, setProgressState] = useState<{
@@ -4161,6 +4086,53 @@ const ClaraAssistantInput: React.FC<ClaraInputProps> = ({
     }
   }, [sessionConfig?.aiConfig?.provider]);
 
+  // Load personas on mount
+  useEffect(() => {
+    const storage = personaStorageService.loadPersonas();
+    setPersonas(storage.personas);
+    setActivePersonaId(storage.activePersonaId);
+  }, []);
+
+  // Persona handlers
+  const handlePersonaChange = useCallback((personaId: string) => {
+    personaStorageService.setActivePersona(personaId);
+    setActivePersonaId(personaId);
+    addInfoNotification('Persona Changed', `Switched to ${personaStorageService.getPersonaById(personaId)?.name || 'Unknown'} persona`);
+  }, []);
+
+  const handlePersonaEdit = useCallback((persona: ClaraPersona) => {
+    setEditingPersona(persona);
+    setPersonaModalMode('edit');
+    setShowPersonaModal(true);
+  }, []);
+
+  const handlePersonaDelete = useCallback((personaId: string) => {
+    try {
+      personaStorageService.deletePersona(personaId);
+      const storage = personaStorageService.loadPersonas();
+      setPersonas(storage.personas);
+      setActivePersonaId(storage.activePersonaId);
+      addInfoNotification('Persona Deleted', 'Persona has been deleted successfully');
+    } catch (error) {
+      addErrorNotification('Delete Failed', error instanceof Error ? error.message : 'Failed to delete persona');
+    }
+  }, []);
+
+  const handleCreatePersona = useCallback(() => {
+    setEditingPersona(undefined);
+    setPersonaModalMode('create');
+    setShowPersonaModal(true);
+  }, []);
+
+  const handlePersonaSave = useCallback((persona: ClaraPersona) => {
+    const storage = personaStorageService.loadPersonas();
+    setPersonas(storage.personas);
+    // Set the newly created/edited persona as active
+    setActivePersonaId(persona.id);
+    personaStorageService.setActivePersona(persona.id);
+    addInfoNotification('Persona Saved', `${personaModalMode === 'create' ? 'Created' : 'Updated'} persona: ${persona.name}`);
+  }, [personaModalMode]);
+
   // Sync streaming mode state with session config changes
   useEffect(() => {
     if (sessionConfig?.aiConfig?.features) {
@@ -4359,43 +4331,75 @@ const ClaraAssistantInput: React.FC<ClaraInputProps> = ({
     }
     
 
-    
-    // Trigger model preloading when user starts typing (debounced) - COMPLETELY SILENT
+
+    // Trigger model preloading when user starts typing (debounced with cooldown)
     if (value.trim() && !hasPreloaded && onPreloadModel && !isLoading) {
       // Clear any existing timeout
       if (preloadTimeoutRef.current) {
         clearTimeout(preloadTimeoutRef.current);
       }
-      
+
       // Set a debounced timeout to trigger preloading
       preloadTimeoutRef.current = setTimeout(() => {
-        console.log('🚀 User started typing, preloading model silently...');
-        // Removed setIsPreloading(true) - no UI feedback during preload
-        onPreloadModel();
+        const now = Date.now();
+        const timeSinceLastPreload = now - preloadCooldownRef.current;
+
+        // Check cooldown period and if already preloading
+        if (timeSinceLastPreload < PRELOAD_COOLDOWN_MS) {
+          console.log(`⏳ Preload cooldown active (${Math.ceil((PRELOAD_COOLDOWN_MS - timeSinceLastPreload) / 1000)}s remaining)`);
+          return;
+        }
+
+        if (isPreloadingRef.current) {
+          console.log('⏸️ Preload already in progress, skipping...');
+          return;
+        }
+
+        console.log('🚀 User started typing, preloading model (llama-swap optimization)...');
+        isPreloadingRef.current = true;
+        preloadCooldownRef.current = now;
+
+        // Create new AbortController for this preload request
+        preloadAbortControllerRef.current = new AbortController();
+
+        // Call preload and track completion
+        Promise.resolve(onPreloadModel()).finally(() => {
+          isPreloadingRef.current = false;
+          preloadAbortControllerRef.current = null;
+        });
+
         setHasPreloaded(true);
-        
-        // No UI feedback timeout needed anymore
       }, 500); // 500ms debounce delay
     }
   }, [hasPreloaded, onPreloadModel, isLoading, showAdvancedOptionsPanel, onAdvancedOptionsToggle]);
 
-  // Reset preload state when input is cleared or message is sent
+  // Reset preload state when input is cleared (but respect cooldown)
   useEffect(() => {
     if (!input.trim()) {
       setHasPreloaded(false);
-      // Removed setIsPreloading(false) - no UI feedback needed
       if (preloadTimeoutRef.current) {
         clearTimeout(preloadTimeoutRef.current);
         preloadTimeoutRef.current = null;
       }
+      // Abort any in-flight preload when input is cleared
+      if (preloadAbortControllerRef.current) {
+        console.log('🛑 Aborting in-flight preload (input cleared)');
+        preloadAbortControllerRef.current.abort();
+        preloadAbortControllerRef.current = null;
+        isPreloadingRef.current = false;
+      }
+      // Don't reset cooldown timer - it continues to prevent rapid re-preloads
     }
   }, [input]);
 
-  // Cleanup timeout on unmount
+  // Cleanup timeout and abort controller on unmount
   useEffect(() => {
     return () => {
       if (preloadTimeoutRef.current) {
         clearTimeout(preloadTimeoutRef.current);
+      }
+      if (preloadAbortControllerRef.current) {
+        preloadAbortControllerRef.current.abort();
       }
     };
   }, []);
@@ -4499,25 +4503,39 @@ const ClaraAssistantInput: React.FC<ClaraInputProps> = ({
     // **NEW**: Backend document text extraction with frontend fallback
     const extractTextViaBackend = async (file: File): Promise<string | null> => {
       try {
+        // Get Python Backend URL dynamically
+        let backendUrl = 'http://localhost:5001';
+        try {
+          if ((window as any).electronAPI?.getPythonBackendUrl) {
+            const result = await (window as any).electronAPI.getPythonBackendUrl();
+            if (result.success && result.url) {
+              backendUrl = result.url;
+            }
+          }
+        } catch (error) {
+          console.warn('Failed to get Python Backend URL, using default:', error);
+        }
+
         // Check if backend is available by trying a health check first
-        const healthResponse = await fetch('http://localhost:5001/health', { 
+        const healthResponse = await fetch(`${backendUrl}/health`, {
           method: 'GET',
           signal: AbortSignal.timeout(2000) // 2 second timeout
         });
-        
+
         if (!healthResponse.ok) {
           console.log('🔄 Backend not available, falling back to frontend processing');
           return null;
         }
-        
+
         console.log(`🚀 Attempting backend text extraction for: ${file.name}`);
-        
+        console.log(`📄 [Extract] Using Python Backend URL: ${backendUrl}`);
+
         // Create FormData for file upload
         const formData = new FormData();
         formData.append('file', file);
-        
+
         // Send to backend extraction endpoint
-        const response = await fetch('http://localhost:5001/extract-text', {
+        const response = await fetch(`${backendUrl}/extract-text`, {
           method: 'POST',
           body: formData,
           signal: AbortSignal.timeout(30000) // 30 second timeout for large files
@@ -4626,14 +4644,112 @@ const ClaraAssistantInput: React.FC<ClaraInputProps> = ({
       }
     };
     
+    // **NEW**: Copy files to MCP workspace using MCP save tool
+    const copyFilesToMCPWorkspace = async (files: File[]): Promise<void> => {
+      try {
+        // Import MCP service
+        const { claraMCPService } = await import('../../services/claraMCPService');
+
+        // Check if MCP service is ready
+        if (!claraMCPService.isReady()) {
+          console.log('📁 MCP service not ready, skipping file copy to workspace');
+          return;
+        }
+
+        // Check if python-mcp server is running
+        const runningServers = claraMCPService.getRunningServers();
+        const pythonMCPRunning = runningServers.some(s => s.name === 'python-mcp');
+
+        if (!pythonMCPRunning) {
+          console.log('📁 python-mcp server not running, skipping file copy to workspace');
+          return;
+        }
+
+        for (const file of files) {
+          try {
+            // Read file as text or base64 depending on type
+            const fileContent = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => {
+                if (reader.result && typeof reader.result === 'string') {
+                  // For text files, use as-is; for binary, use base64
+                  if (file.type.startsWith('text/') ||
+                      file.name.endsWith('.txt') ||
+                      file.name.endsWith('.md') ||
+                      file.name.endsWith('.csv') ||
+                      file.name.endsWith('.json') ||
+                      file.name.endsWith('.py') ||
+                      file.name.endsWith('.js') ||
+                      file.name.endsWith('.ts')) {
+                    resolve(reader.result);
+                  } else {
+                    // For binary files, use base64
+                    const base64 = reader.result.split(',')[1];
+                    resolve(base64);
+                  }
+                } else {
+                  reject(new Error('Failed to read file'));
+                }
+              };
+              reader.onerror = () => reject(reader.error);
+
+              // Read as text for text files, data URL for binary
+              if (file.type.startsWith('text/') ||
+                  file.name.endsWith('.txt') ||
+                  file.name.endsWith('.md') ||
+                  file.name.endsWith('.csv') ||
+                  file.name.endsWith('.json') ||
+                  file.name.endsWith('.py') ||
+                  file.name.endsWith('.js') ||
+                  file.name.endsWith('.ts')) {
+                reader.readAsText(file);
+              } else {
+                reader.readAsDataURL(file);
+              }
+            });
+
+            // Use MCP save tool to copy file to workspace
+            const toolCall = {
+              name: 'save',
+              arguments: {
+                name: file.name,
+                text: fileContent,
+                auto_open: false // Don't auto-open uploaded files
+              },
+              server: 'python-mcp',
+              callId: `upload_file_${Date.now()}_${file.name}`
+            };
+
+            const result = await claraMCPService.executeToolCall(toolCall);
+
+            if (result.success) {
+              console.log(`✅ Copied ${file.name} to MCP workspace via save tool`);
+            } else {
+              console.warn(`⚠️ Failed to copy ${file.name}:`, result.error);
+            }
+          } catch (fileError) {
+            console.warn(`⚠️ Failed to copy ${file.name} to MCP workspace:`, fileError);
+          }
+        }
+      } catch (error) {
+        console.warn('⚠️ Error copying files to MCP workspace (MCP may not be running):', error);
+        // Continue without failing - this is a nice-to-have feature
+      }
+    };
+
+    // Copy files to MCP workspace (async, non-blocking)
+    copyFilesToMCPWorkspace(files).catch(err => {
+      console.warn('Failed to copy files to MCP workspace:', err);
+    });
+
     for (let index = 0; index < files.length; index++) {
       const file = files[index];
       const fileType = getFileType(file);
-      
+
       try {
         let base64: string | undefined;
         let extractedText: string | undefined;
-        
+
         // Handle different file types appropriately
         if (fileType === 'image') {
           // For images, convert to base64 for vision models
@@ -4754,6 +4870,29 @@ const ClaraAssistantInput: React.FC<ClaraInputProps> = ({
     return attachments;
   }, []);
 
+  // Check health of all providers and find working alternatives
+  const checkAlternativeProviders = useCallback(async (excludeProviderId: string): Promise<ClaraProvider[]> => {
+    const alternativeProviders = providers.filter(p => 
+      p.id !== excludeProviderId && 
+      p.isEnabled
+    );
+
+    const healthResults = await Promise.all(
+      alternativeProviders.map(async (provider) => {
+        try {
+          const isHealthy = await claraApiService.testProvider(provider);
+          return { provider, isHealthy };
+        } catch {
+          return { provider, isHealthy: false };
+        }
+      })
+    );
+
+    return healthResults
+      .filter(r => r.isHealthy)
+      .map(r => r.provider);
+  }, [providers]);
+
   // Provider health check function
   const checkProviderHealth = useCallback(async (): Promise<boolean> => {
     if (!sessionConfig?.aiConfig?.provider) {
@@ -4770,57 +4909,26 @@ const ClaraAssistantInput: React.FC<ClaraInputProps> = ({
     setProviderHealthStatus('checking');
 
     try {
-      // Check if it's Clara's Pocket (Clara Core)
-      if (currentProvider.type === 'claras-pocket') {
-        const llamaSwap = (window as any).llamaSwap;
-        if (llamaSwap?.getStatus) {
-          const status = await llamaSwap.getStatus();
-          const isHealthy = status.isRunning;
-          
-          if (!isHealthy) {
-            setOfflineProvider(currentProvider);
-            
-            // Check if the service is currently starting
-            if (status.isStarting) {
-              const startupMessage = status.currentStartupPhase 
-                ? `Clara's Pocket is starting: ${status.currentStartupPhase}`
-                : 'Clara\'s Pocket is starting up, please wait...';
-              
-              // Calculate duration
-              const durationText = status.startingDuration > 0 
-                ? ` (${status.startingDuration}s)`
-                : '';
-                
-              setProviderOfflineMessage(`${startupMessage}${durationText}`);
-            } else {
-              setProviderOfflineMessage(`Clara's Pocket is not running. Would you like to start it?`);
-            }
-            
-            setShowClaraCoreOffer(false); // Don't offer switch since this IS Clara Core
-            setShowProviderOfflineModal(true);
-            setProviderHealthStatus('unhealthy');
-            return false;
-          }
-        } else {
-          setOfflineProvider(currentProvider);
-          setProviderOfflineMessage(`Clara's Pocket service is not available.`);
-          setShowClaraCoreOffer(false);
-          setShowProviderOfflineModal(true);
-          setProviderHealthStatus('unhealthy');
-          return false;
-        }
-      } else {
-        // For other providers, use the health check API
-        const isHealthy = await claraApiService.testProvider(currentProvider);
+      // Test provider health
+      const isHealthy = await claraApiService.testProvider(currentProvider);
+      
+      if (!isHealthy) {
+        setOfflineProvider(currentProvider);
         
-        if (!isHealthy) {
-          setOfflineProvider(currentProvider);
-          setProviderOfflineMessage(`${currentProvider.name} is not responding. The service may be down or unreachable.`);
-          setShowClaraCoreOffer(true); // Offer to switch to Clara Core
-          setShowProviderOfflineModal(true);
-          setProviderHealthStatus('unhealthy');
-          return false;
+        // Check for alternative working providers
+        const alternatives = await checkAlternativeProviders(currentProvider.id);
+        if (alternatives.length > 0) {
+          const providerNames = alternatives.map(p => p.name).join(', ');
+          setProviderOfflineMessage(`${currentProvider.name} is not responding. Try switching to: ${providerNames}`);
+          setAlternativeProviders(alternatives);
+        } else {
+          setProviderOfflineMessage(`${currentProvider.name} is not responding. No alternative providers are currently available.`);
+          setAlternativeProviders([]);
         }
+        
+        setShowProviderOfflineModal(true);
+        setProviderHealthStatus('unhealthy');
+        return false;
       }
 
       setProviderHealthStatus('healthy');
@@ -4829,12 +4937,12 @@ const ClaraAssistantInput: React.FC<ClaraInputProps> = ({
       console.error('Provider health check failed:', error);
       setOfflineProvider(currentProvider);
       setProviderOfflineMessage(`Failed to check ${currentProvider.name} status: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      setShowClaraCoreOffer(currentProvider.type !== 'claras-pocket');
       setShowProviderOfflineModal(true);
       setProviderHealthStatus('unhealthy');
+      setAlternativeProviders([]);
       return false;
     }
-  }, [sessionConfig?.aiConfig?.provider, providers]);
+  }, [sessionConfig?.aiConfig?.provider, providers, checkAlternativeProviders]);
 
   // Poll for service status when the offline modal is shown and service is starting
   useEffect(() => {
@@ -4860,75 +4968,6 @@ const ClaraAssistantInput: React.FC<ClaraInputProps> = ({
 
     return () => clearInterval(pollInterval);
   }, [showProviderOfflineModal, providerOfflineMessage, checkProviderHealth]);
-
-  // Handle starting Clara Core
-  const handleStartClaraCore = useCallback(async () => {
-    if (offlineProvider?.type === 'claras-pocket') {
-      try {
-        const llamaSwap = (window as any).llamaSwap;
-        if (llamaSwap?.start) {
-          const result = await llamaSwap.start();
-          if (result.success) {
-            setShowProviderOfflineModal(false);
-            setProviderHealthStatus('healthy');
-          } else {
-            setProviderOfflineMessage(`Failed to start Clara's Pocket: ${result.error || 'Unknown error'}`);
-          }
-        }
-      } catch (error) {
-        console.error('Failed to start Clara Core:', error);
-        setProviderOfflineMessage(`Failed to start Clara's Pocket: ${error instanceof Error ? error.message : 'Unknown error'}`);
-      }
-    }
-  }, [offlineProvider]);
-
-  // Handle switching to Clara Core
-  const handleSwitchToClaraCore = useCallback(async () => {
-    try {
-      // Find Clara Core provider
-      const claraCoreProvider = providers.find(p => p.type === 'claras-pocket');
-      
-      if (!claraCoreProvider) {
-        console.error('Clara Core provider not found');
-        setProviderOfflineMessage('Clara Core provider is not available.');
-        return;
-      }
-
-      // Check if Clara Core is running
-      const llamaSwap = (window as any).llamaSwap;
-      if (llamaSwap?.getStatus) {
-        const status = await llamaSwap.getStatus();
-        
-        if (!status.isRunning) {
-          // Try to start Clara Core
-          if (llamaSwap?.start) {
-            const startResult = await llamaSwap.start();
-            if (!startResult.success) {
-              setProviderOfflineMessage(`Failed to start Clara's Pocket: ${startResult.error || 'Unknown error'}`);
-              return;
-            }
-            // Wait a moment for service to be ready
-            await new Promise(resolve => setTimeout(resolve, 2000));
-          } else {
-            setProviderOfflineMessage('Clara Core service is not available.');
-            return;
-          }
-        }
-
-        // Switch to Clara Core provider
-        if (onProviderChange) {
-          onProviderChange(claraCoreProvider.id);
-          setShowProviderOfflineModal(false);
-          setProviderHealthStatus('healthy');
-        }
-      } else {
-        setProviderOfflineMessage('Clara Core service is not available.');
-      }
-    } catch (error) {
-      console.error('Failed to switch to Clara Core:', error);
-      setProviderOfflineMessage(`Failed to switch to Clara Core: ${error instanceof Error ? error.message : 'Unknown error'}`);
-    }
-  }, [providers, onProviderChange]);
 
   // Send message
   const handleSend = useCallback(async () => {
@@ -5148,13 +5187,22 @@ const ClaraAssistantInput: React.FC<ClaraInputProps> = ({
     setInput('');
     setFiles([]);
     adjustTextareaHeight();
-    
-    // Reset preload state for next typing session
+
+    // Abort any in-flight preload when user sends message (actual request is more important)
+    if (preloadAbortControllerRef.current) {
+      console.log('🛑 Aborting in-flight preload (user sent message)');
+      preloadAbortControllerRef.current.abort();
+      preloadAbortControllerRef.current = null;
+      isPreloadingRef.current = false;
+    }
+
+    // Reset preload state for next typing session (cooldown timer persists)
     setHasPreloaded(false);
     if (preloadTimeoutRef.current) {
       clearTimeout(preloadTimeoutRef.current);
       preloadTimeoutRef.current = null;
     }
+    // Note: preloadCooldownRef persists to prevent rapid successive preloads
     
     // Focus the textarea after sending for immediate next input
     focusTextarea();
@@ -5181,7 +5229,8 @@ const ClaraAssistantInput: React.FC<ClaraInputProps> = ({
       maxToolCalls: 10,
       confidenceThreshold: 0.8,
       enableChainOfThought: false,
-      enableErrorLearning: true
+      enableErrorLearning: true,
+      enableDeepThinkingVerification: currentAIConfig.autonomousAgent?.enableDeepThinkingVerification ?? false
     };
 
     const updatedConfig: ClaraAIConfig = {
@@ -5817,18 +5866,19 @@ const ClaraAssistantInput: React.FC<ClaraInputProps> = ({
         return;
       }
 
-      const status = await (window as any).electronAPI.invoke('check-python-status');
+      // Use the new unified handler that supports all deployment modes
+      const status = await (window as any).electronAPI.invoke('python-backend:check-service-status');
       setPythonBackendStatus({
-        isHealthy: status.isHealthy || false,
+        isHealthy: status.running || false,
         serviceUrl: status.serviceUrl,
         error: status.error
       });
     } catch (error) {
       console.error('Error checking Python backend status:', error);
-      setPythonBackendStatus({ 
-        isHealthy: false, 
-        serviceUrl: null, 
-        error: error instanceof Error ? error.message : 'Unknown error' 
+      setPythonBackendStatus({
+        isHealthy: false,
+        serviceUrl: null,
+        error: error instanceof Error ? error.message : 'Unknown error'
       });
     }
   }, []);
@@ -6798,10 +6848,6 @@ You can right-click on the image to save it or use it in your projects.`;
     }
   }, [screenStream, addInfoNotification, addErrorNotification]);
 
-  // Check if Clara's Pocket is currently starting
-  const isServiceStarting = offlineProvider?.type === 'claras-pocket' && 
-    providerOfflineMessage.includes('starting');
-
   return (
     <div 
       ref={containerRef}
@@ -7143,21 +7189,10 @@ You can right-click on the image to save it or use it in your projects.`;
                     onKeyDown={handleKeyDown}
                     onPaste={handlePaste}
                     onFocus={() => {
-                      // Trigger aggressive preload on focus for fastest TTFT - SILENT
-                      console.log('⚡ Input focused - triggering silent immediate preload');
-                      onPreloadModel?.();
-                      
                       // Close autonomous agent status panel when user focuses input
                       if (autonomousAgentStatus?.isActive) {
                         console.log('🏁 Input focused - closing autonomous agent status panel');
                         autonomousAgentStatus.completeAgent('Input focused - closing status panel', 0);
-                      }
-                    }}
-                    onInput={() => {
-                      // Trigger preload on very first keystroke - SILENT
-                      if (input.length === 0) {
-                        console.log('🚀 First keystroke detected - silent aggressive preload');
-                        onPreloadModel?.();
                       }
                     }}
                     placeholder="Ask me anything..."
@@ -7536,6 +7571,44 @@ You can right-click on the image to save it or use it in your projects.`;
                       )}
                     </div>
 
+                    {/* Persona Selector */}
+                    <div className="relative">
+                      <Tooltip content="Personas" position="top">
+                        <button
+                          ref={personaButtonRef}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setShowPersonaDropdown(!showPersonaDropdown);
+                          }}
+                          className={`relative p-2 rounded-lg transition-colors ${
+                            showPersonaDropdown
+                              ? 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
+                              : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-400'
+                          }`}
+                        >
+                          <UserCircle2 className="w-4 h-4" />
+                          {/* Emoji badge if persona has one */}
+                          {personas.find(p => p.id === activePersonaId)?.emoji && (
+                            <span className="absolute -top-1 -right-1 text-xs">
+                              {personas.find(p => p.id === activePersonaId)?.emoji}
+                            </span>
+                          )}
+                        </button>
+                      </Tooltip>
+
+                      <PersonaDropdown
+                        show={showPersonaDropdown}
+                        onClose={() => setShowPersonaDropdown(false)}
+                        personas={personas}
+                        activePersonaId={activePersonaId}
+                        onPersonaSelect={handlePersonaChange}
+                        onPersonaEdit={handlePersonaEdit}
+                        onPersonaDelete={handlePersonaDelete}
+                        onCreateNew={handleCreatePersona}
+                        triggerRef={personaButtonRef}
+                      />
+                    </div>
+
                     {/* More Options - Overflow Menu */}
                     <div className="relative">
                       <Tooltip content="More options" position="top">
@@ -7547,14 +7620,14 @@ You can right-click on the image to save it or use it in your projects.`;
                           }}
                           className={`p-2 rounded-lg transition-colors ${
                             showOverflowMenu
-                              ? 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300' 
+                              ? 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
                               : 'hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-gray-400'
                           }`}
                         >
                           <MoreHorizontal className="w-4 h-4" />
                         </button>
                       </Tooltip>
-                      
+
                       <OverflowMenu
                         show={showOverflowMenu}
                         onClose={() => setShowOverflowMenu(false)}
@@ -7577,6 +7650,8 @@ You can right-click on the image to save it or use it in your projects.`;
                         isNotebookMode={isNotebookMode}
                         selectedNotebook={selectedNotebook}
                         onNotebookModeToggle={handleNotebookModeToggle}
+                        deepThinkingEnabled={deepThinkingEnabled}
+                        onDeepThinkingToggle={handleDeepThinkingToggle}
                       />
                     </div>
 
@@ -7629,38 +7704,14 @@ You can right-click on the image to save it or use it in your projects.`;
           <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl p-6 m-4 max-w-md w-full mx-auto">
             {/* Icon */}
             <div className="flex justify-center mb-4">
-              <div className={`w-12 h-12 rounded-full flex items-center justify-center ${
-                isServiceStarting 
-                  ? 'bg-blue-100 dark:bg-blue-900' 
-                  : 'bg-red-100 dark:bg-red-900'
-              }`}>
-                {isServiceStarting ? (
-                  <div className="w-6 h-6 text-blue-600 dark:text-blue-400">
-                    <svg className="animate-spin w-full h-full" fill="none" viewBox="0 0 24 24">
-                      <circle
-                        className="opacity-25"
-                        cx="12"
-                        cy="12"
-                        r="10"
-                        stroke="currentColor"
-                        strokeWidth="4"
-                      ></circle>
-                      <path
-                        className="opacity-75"
-                        fill="currentColor"
-                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                      ></path>
-                    </svg>
-                  </div>
-                ) : (
-                  <AlertCircle className="w-6 h-6 text-red-600 dark:text-red-400" />
-                )}
+              <div className="w-12 h-12 rounded-full flex items-center justify-center bg-red-100 dark:bg-red-900">
+                <AlertCircle className="w-6 h-6 text-red-600 dark:text-red-400" />
               </div>
             </div>
 
             {/* Title */}
             <h2 className="text-xl font-bold text-gray-900 dark:text-white text-center mb-3">
-              {isServiceStarting ? 'Starting Clara\'s Pocket' : 'Provider Not Responding (Probably Restarting)'}
+              Provider Not Responding
             </h2>
 
             {/* Message */}
@@ -7668,35 +7719,48 @@ You can right-click on the image to save it or use it in your projects.`;
               {providerOfflineMessage}
             </p>
 
+            {/* Alternative Providers Section */}
+            {alternativeProviders.length > 0 && (
+              <div className="mb-4">
+                <h3 className="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">
+                  Available Providers:
+                </h3>
+                <div className="space-y-2">
+                  {alternativeProviders.map((provider) => {
+                    const ProviderIcon = provider.type === 'ollama' ? Server : 
+                                        provider.type === 'openai' ? Bot : 
+                                        provider.type === 'openrouter' ? Zap : Server;
+                    return (
+                      <button
+                        key={provider.id}
+                        onClick={() => {
+                          if (onProviderChange) {
+                            onProviderChange(provider.id);
+                            setShowProviderOfflineModal(false);
+                          }
+                        }}
+                        className="w-full bg-green-50 dark:bg-green-900/20 hover:bg-green-100 dark:hover:bg-green-900/30 border border-green-200 dark:border-green-700 text-green-700 dark:text-green-300 font-semibold py-3 px-4 rounded-lg transition-colors duration-200 flex items-center space-x-3"
+                      >
+                        <ProviderIcon className="w-5 h-5 flex-shrink-0" />
+                        <div className="flex-1 text-left">
+                          <div className="font-semibold">{provider.name}</div>
+                          <div className="text-xs opacity-75 truncate">{provider.baseUrl}</div>
+                        </div>
+                        <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" />
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Action Buttons */}
             <div className="flex flex-col space-y-3">
-              {offlineProvider?.type === 'claras-pocket' && !isServiceStarting ? (
-                // If current provider is Clara Core and NOT starting, offer to start it
-                <button
-                  onClick={handleStartClaraCore}
-                  className="w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors duration-200 flex items-center justify-center space-x-2"
-                >
-                  <Server className="w-5 h-5" />
-                  <span>Start Clara's Pocket</span>
-                </button>
-              ) : offlineProvider?.type !== 'claras-pocket' ? (
-                // If current provider is not Clara Core, offer to switch
-                showClaraCoreOffer && (
-                  <button
-                    onClick={handleSwitchToClaraCore}
-                    className="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors duration-200 flex items-center justify-center space-x-2"
-                  >
-                    <Server className="w-5 h-5" />
-                    <span>Switch to Clara's Pocket</span>
-                  </button>
-                )
-              ) : null}
-              
               <button
                 onClick={() => setShowProviderOfflineModal(false)}
                 className="w-full bg-gray-500 hover:bg-gray-600 text-white font-semibold py-3 px-6 rounded-lg transition-colors duration-200"
               >
-                {isServiceStarting ? 'Hide' : 'Cancel'}
+                Cancel
               </button>
             </div>
           </div>
@@ -7727,6 +7791,15 @@ You can right-click on the image to save it or use it in your projects.`;
         onImageGenerated={handleImageGenerated}
         initialPrompt={input}
         availableModels={availableImageModels}
+      />
+
+      {/* Persona Modal */}
+      <PersonaModal
+        isOpen={showPersonaModal}
+        mode={personaModalMode}
+        persona={editingPersona}
+        onSave={handlePersonaSave}
+        onClose={() => setShowPersonaModal(false)}
       />
     </div>
   );

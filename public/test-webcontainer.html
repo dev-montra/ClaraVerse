@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebContainer Test</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            padding: 2rem;
+            background: #0f0f23;
+            color: #fff;
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        .status {
+            padding: 1rem;
+            margin: 1rem 0;
+            border-radius: 8px;
+            font-weight: bold;
+        }
+        .success {
+            background: #10b981;
+            color: white;
+        }
+        .error {
+            background: #ef4444;
+            color: white;
+        }
+        .info {
+            background: #3b82f6;
+            color: white;
+        }
+        pre {
+            background: #1e1e1e;
+            padding: 1rem;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+        h1 {
+            color: #8b5cf6;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔬 WebContainer Cross-Origin Isolation Test</h1>
+
+    <div id="status"></div>
+
+    <h2>Test Results:</h2>
+    <div id="results"></div>
+
+    <script>
+        const statusDiv = document.getElementById('status');
+        const resultsDiv = document.getElementById('results');
+
+        // Check cross-origin isolation
+        const isCrossOriginIsolated = window.crossOriginIsolated;
+
+        if (isCrossOriginIsolated) {
+            statusDiv.innerHTML = `
+                <div class="status success">
+                    ✅ SUCCESS: Cross-Origin Isolation is ENABLED!
+                    <br>
+                    WebContainer will work correctly.
+                </div>
+            `;
+        } else {
+            statusDiv.innerHTML = `
+                <div class="status error">
+                    ❌ FAILED: Cross-Origin Isolation is DISABLED
+                    <br>
+                    WebContainer will show "Connect to Project" screen.
+                </div>
+            `;
+        }
+
+        // Gather detailed information
+        const details = {
+            'crossOriginIsolated': window.crossOriginIsolated,
+            'User Agent': navigator.userAgent,
+            'Is Electron': navigator.userAgent.includes('Electron'),
+            'Location': window.location.href,
+            'Protocol': window.location.protocol,
+            'SharedArrayBuffer Available': typeof SharedArrayBuffer !== 'undefined',
+            'Atomics Available': typeof Atomics !== 'undefined'
+        };
+
+        let resultsHTML = '<h3>Detailed Checks:</h3>';
+
+        for (const [key, value] of Object.entries(details)) {
+            const isGood = (key === 'crossOriginIsolated' || key === 'SharedArrayBuffer Available' || key === 'Atomics Available')
+                ? value === true
+                : true;
+
+            resultsHTML += `
+                <div class="status ${isGood ? 'info' : 'error'}">
+                    ${key}: <strong>${value}</strong>
+                </div>
+            `;
+        }
+
+        resultsHTML += `
+            <h3>How to Fix (if failed):</h3>
+            <div class="status info">
+                <p>The Electron app needs to set these headers:</p>
+                <pre>Cross-Origin-Embedder-Policy: credentialless
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Resource-Policy: cross-origin</pre>
+                <p>This is done in <code>electron/main.cjs</code> using <code>webRequest.onHeadersReceived</code></p>
+            </div>
+        `;
+
+        resultsDiv.innerHTML = resultsHTML;
+
+        // Try to test SharedArrayBuffer (ultimate test)
+        console.log('Testing WebContainer requirements...');
+        console.log('crossOriginIsolated:', window.crossOriginIsolated);
+
+        if (typeof SharedArrayBuffer !== 'undefined') {
+            try {
+                const sab = new SharedArrayBuffer(1024);
+                console.log('✅ SharedArrayBuffer works! Size:', sab.byteLength);
+            } catch (e) {
+                console.error('❌ SharedArrayBuffer failed:', e);
+            }
+        } else {
+            console.error('❌ SharedArrayBuffer is not available');
+        }
+    </script>
+</body>
+</html>

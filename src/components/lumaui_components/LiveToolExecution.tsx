@@ -248,17 +248,17 @@ const LiveToolExecution: React.FC<LiveToolExecutionProps> = ({
         </div>
         
         {/* Tool description */}
-        <div className="flex-1">
-          <div className="flex items-center gap-2 mb-2">
-            <span className="text-sm font-medium text-gray-800 dark:text-gray-200">
+        <div className="flex-1 max-w-full overflow-hidden">
+          <div className="flex items-center gap-2 mb-2 max-w-full overflow-hidden">
+            <span className="text-sm font-medium text-gray-800 dark:text-gray-200 truncate">
               Clara is working
             </span>
-            <Sparkles className="w-4 h-4 text-sakura-500 animate-pulse" />
+            <Sparkles className="w-4 h-4 text-sakura-500 animate-pulse shrink-0" />
           </div>
-          
-          <div 
+
+          <div
             ref={textRef}
-            className="text-sm text-gray-600 dark:text-gray-400 font-mono"
+            className="text-sm text-gray-600 dark:text-gray-400 font-mono break-words max-w-full overflow-hidden"
           >
             {displayText}
             {currentExecution.status === 'executing' && (
@@ -291,8 +291,8 @@ const LiveToolExecution: React.FC<LiveToolExecutionProps> = ({
       
       {/* Execution details */}
       {currentExecution.parameters && (
-        <div className="mt-3 p-2 bg-black/20 dark:bg-white/5 rounded-lg">
-          <pre className="text-xs text-gray-600 dark:text-gray-400 font-mono overflow-hidden">
+        <div className="mt-3 p-2 bg-black/20 dark:bg-white/5 rounded-lg max-w-full overflow-hidden">
+          <pre className="text-xs text-gray-600 dark:text-gray-400 font-mono overflow-x-auto max-w-full break-words">
             {JSON.stringify(currentExecution.parameters, null, 2).substring(0, 200)}
             {JSON.stringify(currentExecution.parameters, null, 2).length > 200 ? '...' : ''}
           </pre>

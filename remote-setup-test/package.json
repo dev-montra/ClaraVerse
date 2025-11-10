@@ -1,0 +1,14 @@
+{
+  "name": "clara-remote-setup-test",
+  "version": "1.0.0",
+  "description": "Test SSH deployment to remote server",
+  "main": "test-deploy.js",
+  "scripts": {
+    "test": "node test-deploy.js"
+  },
+  "dependencies": {
+    "node-ssh": "^13.1.0",
+    "chalk": "^4.1.2",
+    "ora": "^5.4.1"
+  }
+}

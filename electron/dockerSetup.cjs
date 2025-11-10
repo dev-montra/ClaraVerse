@@ -12,16 +12,24 @@ const { promisify } = require('util');
 const execAsync = promisify(exec);
 
 class DockerSetup extends EventEmitter {
-  constructor() {
+  constructor(connectionConfig = null) {
     super();
     this.isDevMode = process.env.NODE_ENV === 'development';
     this.appDataPath = path.join(os.homedir(), '.clara');
-    
+
     // Docker binary paths - using Docker CLI path for both docker and compose commands
     this.dockerPath = '/usr/local/bin/docker';
-    
-    // Initialize Docker client with the first working socket
+
+    // Store connection configuration
+    this.connectionConfig = connectionConfig || this.loadConnectionConfig();
+    this.connectionMode = this.connectionConfig?.mode || 'local'; // 'local' or 'remote'
+
+    // Initialize Docker client with the first working socket or remote connection
     this.docker = this.initializeDockerClient();
+
+    // SSH tunnel management for remote connections
+    this.sshTunnels = {};
+    this.activeTunnels = [];
 
     // Path for storing pull timestamps
     this.pullTimestampsPath = path.join(this.appDataPath, 'pull_timestamps.json');
@@ -48,7 +56,9 @@ class DockerSetup extends EventEmitter {
       python: {
         name: 'clara_python',
         image: this.getArchSpecificImage('clara17verse/clara-backend', 'latest'),
-        port: 5001,
+        // On Linux, use host network mode so Python backend runs on port 5000
+        // On Windows/Mac, use bridge mode with port mapping 5001->5000
+        port: process.platform === 'linux' ? 5000 : 5001,
         internalPort: 5000,
         healthCheck: this.isPythonRunning.bind(this),
         volumes: [
@@ -138,8 +148,10 @@ class DockerSetup extends EventEmitter {
     this.appRoot = path.resolve(__dirname, '..');
 
     // Default ports with fallbacks
+    // On Linux, Python backend uses host network mode and runs on port 5000
+    // On Windows/Mac, it uses bridge mode with port mapping 5001->5000
     this.ports = {
-      python: 5001,
+      python: process.platform === 'linux' ? 5000 : 5001,
       n8n: 5678,
       ollama: 11434,
       comfyui: 8188
@@ -1761,9 +1773,16 @@ class DockerSetup extends EventEmitter {
 
   initializeDockerClient() {
     try {
+      // Check if we're using remote Docker connection
+      if (this.connectionMode === 'remote' && this.connectionConfig) {
+        console.log('🌐 Initializing remote Docker connection...');
+        return this.createRemoteDockerClient(this.connectionConfig);
+      }
+
+      // Local Docker connection logic (existing)
       // Try enhanced detection first (but don't await since this is sync)
       // We'll use the enhanced detection in isDockerRunning() instead
-      
+
       // For Windows, always use the named pipe as default
       if (process.platform === 'win32') {
         return new Docker({ socketPath: '//./pipe/docker_engine' });
@@ -1803,6 +1822,48 @@ class DockerSetup extends EventEmitter {
       console.error('Error initializing Docker client:', error);
       // Return a default client - the isDockerRunning check will handle the error case
       return new Docker({ socketPath: '/var/run/docker.sock' });
+    }
+  }
+
+  /**
+   * Create a Docker client for remote connections
+   * Supports both direct TCP and SSH-based connections
+   */
+  createRemoteDockerClient(config) {
+    try {
+      if (config.protocol === 'ssh') {
+        // SSH-based connection using docker context
+        // This requires SSH key authentication
+        console.log(`🔐 Creating SSH Docker connection to ${config.username}@${config.host}`);
+
+        // For SSH, we use DOCKER_HOST environment variable approach
+        // Set up SSH tunnel to forward Docker socket
+        const dockerHost = `ssh://${config.username}@${config.host}`;
+
+        // Create Docker client that will use SSH
+        return new Docker({
+          host: config.host,
+          port: config.port || 22,
+          protocol: 'ssh',
+          username: config.username,
+          // Note: For proper SSH support, we'll need to set up SSH tunnel separately
+          // or use docker context CLI commands
+        });
+      } else if (config.protocol === 'tcp') {
+        // Direct TCP connection (Docker daemon exposed on TCP port)
+        console.log(`🌐 Creating TCP Docker connection to ${config.host}:${config.port}`);
+
+        return new Docker({
+          host: config.host,
+          port: config.port || 2375,
+          protocol: 'http'
+        });
+      } else {
+        throw new Error(`Unsupported remote protocol: ${config.protocol}`);
+      }
+    } catch (error) {
+      console.error('Failed to create remote Docker client:', error);
+      throw error;
     }
   }
 
@@ -1992,19 +2053,32 @@ class DockerSetup extends EventEmitter {
         
         if (containerInfo.State.Running) {
           console.log(`Container ${config.name} is already running, checking health...`);
-          
+
           // Check if the running container is healthy
           const isHealthy = await config.healthCheck();
           if (isHealthy) {
             console.log(`Container ${config.name} is running and healthy, skipping recreation`);
-            return;
+            if (config.statusCallback) {
+              config.statusCallback(`${config.name} is already running and healthy`, 'success', { percentage: 100 });
+            }
+            return {
+              success: true,
+              alreadyRunning: true,
+              message: `${config.name} is already running and healthy`
+            };
           }
-          
+
           console.log(`Container ${config.name} is running but not healthy, will recreate`);
+          if (config.statusCallback) {
+            config.statusCallback(`${config.name} is unhealthy, restarting...`, 'warning', { percentage: 5 });
+          }
           await existingContainer.stop();
           await existingContainer.remove({ force: true });
         } else {
           console.log(`Container ${config.name} exists but is not running, will recreate`);
+          if (config.statusCallback) {
+            config.statusCallback(`${config.name} is stopped, restarting...`, 'info', { percentage: 5 });
+          }
           await existingContainer.remove({ force: true });
         }
       } catch (error) {
@@ -2085,28 +2159,75 @@ class DockerSetup extends EventEmitter {
         networkMode = 'bridge';
       }
 
+      // Add host.docker.internal mapping for Linux
+      const isLinux = process.platform === 'linux';
+      const extraHosts = [];
+
+      // Special handling for Python backend on Linux: use host network mode
+      // This allows it to access host services (like ClaraCore on port 8091) without firewall issues
+      const isPythonOnLinux = isLinux && config.name === 'clara_python';
+
+      if (isPythonOnLinux) {
+        console.log('🐧 Linux detected: Using host network mode for Python backend (can access localhost:8091 directly)');
+        networkMode = 'host';
+      } else if (isLinux) {
+        // For other containers on Linux, add host.docker.internal mapping
+        // On Linux, we need to get the gateway IP of clara_network
+        // host-gateway resolves to default bridge (172.17.0.1), but we use custom network
+        try {
+          const networks = await this.docker.listNetworks({ filters: { name: ['clara_network'] } });
+          if (networks && networks.length > 0) {
+            const network = await this.docker.getNetwork(networks[0].Id);
+            const networkInfo = await network.inspect();
+            const gatewayIP = networkInfo.IPAM?.Config?.[0]?.Gateway;
+
+            if (gatewayIP) {
+              extraHosts.push(`host.docker.internal:${gatewayIP}`);
+              console.log(`🐧 Linux detected: Adding host.docker.internal:${gatewayIP} mapping (clara_network gateway)`);
+            } else {
+              // Fallback to host-gateway if we can't detect gateway IP
+              extraHosts.push('host.docker.internal:host-gateway');
+              console.log('🐧 Linux detected: Adding host.docker.internal:host-gateway mapping (fallback)');
+            }
+          } else {
+            extraHosts.push('host.docker.internal:host-gateway');
+            console.log('🐧 Linux detected: Adding host.docker.internal:host-gateway mapping (network not found)');
+          }
+        } catch (err) {
+          console.error('❌ Failed to detect clara_network gateway:', err.message);
+          extraHosts.push('host.docker.internal:host-gateway');
+          console.log('🐧 Linux detected: Adding host.docker.internal:host-gateway mapping (error fallback)');
+        }
+      }
+
       const containerConfig = {
         Image: config.image,
         name: config.name,
-        ExposedPorts: {
-          [`${config.internalPort}/tcp`]: {}
-        },
+        // Host network mode doesn't use port mappings
+        ...(isPythonOnLinux ? {} : {
+          ExposedPorts: {
+            [`${config.internalPort}/tcp`]: {}
+          }
+        }),
         HostConfig: {
-          PortBindings: {
-            [`${config.internalPort}/tcp`]: [{ HostPort: config.port.toString() }]
-          },
+          // Host network mode doesn't use port bindings
+          ...(isPythonOnLinux ? {} : {
+            PortBindings: {
+              [`${config.internalPort}/tcp`]: [{ HostPort: config.port.toString() }]
+            }
+          }),
           Binds: config.volumes,
           NetworkMode: networkMode,
-          // Add GPU runtime support if available
-          ...(useGPURuntime && { Runtime: 'nvidia' }),
+          // Add extra hosts for host.docker.internal on Linux (not needed for host mode)
+          ...(!isPythonOnLinux && extraHosts.length > 0 && { ExtraHosts: extraHosts }),
           // Add restart policy if specified
           ...(config.restartPolicy && { RestartPolicy: { Name: config.restartPolicy } }),
-          // Add GPU device access for NVIDIA runtime
+          // Add GPU device access using modern DeviceRequests API (works on both Linux and Windows)
           ...(useGPURuntime && {
             DeviceRequests: [{
               Driver: 'nvidia',
               Count: -1, // All GPUs
-              Capabilities: [['gpu']]
+              Capabilities: [['gpu', 'compute', 'utility']]
             }]
           })
         },
@@ -2692,27 +2813,20 @@ class DockerSetup extends EventEmitter {
   async isPythonRunning() {
     try {
       if (!this.ports.python) {
-        console.log('Python port not set');
         return false;
       }
 
-      console.log(`Checking Python health at http://localhost:${this.ports.python}/health`);
-      
       const response = await new Promise((resolve, reject) => {
         const req = http.get(`http://localhost:${this.ports.python}/health`, (res) => {
-          console.log(`Python health check status code: ${res.statusCode}`);
-          
           if (res.statusCode === 200) {
             let data = '';
             res.on('data', chunk => {
               data += chunk;
             });
             res.on('end', () => {
-              console.log('Python health check response:', data);
               try {
                 const jsonResponse = JSON.parse(data);
                 const isHealthy = jsonResponse.status === 'healthy' || jsonResponse.status === 'ok';
-                console.log(`Python health parsed result: ${isHealthy}`);
                 resolve(isHealthy);
               } catch (e) {
                 console.error('Failed to parse health check JSON:', e);
@@ -2725,12 +2839,15 @@ class DockerSetup extends EventEmitter {
         });
 
         req.on('error', (error) => {
-          console.error('Python health check request error:', error);
+          // Only log non-connection errors (ECONNREFUSED is expected when service is down)
+          if (error.code !== 'ECONNREFUSED') {
+            console.error('Python health check request error:', error);
+          }
           resolve(false);
         });
 
         req.setTimeout(5000, () => {
-          console.error('Python health check timeout');
+          // Timeout is expected when service is not responding
           req.destroy();
           resolve(false);
         });
@@ -2738,7 +2855,10 @@ class DockerSetup extends EventEmitter {
 
       return response;
     } catch (error) {
-      console.error('Python health check error:', error);
+      // Only log unexpected errors
+      if (error.code !== 'ECONNREFUSED') {
+        console.error('Python health check error:', error);
+      }
       return false;
     }
   }
@@ -2752,7 +2872,14 @@ class DockerSetup extends EventEmitter {
           } else {
             reject(new Error(`N8N health check failed with status ${res.statusCode}`));
           }
-        }).on('error', (error) => reject(error));
+        }).on('error', (error) => {
+          // Only log non-connection errors (ECONNREFUSED is expected when service is down)
+          if (error.code !== 'ECONNREFUSED') {
+            reject(error);
+          } else {
+            resolve({ success: false, error: 'Service not running' });
+          }
+        });
       });
       return response;
     } catch (error) {
@@ -3019,16 +3146,11 @@ class DockerSetup extends EventEmitter {
   async isComfyUIRunning() {
     try {
       if (!this.ports.comfyui) {
-        console.log('ComfyUI port not set');
         return false;
       }
 
-      console.log(`Checking ComfyUI health at http://localhost:${this.ports.comfyui}/`);
-      
-      const response = await new Promise((resolve, reject) => {
+      const response = await new Promise((resolve, _reject) => {
         const req = http.get(`http://localhost:${this.ports.comfyui}/`, (res) => {
-          console.log(`ComfyUI health check status code: ${res.statusCode}`);
-          
           // ComfyUI returns 200 for the main page when running
           if (res.statusCode === 200) {
             resolve(true);
@@ -3038,12 +3160,15 @@ class DockerSetup extends EventEmitter {
         });
 
         req.on('error', (error) => {
-          console.error('ComfyUI health check request error:', error);
+          // Only log non-connection errors (ECONNREFUSED is expected when service is down)
+          if (error.code !== 'ECONNREFUSED') {
+            console.error('ComfyUI health check request error:', error);
+          }
           resolve(false);
         });
 
         req.setTimeout(5000, () => {
-          console.error('ComfyUI health check timeout');
+          // Timeout is expected when service is not responding
           req.destroy();
           resolve(false);
         });
@@ -3051,7 +3176,10 @@ class DockerSetup extends EventEmitter {
 
       return response;
     } catch (error) {
-      console.error('ComfyUI health check error:', error);
+      // Only log unexpected errors
+      if (error.code !== 'ECONNREFUSED') {
+        console.error('ComfyUI health check error:', error);
+      }
       return false;
     }
   }
@@ -3159,6 +3287,236 @@ class DockerSetup extends EventEmitter {
         }, 5000);
       });
     });
+  }
+
+  /**
+   * Load connection configuration from disk
+   * Returns stored remote Docker configuration or null for local
+   */
+  loadConnectionConfig() {
+    try {
+      const configPath = path.join(this.appDataPath, 'docker-connection.json');
+      if (fs.existsSync(configPath)) {
+        const config = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+        console.log(`📁 Loaded Docker connection config: ${config.mode} mode`);
+        return config;
+      }
+    } catch (error) {
+      console.error('Error loading connection config:', error);
+    }
+    return null;
+  }
+
+  /**
+   * Save connection configuration to disk
+   */
+  saveConnectionConfig(config) {
+    try {
+      const configPath = path.join(this.appDataPath, 'docker-connection.json');
+      fs.writeFileSync(configPath, JSON.stringify(config, null, 2), 'utf8');
+      console.log(`💾 Saved Docker connection config: ${config.mode} mode`);
+      return true;
+    } catch (error) {
+      console.error('Error saving connection config:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Switch between local and remote Docker connections
+   */
+  async switchConnection(newConfig) {
+    try {
+      console.log(`🔄 Switching Docker connection to ${newConfig.mode} mode...`);
+
+      // Close existing SSH tunnels if switching from remote
+      if (this.connectionMode === 'remote') {
+        await this.closeAllSSHTunnels();
+      }
+
+      // Update configuration
+      this.connectionConfig = newConfig;
+      this.connectionMode = newConfig.mode;
+
+      // Reinitialize Docker client
+      this.docker = this.initializeDockerClient();
+
+      // Test connection
+      const isRunning = await this.isDockerRunning();
+      if (!isRunning) {
+        throw new Error('Failed to connect to Docker with new configuration');
+      }
+
+      // Save configuration
+      this.saveConnectionConfig(newConfig);
+
+      console.log(`✅ Successfully switched to ${newConfig.mode} mode`);
+      return { success: true, mode: newConfig.mode };
+    } catch (error) {
+      console.error('Error switching Docker connection:', error);
+      return { success: false, error: error.message };
+    }
+  }
+
+  /**
+   * Create SSH tunnel for a specific port
+   * This allows remote services to be accessed as if they were local
+   */
+  async createSSHTunnel(localPort, remotePort, serviceName) {
+    if (this.connectionMode !== 'remote' || !this.connectionConfig) {
+      console.log('SSH tunnels only needed for remote mode');
+      return;
+    }
+
+    return new Promise((resolve, reject) => {
+      try {
+        const { host, username, sshKeyPath, port: sshPort = 22 } = this.connectionConfig;
+
+        console.log(`🔗 Creating SSH tunnel for ${serviceName}: localhost:${localPort} -> ${host}:${remotePort}`);
+
+        // Build SSH command for port forwarding
+        const sshArgs = [
+          '-N', // No remote command
+          '-L', `${localPort}:localhost:${remotePort}`, // Local port forwarding
+          '-p', sshPort.toString(),
+          '-o', 'StrictHostKeyChecking=no',
+          '-o', 'ServerAliveInterval=60',
+          '-o', 'ServerAliveCountMax=3'
+        ];
+
+        // Add SSH key if provided
+        if (sshKeyPath && fs.existsSync(sshKeyPath)) {
+          sshArgs.push('-i', sshKeyPath);
+        }
+
+        sshArgs.push(`${username}@${host}`);
+
+        // Spawn SSH tunnel process
+        const tunnel = spawn('ssh', sshArgs);
+
+        tunnel.stdout.on('data', (data) => {
+          console.log(`SSH tunnel ${serviceName} stdout:`, data.toString());
+        });
+
+        tunnel.stderr.on('data', (data) => {
+          const message = data.toString();
+          // SSH outputs connection info to stderr, not always errors
+          if (!message.includes('Warning') && !message.includes('Authenticated')) {
+            console.error(`SSH tunnel ${serviceName} stderr:`, message);
+          }
+        });
+
+        tunnel.on('error', (error) => {
+          console.error(`SSH tunnel ${serviceName} error:`, error);
+          reject(error);
+        });
+
+        tunnel.on('close', (code) => {
+          console.log(`SSH tunnel ${serviceName} closed with code ${code}`);
+          delete this.sshTunnels[serviceName];
+          this.activeTunnels = this.activeTunnels.filter(t => t.service !== serviceName);
+        });
+
+        // Store tunnel reference
+        this.sshTunnels[serviceName] = tunnel;
+        this.activeTunnels.push({
+          service: serviceName,
+          localPort,
+          remotePort,
+          process: tunnel
+        });
+
+        // Give SSH a moment to establish the tunnel
+        setTimeout(() => {
+          console.log(`✅ SSH tunnel for ${serviceName} established`);
+          resolve(tunnel);
+        }, 2000);
+
+      } catch (error) {
+        console.error(`Failed to create SSH tunnel for ${serviceName}:`, error);
+        reject(error);
+      }
+    });
+  }
+
+  /**
+   * Close a specific SSH tunnel
+   */
+  async closeSSHTunnel(serviceName) {
+    const tunnel = this.sshTunnels[serviceName];
+    if (tunnel) {
+      console.log(`🔌 Closing SSH tunnel for ${serviceName}...`);
+      tunnel.kill();
+      delete this.sshTunnels[serviceName];
+      this.activeTunnels = this.activeTunnels.filter(t => t.service !== serviceName);
+    }
+  }
+
+  /**
+   * Close all SSH tunnels
+   */
+  async closeAllSSHTunnels() {
+    console.log('🔌 Closing all SSH tunnels...');
+    for (const serviceName of Object.keys(this.sshTunnels)) {
+      await this.closeSSHTunnel(serviceName);
+    }
+  }
+
+  /**
+   * Get list of active SSH tunnels
+   */
+  getActiveTunnels() {
+    return this.activeTunnels.map(t => ({
+      service: t.service,
+      localPort: t.localPort,
+      remotePort: t.remotePort,
+      isActive: !t.process.killed
+    }));
+  }
+
+  /**
+   * Test remote Docker connection
+   * Useful for validating configuration before saving
+   */
+  async testRemoteConnection(config) {
+    try {
+      console.log(`🧪 Testing remote Docker connection to ${config.host}...`);
+
+      // Create a temporary Docker client
+      const testClient = this.createRemoteDockerClient(config);
+
+      // Try to ping the Docker daemon
+      await testClient.ping();
+
+      // Get Docker version info
+      const version = await testClient.version();
+
+      console.log(`✅ Remote Docker connection successful! Version: ${version.Version}`);
+      return {
+        success: true,
+        version: version.Version,
+        apiVersion: version.ApiVersion,
+        platform: version.Platform?.Name || 'Unknown'
+      };
+    } catch (error) {
+      console.error('❌ Remote Docker connection test failed:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Get connection info (for UI display)
+   */
+  getConnectionInfo() {
+    return {
+      mode: this.connectionMode,
+      config: this.connectionConfig,
+      activeTunnels: this.getActiveTunnels(),
+      isRemote: this.connectionMode === 'remote'
+    };
   }
 }
 

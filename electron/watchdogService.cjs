@@ -1,14 +1,17 @@
 const { EventEmitter } = require('events');
 const { Notification } = require('electron');
 const log = require('electron-log');
+const { getAdaptiveHealthCheckManager } = require('./adaptiveHealthCheckManager.cjs');
 
 class WatchdogService extends EventEmitter {
-  constructor(dockerSetup, llamaSwapService, mcpService, ipcLogger = null) {
+  constructor(dockerSetup, mcpService, ipcLogger = null) {
     super();
     this.dockerSetup = dockerSetup;
-    this.llamaSwapService = llamaSwapService;
     this.mcpService = mcpService;
     this.ipcLogger = ipcLogger;
+    
+    // Get adaptive health check manager
+    this.adaptiveHealthManager = getAdaptiveHealthCheckManager();
     
     // Professional logging configuration
     this.logger = this.initializeLogger();
@@ -37,32 +40,36 @@ class WatchdogService extends EventEmitter {
       claraCore: true
     };
     
-    // Watchdog configuration
+    // Watchdog configuration (now adaptive)
     this.config = {
-      checkInterval: 30000, // Check every 30 seconds
+      baseCheckInterval: 30000, // Base: 30 seconds when active
       startupDelay: 60000, // Wait 60 seconds before starting health checks after startup
       retryAttempts: 3,
       retryDelay: 10000, // 10 seconds between retries
       notificationTimeout: 5000, // Auto-dismiss notifications after 5 seconds
       maxNotificationAttempts: 3, // Stop showing notifications after this many attempts
       gracePeriod: 30 * 60 * 1000, // 30 minutes grace period after service is confirmed healthy
+      useAdaptiveChecks: true // Enable adaptive health checking
     };
     
     // Service status tracking - only include selected services
     this.services = {};
     
-    // Clara Core is always enabled
+    // Clara Core monitoring disabled - llamaSwapService has been removed
+    // Keeping the structure commented for future reference
+    /*
     this.services.clarasCore = {
       name: "Clara's Core",
       status: 'unknown',
       lastCheck: null,
-      lastHealthyTime: null, // Track when service was last confirmed healthy
+      lastHealthyTime: null,
       failureCount: 0,
       isRetrying: false,
-      enabled: true,
+      enabled: false, // Disabled - service removed
       healthCheck: () => this.checkClarasCoreHealth(),
       restart: () => this.restartClarasCore()
     };
+    */
     
     // Python backend is always enabled (core service)
     this.services.python = {
@@ -244,11 +251,12 @@ class WatchdogService extends EventEmitter {
 
     this.isRunning = true;
     this.isStarting = true;
-    
-    this.logEvent('WATCHDOG_START', 'INFO', 'Starting Watchdog Service', {
+
+    this.logEvent('WATCHDOG_START', 'INFO', 'Starting Watchdog Service (health check errors for stopped services are suppressed)', {
       checkInterval: this.config.checkInterval,
       startupDelay: this.config.startupDelay,
-      gracePeriod: this.config.gracePeriod
+      gracePeriod: this.config.gracePeriod,
+      note: 'ECONNREFUSED errors are expected when services are not running and will not be logged'
     });
     
     // Set enabled services to "starting" state during startup (after consent checks)
@@ -270,15 +278,20 @@ class WatchdogService extends EventEmitter {
     
     this.startupTimer = setTimeout(() => {
       this.isStarting = false;
-      this.logEvent('WATCHDOG_HEALTH_CHECKS_BEGIN', 'INFO', 'Startup delay complete, beginning health checks');
+      this.logEvent('WATCHDOG_HEALTH_CHECKS_BEGIN', 'INFO', 'Startup delay complete, beginning adaptive health checks');
+      
+      // Start adaptive health monitoring
+      if (this.config.useAdaptiveChecks) {
+        this.adaptiveHealthManager.startMonitoring();
+        this.logEvent('ADAPTIVE_MONITORING', 'INFO', 'Adaptive health monitoring enabled', 
+          this.adaptiveHealthManager.getStatus());
+      }
       
       // Perform initial health checks
       this.performHealthChecks();
       
-      // Schedule regular health checks
-      this.checkTimer = setInterval(() => {
-        this.performHealthChecks();
-      }, this.config.checkInterval);
+      // Schedule adaptive health checks
+      this.scheduleNextHealthCheck();
       
     }, this.config.startupDelay);
 
@@ -423,8 +436,13 @@ class WatchdogService extends EventEmitter {
     
     this.logEvent('WATCHDOG_STOP', 'INFO', 'Stopping Watchdog Service');
     
+    // Stop adaptive monitoring
+    if (this.adaptiveHealthManager) {
+      this.adaptiveHealthManager.stopMonitoring();
+    }
+    
     if (this.checkTimer) {
-      clearInterval(this.checkTimer);
+      clearTimeout(this.checkTimer); // Changed to clearTimeout for adaptive scheduling
       this.checkTimer = null;
     }
 
@@ -468,6 +486,48 @@ class WatchdogService extends EventEmitter {
     return inGracePeriod;
   }
 
+  // Schedule next health check with adaptive interval
+  scheduleNextHealthCheck() {
+    if (!this.isRunning || this.isStarting) {
+      return;
+    }
+
+    // Get adaptive interval
+    let nextInterval = this.config.baseCheckInterval;
+    
+    if (this.config.useAdaptiveChecks && this.adaptiveHealthManager) {
+      // Use the most conservative interval (longest) from all services
+      for (const serviceKey of Object.keys(this.services)) {
+        const serviceInterval = this.adaptiveHealthManager.getHealthCheckInterval(
+          serviceKey, 
+          this.config.baseCheckInterval
+        );
+        nextInterval = Math.max(nextInterval, serviceInterval);
+      }
+
+      // Log adaptive interval changes
+      const status = this.adaptiveHealthManager.getStatus();
+      if (status.mode !== 'ACTIVE') {
+        this.logEvent('ADAPTIVE_INTERVAL', 'DEBUG', `Next health check in ${nextInterval / 1000}s`, {
+          mode: status.mode,
+          minutesIdle: status.minutesSinceActivity,
+          onBattery: status.isOnBattery
+        });
+      }
+    }
+
+    // Clear existing timer
+    if (this.checkTimer) {
+      clearTimeout(this.checkTimer);
+    }
+
+    // Schedule next check
+    this.checkTimer = setTimeout(() => {
+      this.performHealthChecks();
+      this.scheduleNextHealthCheck(); // Schedule next one after this completes
+    }, nextInterval);
+  }
+
   // Perform health checks on all services
   async performHealthChecks() {
     // Skip health checks during startup phase
@@ -500,6 +560,15 @@ class WatchdogService extends EventEmitter {
         continue;
       }
 
+      // Skip services during deep idle if adaptive checking is enabled
+      if (this.config.useAdaptiveChecks && 
+          this.adaptiveHealthManager && 
+          this.adaptiveHealthManager.shouldSkipHealthCheck(serviceKey)) {
+        healthCheckSummary.skippedServices++;
+        this.logEvent('HEALTH_CHECK_SKIPPED', 'DEBUG', `Skipping ${serviceKey} - deep idle mode`);
+        continue;
+      }
+
       healthCheckSummary.checkedServices++;
       const previousStatus = service.status;
 
@@ -508,6 +577,11 @@ class WatchdogService extends EventEmitter {
         service.lastCheck = timestamp;
 
         if (isHealthy) {
+          // Record service activity for adaptive checking
+          if (this.adaptiveHealthManager) {
+            this.adaptiveHealthManager.recordServiceActivity(serviceKey);
+          }
+
           if (service.status !== 'healthy') {
             // Service recovered - important state change
             const stateChange = this.trackServiceStateChange(serviceKey, service.status, 'healthy', {
@@ -676,24 +750,10 @@ class WatchdogService extends EventEmitter {
 
   // Individual service health check methods
   async checkClarasCoreHealth() {
-    try {
-      const status = await this.llamaSwapService.getStatusWithHealthCheck();
-      const isHealthy = status.isRunning && status.healthCheck === 'passed';
-      
-      this.logEvent('SERVICE_HEALTH_CHECK', 'DEBUG', 'Clara\'s Core health check completed', {
-        isRunning: status.isRunning,
-        healthCheck: status.healthCheck,
-        isHealthy: isHealthy
-      });
-      
-      return isHealthy;
-    } catch (error) {
-      this.logEvent('SERVICE_HEALTH_CHECK_ERROR', 'ERROR', 'Clara\'s Core health check failed', {
-        error: error.message,
-        stack: error.stack
-      });
-      return false;
-    }
+    // Clara's Core service (llamaSwapService) has been removed
+    // This method is kept for compatibility but always returns true
+    this.logEvent('SERVICE_HEALTH_CHECK', 'DEBUG', 'Clara\'s Core health check skipped (service removed)');
+    return true;
   }
 
   async checkN8nHealth() {
@@ -753,24 +813,10 @@ class WatchdogService extends EventEmitter {
 
   // Individual service restart methods
   async restartClarasCore() {
-    this.logEvent('SERVICE_RESTART', 'INFO', 'Initiating Clara\'s Core service restart');
-    
-    try {
-      if (this.llamaSwapService.isRunning) {
-        await this.llamaSwapService.stop();
-        await new Promise(resolve => setTimeout(resolve, 3000));
-      }
-      
-      await this.llamaSwapService.start();
-      this.logEvent('SERVICE_RESTART_OPERATION', 'INFO', 'Clara\'s Core restart operation completed');
-      
-    } catch (error) {
-      this.logEvent('SERVICE_RESTART_ERROR', 'ERROR', 'Clara\'s Core restart operation failed', {
-        error: error.message,
-        stack: error.stack
-      });
-      throw error;
-    }
+    // Clara's Core service (llamaSwapService) has been removed
+    // This method is kept for compatibility but does nothing
+    this.logEvent('SERVICE_RESTART', 'INFO', 'Clara\'s Core restart skipped (service removed)');
+    return;
   }
 
   async restartN8nService() {
@@ -818,7 +864,8 @@ class WatchdogService extends EventEmitter {
         pythonConfig = {
           name: 'clara_python',
           image: this.dockerSetup.getArchSpecificImage('clara17verse/clara-backend', 'latest'),
-          port: 5001,
+          // On Linux (host network mode), use port 5000. On Windows/Mac (bridge mode), use port 5001
+          port: process.platform === 'linux' ? 5000 : 5001,
           internalPort: 5000,
           healthCheck: this.dockerSetup.isPythonRunning.bind(this.dockerSetup),
           volumes: [

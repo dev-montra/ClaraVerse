@@ -5,9 +5,9 @@
 
 import { AssistantAPIClient } from '../utils/AssistantAPIClient';
 import type { ChatMessage } from '../utils/APIClient';
-import { 
-  ClaraMessage, 
-  ClaraFileAttachment, 
+import {
+  ClaraMessage,
+  ClaraFileAttachment,
   ClaraAIConfig,
 } from '../types/clara_assistant_types';
 import type { Tool } from '../db';
@@ -15,10 +15,12 @@ import { claraMemoryService } from './claraMemoryService';
 import { structuredToolCallService } from './structuredToolCallService';
 import { claraToolService } from './claraToolService';
 import { claraImageExtractionService } from './claraImageExtractionService';
-import { 
+import {
   validateTokenCount,
-  type TokenValidationResult 
+  type TokenValidationResult
 } from './tokenEstimationService';
+import { personaStorageService } from './personaStorageService';
+import { taskCompletionVerifier } from './taskCompletionVerifier';
 
 /**
  * Simple autonomous agent configuration
@@ -399,20 +401,65 @@ export class ClaraAgentService {
               totalTokens += followUpResponse.usage?.total_tokens || 0;
             }
 
-            // IMPORTANT: After tool execution and follow-up, task is complete
-            console.log(`✅ Task completed after tool execution and follow-up response`);
-            if (onContentChunk) {
-              onContentChunk(`\n✅ **Task completed**\n\n`);
+            // Conditionally verify if task is complete (smart verification)
+            // After tool execution, if no new tool calls, LLM signals completion
+            if (this.shouldVerifyCompletion(config, [])) {
+              console.log(`🔍 Verifying task completion after tool execution...`);
+              const verification = await taskCompletionVerifier.verifyCompletion(
+                client,
+                modelId,
+                message,
+                structuredResult.toolCalls.map(tc => tc.toolName),
+                toolResults,
+                followUpContent
+              );
+
+              if (verification.isComplete && verification.confidence >= 80) {
+                console.log(`✅ Task verified complete: ${verification.reasoning}`);
+                if (onContentChunk) {
+                  onContentChunk(`\n✅ **Task completed:** ${verification.reasoning}\n\n`);
+                }
+                break;
+              } else {
+                console.log(`🔄 Task incomplete (confidence: ${verification.confidence}%): ${verification.reasoning}`);
+                console.log(`   Remaining work: ${verification.remainingWork.join(', ')}`);
+                if (onContentChunk) {
+                  onContentChunk(`\n🔄 **Continuing** - Remaining work: ${verification.remainingWork.join(', ')}\n\n`);
+                }
+                // Continue to next iteration
+              }
             }
-            break;
+            // If verification skipped, continue to next iteration
 
           } else {
-            // No tools needed, task complete
-            console.log(`✅ No tools needed or tool execution disabled - task complete`);
-            if (onContentChunk) {
-              onContentChunk(`\n✅ **Task completed**\n\n`);
+            // LLM says no tools needed - this is natural completion signal
+            if (this.shouldVerifyCompletion(config, [])) {
+              console.log(`🔍 LLM indicates no tools needed - verifying task completion...`);
+              const verification = await taskCompletionVerifier.verifyCompletion(
+                client,
+                modelId,
+                message,
+                [],
+                [],
+                structuredResult.response
+              );
+
+              if (verification.isComplete && verification.confidence >= 80) {
+                console.log(`✅ Task verified complete without tools: ${verification.reasoning}`);
+                if (onContentChunk) {
+                  onContentChunk(`\n✅ **Task completed:** ${verification.reasoning}\n\n`);
+                }
+                break;
+              } else {
+                console.log(`🔄 Verification indicates more work needed: ${verification.reasoning}`);
+                console.log(`   Remaining work: ${verification.remainingWork.join(', ')}`);
+                if (onContentChunk) {
+                  onContentChunk(`\n🔄 **Verification suggests continuing** - ${verification.remainingWork.join(', ')}\n\n`);
+                }
+                // Continue to next iteration - LLM was wrong about no tools needed
+              }
             }
-            break;
+            // If verification skipped, continue to next iteration
           }
 
         } catch (error) {
@@ -585,8 +632,17 @@ export class ClaraAgentService {
 
     console.log(`🤖 Starting autonomous agent with config:`, autonomousConfig);
 
+    // Get active persona to use its system prompt
+    const activePersona = personaStorageService.getActivePersona();
+    let personaPrompt: string | undefined = undefined;
+
+    if (activePersona && activePersona.id !== 'default') {
+      personaPrompt = activePersona.systemPrompt;
+      console.log(`🎭 Using persona "${activePersona.name}" for autonomous mode`);
+    }
+
     // Build enhanced system prompt for autonomous mode
-    const enhancedSystemPrompt = this.createToolMasteryPrompt(tools);
+    const enhancedSystemPrompt = this.createToolMasteryPrompt(tools, personaPrompt);
 
     // Build conversation messages
     const messages: ChatMessage[] = [];
@@ -693,6 +749,7 @@ export class ClaraAgentService {
             tools,
             config,
             iteration + 1,
+            message,
             onContentChunk,
             currentProviderId
           );
@@ -897,6 +954,7 @@ export class ClaraAgentService {
     tools: Tool[],
     config: ClaraAIConfig,
     stepNumber: number,
+    originalTask: string,
     onContentChunk?: (content: string) => void,
     currentProviderId?: string
   ): Promise<AgentIteration> {
@@ -999,12 +1057,42 @@ export class ClaraAgentService {
         }
       }
 
-      // Determine if there's more work to do based on success/failure patterns
-      const hasFailures = toolResults.some(r => !r.success);
-      const hasToolCalls = toolCalls.length > 0;
-      
-      // More sophisticated logic for determining if more work is needed
-      const hasMoreWork = (hasToolCalls && stepNumber < 5) || (hasFailures && stepNumber < 3);
+      // Use smart LLM-based verification to determine if more work is needed
+      let hasMoreWork = false;
+
+      if (toolCalls.length > 0 || response.length > 0) {
+        // Conditionally verify: only when LLM signals completion (no tool calls)
+        if (this.shouldVerifyCompletion(config, toolCalls)) {
+          console.log(`🔍 Verifying task completion after step ${stepNumber}...`);
+          const verification = await taskCompletionVerifier.verifyCompletion(
+            client,
+            modelId,
+            originalTask,
+            toolCalls.map(tc => tc.function?.name || 'unknown'),
+            toolResults,
+            response
+          );
+
+          hasMoreWork = !verification.isComplete || verification.shouldContinue;
+
+          if (verification.isComplete && verification.confidence >= 80) {
+            console.log(`✅ Task verified complete: ${verification.reasoning}`);
+            hasMoreWork = false;
+          } else {
+            console.log(`🔄 Task incomplete (confidence: ${verification.confidence}%): ${verification.reasoning}`);
+            if (verification.remainingWork.length > 0) {
+              console.log(`   Remaining work: ${verification.remainingWork.join(', ')}`);
+            }
+            hasMoreWork = true;
+          }
+        } else {
+          // Verification skipped - assume more work needed
+          hasMoreWork = true;
+        }
+      } else {
+        // No response or tool calls - something went wrong, don't continue
+        hasMoreWork = false;
+      }
 
       return {
         step: stepNumber,
@@ -1035,17 +1123,49 @@ export class ClaraAgentService {
   }
 
   /**
+   * Determine if task completion verification should run now
+   * Simple rule: Only verify when LLM signals completion (no tool calls)
+   * This respects the LLM's natural flow and minimizes verification calls
+   */
+  private shouldVerifyCompletion(config: ClaraAIConfig, toolCalls: any[]): boolean {
+    const deepThinkingEnabled = config.autonomousAgent?.enableDeepThinkingVerification ?? false;
+
+    if (!deepThinkingEnabled) {
+      console.log('⏭️ Skipping verification: Deep Thinking Agent mode disabled');
+      return false;
+    }
+
+    // Only verify when LLM signals completion (no tool calls requested)
+    // No tool calls = LLM thinks task is done = natural verification point
+    const shouldVerify = toolCalls.length === 0;
+
+    if (shouldVerify) {
+      console.log(`🔍 Verification needed: LLM returned no tool calls (natural completion signal)`);
+    } else {
+      console.log(`⏭️ Skipping verification: ${toolCalls.length} tool call(s) pending - clearly more work to do`);
+    }
+
+    return shouldVerify;
+  }
+
+  /**
    * Build enhanced system prompt for autonomous mode
    */
 
 
   /**
    * Create a tool-focused system prompt that emphasizes persistence and exhaustive problem-solving
+   * Now supports custom personas for autonomous mode
    */
-  private createToolMasteryPrompt(tools: Tool[]): string {
+  private createToolMasteryPrompt(tools: Tool[], personaSystemPrompt?: string): string {
     const toolCategories = this.categorizeTools(tools);
-    
-    return `You are Clara, an autonomous problem-solving agent. Your mission: SOLVE ANY TASK using the tools at your disposal.
+
+    // If a custom persona prompt is provided, use it as the base personality
+    // Otherwise, use the default Clara autonomous agent personality
+    const basePersonality = personaSystemPrompt ||
+      `You are Clara, an autonomous problem-solving agent. Your mission: SOLVE ANY TASK using the tools at your disposal.`;
+
+    return `${basePersonality}
 
 TOOL ARSENAL:
 ${this.formatToolCategories(toolCategories)}

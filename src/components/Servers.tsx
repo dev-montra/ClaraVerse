@@ -1074,28 +1074,9 @@ const Servers: React.FC<ServerProps> = ({ onPageChange }) => {
   // Llama-swap service management functions
   const fetchLlamaSwapStatus = async () => {
     try {
-      if (window.llamaSwap?.getStatusWithHealth) {
-        const status = await window.llamaSwap.getStatusWithHealth();
-        console.log('LLM Service Status (with health check):', status);
-        setLlamaSwapStatus(status);
-        
-        // If running, fetch models
-        if (status.isRunning && window.llamaSwap?.getModels) {
-          const models = await window.llamaSwap.getModels();
-          setLlamaSwapModels(models);
-        }
-      } else if (window.llamaSwap?.getStatus) {
-        // Fallback to basic status
-        const status = await window.llamaSwap.getStatus();
-        console.log('LLM Service Status (basic):', status);
-        setLlamaSwapStatus(status);
-        
-        // If running, fetch models
-        if (status.isRunning && window.llamaSwap?.getModels) {
-          const models = await window.llamaSwap.getModels();
-          setLlamaSwapModels(models);
-        }
-      }
+      // LlamaSwap service has been removed
+      console.log('LLM Service has been removed from the application');
+      setLlamaSwapStatus({ isRunning: false, port: null, apiUrl: null });
     } catch (error) {
       console.error('Error fetching llama-swap status:', error);
     }
@@ -1152,7 +1133,7 @@ const Servers: React.FC<ServerProps> = ({ onPageChange }) => {
             backgroundImage: `url(${wallpaperUrl})`,
             backgroundSize: 'cover',
             backgroundPosition: 'center',
-            opacity: 0.1,
+            opacity: 0.4,
             filter: 'blur(1px)',
             pointerEvents: 'none'
           }}
