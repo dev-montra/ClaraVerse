@@ -2,9 +2,9 @@
   "name": "clara-verse",
   "version": "0.3.1-beta",
   "private": true,
-  "description": "ClaraVerse - The AI-Powered Creative Suite for Everyone",
+  "description": "ClaraVerse - Make AI a Public Good Again",
   "author": {
-    "name": "ClaraVerse Labs",
+    "name": "ClaraVerse Research Labs",
     "email": "claraverse.space@gmail.com"
   },
   "type": "module",

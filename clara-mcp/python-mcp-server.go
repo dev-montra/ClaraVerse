@@ -131,32 +131,50 @@ type PythonMCPServer struct {
 // NewPythonMCPServer creates server with dedicated workspace and venv
 func NewPythonMCPServer() *PythonMCPServer {
 	// Create workspace directory with absolute path
-	cwd, err := os.Getwd()
-	if err != nil {
-		cwd = "."
+	// Priority order: CLARA_MCP_WORKSPACE env var -> user home -> /tmp
+	// NEVER use current working directory as it may be read-only in packaged apps
+	
+	var workspace string
+	var workspaceSource string
+	
+	// 1. Try environment variable (set by Electron to writable location)
+	workspace = os.Getenv("CLARA_MCP_WORKSPACE")
+	if workspace != "" {
+		workspaceSource = "CLARA_MCP_WORKSPACE environment variable"
+		if err := os.MkdirAll(workspace, 0755); err == nil {
+			log.Printf("Using workspace from %s: %s", workspaceSource, workspace)
+		} else {
+			log.Printf("Warning: Failed to create workspace from %s (%s): %v", workspaceSource, workspace, err)
+			workspace = "" // Clear to try next option
+		}
 	}
-
-	workspace := filepath.Join(cwd, "mcp_workspace")
-	if err := os.MkdirAll(workspace, 0755); err != nil {
-		log.Printf("Warning: Failed to create workspace: %v", err)
-		// Fallback to a safe directory - avoid root directory
-		if cwd == "/" || cwd == "" {
-			// Use user's home directory as fallback
-			if homeDir, err := os.UserHomeDir(); err == nil {
-				workspace = filepath.Join(homeDir, "clara_mcp_workspace")
+	
+	// 2. Fallback to user home directory
+	if workspace == "" {
+		if homeDir, err := os.UserHomeDir(); err == nil {
+			workspace = filepath.Join(homeDir, ".clara", "mcp_workspace")
+			workspaceSource = "user home directory"
+			if err := os.MkdirAll(workspace, 0755); err == nil {
+				log.Printf("Using workspace from %s: %s", workspaceSource, workspace)
 			} else {
-				// Last resort: use /tmp
-				workspace = filepath.Join("/tmp", "clara_mcp_workspace")
+				log.Printf("Warning: Failed to create workspace in %s (%s): %v", workspaceSource, workspace, err)
+				workspace = "" // Clear to try next option
 			}
 		} else {
-			workspace = cwd
+			log.Printf("Warning: Could not determine user home directory: %v", err)
 		}
-		// Try to create the fallback workspace
+	}
+	
+	// 3. Last resort: use /tmp (always writable on Unix-like systems)
+	if workspace == "" {
+		workspace = filepath.Join(os.TempDir(), "clara_mcp_workspace")
+		workspaceSource = "temporary directory"
 		if err := os.MkdirAll(workspace, 0755); err != nil {
-			log.Printf("ERROR: Failed to create fallback workspace: %v", err)
-			// This is a critical error - we can't proceed
-			panic(fmt.Sprintf("Cannot create workspace directory: %v", err))
+			// This is critical - if we can't even create in /tmp, something is very wrong
+			log.Printf("ERROR: Failed to create workspace in %s (%s): %v", workspaceSource, workspace, err)
+			panic(fmt.Sprintf("Cannot create workspace directory in any location (tried env var, home, and temp): %v", err))
 		}
+		log.Printf("Using workspace from %s: %s", workspaceSource, workspace)
 	}
 
 	server := &PythonMCPServer{

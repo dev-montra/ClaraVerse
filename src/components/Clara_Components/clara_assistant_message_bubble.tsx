@@ -1489,15 +1489,15 @@ const ClaraMessageBubble: React.FC<ClaraMessageBubbleProps> = ({
             />
           )}
 
-          {/* **NEW: Tool Execution Block for agent mode */}
-          {isAssistant && message.metadata?.toolExecutionBlock && (
+          {/* Tool execution is shown in the top-right status widget, not in message bubble */}
+          {/* {isAssistant && message.metadata?.toolExecutionBlock && (
             <div className="mb-4">
               <ToolExecutionBlock
                 data={message.metadata.toolExecutionBlock}
                 className="tool-execution-in-message"
               />
             </div>
-          )}
+          )} */}
 
           {/* Show response content */}
           {/* Hide content during streaming if we're inside thinking tags to prevent glitchy text */}
